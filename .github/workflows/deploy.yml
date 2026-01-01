@@ -47,8 +47,7 @@ jobs:
 
             # Ensure .env exists
             if [ ! -f .env ]; then
-              cp .env.example .env || true
-              echo "ERROR: .env not found. Configure .env and rerun."
+              echo "ERROR: .env not found. Configure .env and rerun. Check .env.example for required variables."
               exit 1
             fi
             sed -i 's/\r$//' .env  # strip CRLF if present

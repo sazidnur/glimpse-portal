@@ -53,14 +53,16 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik_proxy"
-      # HTTPS router for /portal path
+      # HTTPS router for /portal path (priority 100 to beat WordPress catch-all)
       - "traefik.http.routers.glimpse-portal.rule=Host(`${SITE_DOMAIN:-glimpseapp.net}`) && PathPrefix(`/portal`)"
       - "traefik.http.routers.glimpse-portal.entrypoints=websecure"
       - "traefik.http.routers.glimpse-portal.tls=true"
+      - "traefik.http.routers.glimpse-portal.priority=100"
       - "traefik.http.services.glimpse-portal.loadbalancer.server.port=8000"
       # HTTP -> HTTPS redirect
       - "traefik.http.routers.glimpse-portal-http.rule=Host(`${SITE_DOMAIN:-glimpseapp.net}`) && PathPrefix(`/portal`)"
       - "traefik.http.routers.glimpse-portal-http.entrypoints=web"
+      - "traefik.http.routers.glimpse-portal-http.priority=100"
       - "traefik.http.routers.glimpse-portal-http.middlewares=glimpse-portal-https-redirect"
       - "traefik.http.middlewares.glimpse-portal-https-redirect.redirectscheme.scheme=https"
     networks:
