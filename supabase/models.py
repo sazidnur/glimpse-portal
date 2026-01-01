@@ -17,6 +17,7 @@ class Categories(models.Model):
     class Meta:
         managed = False
         db_table = 'categories'
+        verbose_name_plural = 'Categories'
 
 
 class Extradetails(models.Model):
@@ -28,6 +29,7 @@ class Extradetails(models.Model):
     class Meta:
         managed = False
         db_table = 'extraDetails'
+        verbose_name_plural = 'Extra Details'
 
 
 class News(models.Model):
@@ -43,6 +45,7 @@ class News(models.Model):
     class Meta:
         managed = False
         db_table = 'news'
+        verbose_name_plural = 'News'
 
 
 class Sourcealias(models.Model):
@@ -54,6 +57,7 @@ class Sourcealias(models.Model):
         managed = False
         db_table = 'sourceAlias'
         db_table_comment = 'News source name alias'
+        verbose_name_plural = 'Source Aliases'
 
 
 class Timelines(models.Model):
@@ -68,6 +72,7 @@ class Timelines(models.Model):
         managed = False
         db_table = 'timelines'
         db_table_comment = 'series of news on a given topic'
+        verbose_name_plural = 'Timelines'
 
 
 class Videos(models.Model):
@@ -83,3 +88,4 @@ class Videos(models.Model):
         managed = False
         db_table = 'videos'
         db_table_comment = 'video news'
+        verbose_name_plural = 'Videos'
