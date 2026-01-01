@@ -1,0 +1,78 @@
+services:
+  # ===========================================
+  # Django PostgreSQL Database (for Django internals)
+  # Auth, sessions, admin logs, etc.
+  # ===========================================
+  db:
+    image: postgres:16-alpine
+    container_name: glimpse-portal-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DJANGO_DB_NAME:-glimpse_portal}
+      POSTGRES_USER: ${DJANGO_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DJANGO_DB_PASSWORD:-postgres}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DJANGO_DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================
+  # Django Portal (Path: glimpseapp.net/portal)
+  # Uses local PostgreSQL for Django + Supabase for business models
+  # ===========================================
+  django:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: glimpse-portal-django
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DEBUG=${DEBUG:-False}
+      - SECRET_KEY=${SECRET_KEY}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1,glimpseapp.net}
+      # Django database (local PostgreSQL)
+      - DJANGO_DB_NAME=${DJANGO_DB_NAME:-glimpse_portal}
+      - DJANGO_DB_USER=${DJANGO_DB_USER:-postgres}
+      - DJANGO_DB_PASSWORD=${DJANGO_DB_PASSWORD:-postgres}
+      - DJANGO_DB_HOST=db
+      - DJANGO_DB_PORT=5432
+      # Supabase database (external)
+      - SUPABASE_DATABASE_URL=${SUPABASE_DATABASE_URL}
+      - PORTAL_URL_PREFIX=${PORTAL_URL_PREFIX:-portal}
+      - CSRF_TRUSTED_ORIGINS=${CSRF_TRUSTED_ORIGINS:-https://glimpseapp.net}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-https://glimpseapp.net}
+    volumes:
+      - static_data:/app/staticfiles
+      - media_data:/app/media
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik_proxy"
+      # HTTPS router for /portal path
+      - "traefik.http.routers.glimpse-portal.rule=Host(`${SITE_DOMAIN:-glimpseapp.net}`) && PathPrefix(`/portal`)"
+      - "traefik.http.routers.glimpse-portal.entrypoints=websecure"
+      - "traefik.http.routers.glimpse-portal.tls=true"
+      - "traefik.http.services.glimpse-portal.loadbalancer.server.port=8000"
+      # HTTP -> HTTPS redirect
+      - "traefik.http.routers.glimpse-portal-http.rule=Host(`${SITE_DOMAIN:-glimpseapp.net}`) && PathPrefix(`/portal`)"
+      - "traefik.http.routers.glimpse-portal-http.entrypoints=web"
+      - "traefik.http.routers.glimpse-portal-http.middlewares=glimpse-portal-https-redirect"
+      - "traefik.http.middlewares.glimpse-portal-https-redirect.redirectscheme.scheme=https"
+    networks:
+      - default
+      - traefik
+
+volumes:
+  db_data:
+  static_data:
+  media_data:
+
+networks:
+  traefik:
+    external: true
+    name: traefik_proxy
