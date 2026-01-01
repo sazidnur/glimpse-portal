@@ -1,0 +1,65 @@
+name: Deploy Glimpse Portal
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure target directory exists
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          passphrase: ${{ secrets.VPS_SSH_KEY_PASSPHRASE }}
+          port: ${{ secrets.VPS_PORT }}
+          script: |
+            mkdir -p /opt/glimpse-portal
+
+      - name: Copy project files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          passphrase: ${{ secrets.VPS_SSH_KEY_PASSPHRASE }}
+          port: ${{ secrets.VPS_PORT }}
+          source: "."
+          target: "/opt/glimpse-portal/"
+
+      - name: Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          passphrase: ${{ secrets.VPS_SSH_KEY_PASSPHRASE }}
+          port: ${{ secrets.VPS_PORT }}
+          script: |
+            set -e
+            cd /opt/glimpse-portal
+
+            # Ensure .env exists
+            if [ ! -f .env ]; then
+              cp .env.example .env || true
+              echo "ERROR: .env not found. Configure .env and rerun."
+              exit 1
+            fi
+            sed -i 's/\r$//' .env  # strip CRLF if present
+
+            # Ensure traefik network exists
+            docker network ls | grep -q traefik_proxy || docker network create traefik_proxy
+
+            # Deploy
+            docker compose -f docker-compose.yml up -d --build
+
+            # Run migrations on first deploy (default DB only)
+            docker compose exec -T django python manage.py migrate --database=default --noinput || true
+
+            echo "✅ Deployment complete"
