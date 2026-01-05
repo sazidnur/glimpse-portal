@@ -34,6 +34,8 @@ INSTALLED_APPS = [
     
     # Third-party apps
     'corsheaders',
+    'rest_framework',
+    'rest_framework.authtoken',
     
     # Local apps
     'supabase',
@@ -53,6 +55,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'config.middleware.APIIPWhitelistMiddleware',
 ]
 
 # Add debug toolbar middleware in development
@@ -180,6 +183,59 @@ CORS_ALLOWED_ORIGINS = config(
     cast=Csv()
 )
 
+# ===========================================
+# REST API Security Settings
+# ===========================================
+
+# Django REST Framework settings
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.TokenAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+    ],
+    # No rate limiting - WordPress server is trusted & already IP whitelisted
+    # DDoS protection should be at Cloudflare/Traefik level
+    'DEFAULT_THROTTLE_CLASSES': [],
+    'DEFAULT_THROTTLE_RATES': {},
+    'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
+}
+
+# API IP Whitelist (WordPress server IPs)
+# Set to '*' for development, specific IPs for production
+# Example: ALLOWED_API_IPS=1.2.3.4,5.6.7.8
+ALLOWED_API_IPS = config('ALLOWED_API_IPS', default='', cast=Csv())
+
+# ===========================================
+# Caching Configuration
+# ===========================================
+# Using local memory cache for development
+# Use Redis/Memcached in production for better performance
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'glimpse-api-cache',
+        'TIMEOUT': 300,  # 5 minutes default
+        'OPTIONS': {
+            'MAX_ENTRIES': 1000,
+        }
+    }
+}
+
+# For production with Redis (uncomment and configure):
+# REDIS_URL = config('REDIS_URL', default=None)
+# if REDIS_URL:
+#     CACHES = {
+#         'default': {
+#             'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+#             'LOCATION': REDIS_URL,
+#         }
+#     }
+
 # Security settings for production
 if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
@@ -196,9 +252,30 @@ INTERNAL_IPS = ['127.0.0.1']
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+    },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        'api': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
+        'api_security': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
+        'api_middleware': {
+            'handlers': ['console'],
+            'level': 'INFO',
         },
     },
     'root': {

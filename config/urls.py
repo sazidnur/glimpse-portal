@@ -2,6 +2,7 @@
 URL configuration for Glimpse Portal.
 
 The portal is served at /portal/ path to coexist with WordPress at root.
+API is served at /api/ path for external consumption.
 """
 from django.contrib import admin
 from django.urls import path, include
@@ -18,6 +19,9 @@ urlpatterns = [
     
     # Main admin portal at /portal/
     path(f'{portal_prefix}/', admin.site.urls),
+    
+    # REST API at /api/
+    path('api/', include('supabase.urls')),
 ]
 
 # Debug toolbar URLs (only in development)
