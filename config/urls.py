@@ -17,11 +17,11 @@ urlpatterns = [
     # Redirect /portal to /portal/ (with trailing slash)
     path(f'{portal_prefix}', RedirectView.as_view(url=f'/{portal_prefix}/', permanent=True)),
 
+    # REST API at /portal/api/ (MUST be before admin to avoid auth redirect)
+    path(f'{portal_prefix}/api/', include('supabase.urls')),
+
     # Main admin portal at /portal/
     path(f'{portal_prefix}/', admin.site.urls),
-
-    # REST API at /portal/api/
-    path(f'{portal_prefix}/api/', include('supabase.urls')),
 ]
 
 # Debug toolbar URLs (only in development)
