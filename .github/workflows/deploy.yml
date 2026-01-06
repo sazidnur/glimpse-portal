@@ -56,7 +56,9 @@ jobs:
             docker network ls | grep -q traefik_proxy || docker network create traefik_proxy
 
             # Deploy
-            docker compose -f docker-compose.yml up -d --build
+            # NOTE: env vars are baked into the container at creation time.
+            # If .env changes, containers must be recreated for changes to apply.
+            docker compose -f docker-compose.yml up -d --build --force-recreate --remove-orphans
 
             # Run migrations on first deploy (default DB only)
             docker compose exec -T django python manage.py migrate --database=default --noinput || true
