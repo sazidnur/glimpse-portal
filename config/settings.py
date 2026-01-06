@@ -198,10 +198,15 @@ REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
     ],
-    # No rate limiting - WordPress server is trusted & already IP whitelisted
-    # DDoS protection should be at Cloudflare/Traefik level
-    'DEFAULT_THROTTLE_CLASSES': [],
-    'DEFAULT_THROTTLE_RATES': {},
+    # Rate limiting - reasonable limits for production
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',      # Anonymous users (shouldn't happen with token auth)
+        'user': '1000/hour',     # Authenticated users (WordPress)
+    },
     'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
 }
 

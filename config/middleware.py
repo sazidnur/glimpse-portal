@@ -72,10 +72,16 @@ class APISecurityMiddleware:
         Get real client IP, handling proxies securely.
         
         Priority:
-        1. X-Real-IP (set by trusted reverse proxy like Nginx)
-        2. First IP in X-Forwarded-For (original client)
-        3. REMOTE_ADDR (direct connection)
+        1. CF-Connecting-IP (Cloudflare - most reliable when behind CF)
+        2. X-Real-IP (set by trusted reverse proxy like Nginx/Traefik)
+        3. First IP in X-Forwarded-For (original client)
+        4. REMOTE_ADDR (direct connection)
         """
+        # CF-Connecting-IP (Cloudflare sets this to true client IP)
+        cf_connecting_ip = request.META.get('HTTP_CF_CONNECTING_IP')
+        if cf_connecting_ip:
+            return cf_connecting_ip.strip()
+        
         # X-Real-IP (most reliable when set by trusted proxy)
         x_real_ip = request.META.get('HTTP_X_REAL_IP')
         if x_real_ip:

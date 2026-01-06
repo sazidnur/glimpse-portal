@@ -55,12 +55,15 @@ jobs:
             # Ensure traefik network exists
             docker network ls | grep -q traefik_proxy || docker network create traefik_proxy
 
-            # Deploy
-            # NOTE: env vars are baked into the container at creation time.
-            # If .env changes, containers must be recreated for changes to apply.
-            docker compose -f docker-compose.yml up -d --build --force-recreate --remove-orphans
+            # Build new image first (reduces downtime)
+            docker compose -f docker-compose.yml build django
 
-            # Run migrations on first deploy (default DB only)
+            # Deploy with minimal downtime
+            # --no-deps prevents recreating db when only django changed
+            docker compose -f docker-compose.yml up -d --no-deps django
+            docker compose -f docker-compose.yml up -d --remove-orphans
+
+            # Run migrations (only if needed)
             docker compose exec -T django python manage.py migrate --database=default --noinput || true
 
             echo "✅ Deployment complete"
