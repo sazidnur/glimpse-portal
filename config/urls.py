@@ -16,12 +16,12 @@ portal_prefix = settings.PORTAL_URL_PREFIX
 urlpatterns = [
     # Redirect /portal to /portal/ (with trailing slash)
     path(f'{portal_prefix}', RedirectView.as_view(url=f'/{portal_prefix}/', permanent=True)),
-    
+
     # Main admin portal at /portal/
     path(f'{portal_prefix}/', admin.site.urls),
-    
-    # REST API at /api/
-    path('api/', include('supabase.urls')),
+
+    # REST API at /portal/api/
+    path(f'{portal_prefix}/api/', include('supabase.urls')),
 ]
 
 # Debug toolbar URLs (only in development)
