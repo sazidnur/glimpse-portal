@@ -39,7 +39,7 @@ class News(models.Model):
     imageurl = models.CharField(db_column='imageUrl', blank=True, null=True)  # Field name made lowercase.
     timestamp = models.DateTimeField(blank=True, null=True)
     score = models.FloatField(blank=True, null=True)
-    context = models.TextField(blank=True, null=True)
+    topic = models.ForeignKey('Topics', models.DO_NOTHING, db_column='topic', blank=True, null=True)
     categoryid = models.ForeignKey(Categories, models.DO_NOTHING, db_column='categoryId', blank=True, null=True)  # Field name made lowercase.
 
     class Meta:
@@ -62,9 +62,9 @@ class Sourcealias(models.Model):
 
 class Timelines(models.Model):
     id = models.BigAutoField(primary_key=True)
-    created_at = models.DateTimeField()
+    createdat = models.DateTimeField(db_column='createdAt')  # Field name made lowercase.
     title = models.CharField(blank=True, null=True)
-    news_list = models.TextField(blank=True, null=True)  # This field type is a guess.
+    newslist = models.TextField(db_column='newsList', blank=True, null=True)  # Field name made lowercase. This field type is a guess.
     imgurl = models.TextField(db_column='imgUrl', blank=True, null=True)  # Field name made lowercase.
     isnew = models.BooleanField(db_column='isNew', blank=True, null=True)  # Field name made lowercase.
 
@@ -73,6 +73,20 @@ class Timelines(models.Model):
         db_table = 'timelines'
         db_table_comment = 'series of news on a given topic'
         verbose_name_plural = 'Timelines'
+
+
+class Topics(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    name = models.TextField(unique=True)
+    order = models.AutoField()
+    enabled = models.BooleanField(blank=True, null=True)
+    image = models.TextField(unique=True, blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'topics'
+        db_table_comment = 'contexts or topics'
+        verbose_name_plural = 'Topics'
 
 
 class Videos(models.Model):
