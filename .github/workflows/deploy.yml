@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    ignore:
+      - '**.yaml'
+      - '**.yml'
 
 jobs:
   deploy:
