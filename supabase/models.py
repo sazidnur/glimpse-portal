@@ -122,6 +122,7 @@ class Videos(models.Model):
     publisher = models.ForeignKey(Videopublishers, models.DO_NOTHING, db_column='publisher', blank=True, null=True)
     timestamp = models.DateTimeField()
     score = models.FloatField(blank=True, null=True)
+    thumbnailurl = models.TextField(db_column='thumbnailUrl', blank=True, null=True)  # Field name made lowercase.
 
     class Meta:
         managed = False
