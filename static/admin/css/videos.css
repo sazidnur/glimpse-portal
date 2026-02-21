@@ -1,0 +1,17 @@
+.field-youtube_url_input .readonly {
+    background: none;
+    padding: 0;
+}
+
+.field-thumbnail_preview .readonly,
+.field-video_embed .readonly {
+    padding: 10px 0;
+}
+
+.field-thumbnail_preview img {
+    transition: transform 0.2s;
+}
+
+.field-thumbnail_preview img:hover {
+    transform: scale(1.02);
+}

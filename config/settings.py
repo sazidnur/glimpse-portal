@@ -250,6 +250,9 @@ if not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS', default='https://glimpseapp.net', cast=Csv())
 
+# YouTube API
+YOUTUBE_API_KEY = config('YOUTUBE_API_KEY', default='')
+
 # Debug toolbar settings
 INTERNAL_IPS = ['127.0.0.1']
 
