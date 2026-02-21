@@ -90,7 +90,7 @@ class Timelines(models.Model):
 class Topics(models.Model):
     id = models.BigAutoField(primary_key=True)
     name = models.TextField(unique=True)
-    order = models.AutoField()
+    order = models.IntegerField()
     enabled = models.BooleanField(blank=True, null=True)
     image = models.TextField(unique=True, blank=True, null=True)
 

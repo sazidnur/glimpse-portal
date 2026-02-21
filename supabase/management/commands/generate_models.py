@@ -68,6 +68,22 @@ class Command(BaseCommand):
         """Generate readable verbose_name_plural from CamelCase class name."""
         return re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', class_name)
 
+    @staticmethod
+    def _fix_duplicate_auto_fields(models_content):
+        """Fix inspectdb bug: non-PK AutoField causes 'more than one auto-generated field' error."""
+        lines = models_content.split('\n')
+        has_auto_pk = False
+        result = []
+        for line in lines:
+            if re.match(r'^class \w+\(models\.Model\):', line):
+                has_auto_pk = False
+            if 'primary_key=True' in line and 'AutoField' in line:
+                has_auto_pk = True
+            elif has_auto_pk and re.search(r'models\.(Big)?AutoField\(\)', line):
+                line = re.sub(r'models\.(Big)?AutoField\(\)', 'models.IntegerField()', line)
+            result.append(line)
+        return '\n'.join(result)
+
     def _apply_meta_preservations(self, models_content, meta_map):
         """Re-inject preserved Meta attrs into freshly generated models; auto-generate for new ones."""
         lines = models_content.split('\n')
@@ -175,6 +191,7 @@ class Command(BaseCommand):
             return
 
         models_content = self._apply_meta_preservations(models_content, existing_meta)
+        models_content = self._fix_duplicate_auto_fields(models_content)
 
         if options['write']:
             if models_path.exists() and not options['force']:
