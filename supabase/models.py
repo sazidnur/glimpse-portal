@@ -20,6 +20,18 @@ class Categories(models.Model):
         verbose_name_plural = 'Categories'
 
 
+class Divisions(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    name = models.CharField(blank=True, null=True)
+    order = models.IntegerField(blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'divisions'
+        db_table_comment = 'Eight divisions of BD'
+        verbose_name_plural = 'Divisions'
+
+
 class Extradetails(models.Model):
     id = models.BigAutoField(primary_key=True)
     news = models.ForeignKey('News', models.DO_NOTHING, blank=True, null=True)
@@ -78,7 +90,7 @@ class Timelines(models.Model):
 class Topics(models.Model):
     id = models.BigAutoField(primary_key=True)
     name = models.TextField(unique=True)
-    order = models.IntegerField()
+    order = models.AutoField()
     enabled = models.BooleanField(blank=True, null=True)
     image = models.TextField(unique=True, blank=True, null=True)
 
@@ -89,12 +101,25 @@ class Topics(models.Model):
         verbose_name_plural = 'Topics'
 
 
+class Videopublishers(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    title = models.TextField(unique=True)
+    url = models.TextField(unique=True)
+    profileiconurl = models.TextField(db_column='profileIconUrl', blank=True, null=True)  # Field name made lowercase.
+    platform = models.TextField(blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'videoPublishers'
+        verbose_name_plural = 'Video publishers'
+
+
 class Videos(models.Model):
     id = models.BigAutoField(primary_key=True)
     title = models.CharField(blank=True, null=True)
     videourl = models.CharField(db_column='videoUrl', blank=True, null=True)  # Field name made lowercase.
     source = models.CharField(blank=True, null=True)
-    publisher = models.CharField(blank=True, null=True)
+    publisher = models.ForeignKey(Videopublishers, models.DO_NOTHING, db_column='publisher', blank=True, null=True)
     timestamp = models.DateTimeField()
     score = models.FloatField(blank=True, null=True)
 
