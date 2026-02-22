@@ -88,7 +88,7 @@ def youtube_fetch(request):
         video = Videos.objects.using('supabase').create(
             title=data['title'],
             videourl=data['video_url'],
-            source=data['short_url'],
+            source='YouTube',
             publisher=publisher,
             timestamp=timezone.now(),
             score=data.get('score', 0),

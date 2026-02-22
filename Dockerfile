@@ -30,8 +30,13 @@ WORKDIR /app
 COPY pyproject.toml poetry.lock* ./
 
 # Install dependencies
+ARG INSTALL_DEV=false
 RUN poetry config virtualenvs.create false \
-    && poetry install --no-interaction --no-ansi --no-root --only main
+    && if [ "$INSTALL_DEV" = "true" ]; then \
+        poetry install --no-interaction --no-ansi --no-root; \
+    else \
+        poetry install --no-interaction --no-ansi --no-root --only main; \
+    fi
 
 # Copy project
 COPY . .

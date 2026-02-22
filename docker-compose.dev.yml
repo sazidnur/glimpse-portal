@@ -4,6 +4,10 @@ services:
       - "5432:5432"
 
   django:
+    build:
+      context: .
+      args:
+        INSTALL_DEV: "true"
     env_file: .env
     volumes:
       - .:/app

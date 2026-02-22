@@ -41,10 +41,10 @@ def fetch_video_data(url):
     api_key = getattr(settings, 'YOUTUBE_API_KEY', None)
     if not api_key:
         return _fetch_via_oembed(video_id, url)
-    return _fetch_via_api(video_id, api_key)
+    return _fetch_via_api(video_id, api_key, url)
 
 
-def _fetch_via_api(video_id, api_key):
+def _fetch_via_api(video_id, api_key, original_url):
     params = urlencode({
         'part': 'snippet,statistics',
         'id': video_id,
@@ -80,8 +80,7 @@ def _fetch_via_api(video_id, api_key):
         'channel_title': snippet.get('channelTitle', ''),
         'channel_id': snippet.get('channelId', ''),
         'thumbnail_url': thumbnail_url,
-        'video_url': f'https://www.youtube.com/watch?v={video_id}',
-        'short_url': f'https://www.youtube.com/shorts/{video_id}',
+        'video_url': original_url,
         'score': score,
     }
 
@@ -103,8 +102,7 @@ def _fetch_via_oembed(video_id, original_url):
         'channel_title': data.get('author_name', ''),
         'channel_id': '',
         'thumbnail_url': data.get('thumbnail_url', ''),
-        'video_url': f'https://www.youtube.com/watch?v={video_id}',
-        'short_url': f'https://www.youtube.com/shorts/{video_id}',
+        'video_url': original_url,
         'score': 0,
     }
 
