@@ -1,0 +1,54 @@
+{% extends "admin/change_list.html" %}
+{% block object-tools-items %}
+{{ block.super }}
+<li>
+    <button type="button" id="btn-fetch-missing" class="button"
+        style="background:#417690;color:#fff;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;">
+        Fetch Missing Icons
+    </button>
+</li>
+<li>
+    <button type="button" id="btn-refresh-all" class="button"
+        style="background:#79aec8;color:#fff;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;">
+        Refresh All Icons
+    </button>
+</li>
+{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    function getCookie(name) {
+        const v = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+        return v ? v.pop() : '';
+    }
+
+    function handleClick(url, btn) {
+        const original = btn.textContent;
+        btn.textContent = 'Working...';
+        btn.disabled = true;
+        fetch(url, {
+            method: 'POST',
+            headers: {'X-CSRFToken': getCookie('csrftoken')},
+        })
+        .then(r => r.json())
+        .then(data => {
+            btn.textContent = 'Updated ' + data.updated + ' icon(s)';
+            setTimeout(() => location.reload(), 1500);
+        })
+        .catch(() => {
+            btn.textContent = 'Error';
+            setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2000);
+        });
+    }
+
+    document.getElementById('btn-fetch-missing').addEventListener('click', function() {
+        handleClick('fetch-missing-icons/', this);
+    });
+    document.getElementById('btn-refresh-all').addEventListener('click', function() {
+        handleClick('refresh-all-icons/', this);
+    });
+});
+</script>
+{% endblock %}
