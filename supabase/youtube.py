@@ -27,10 +27,17 @@ def extract_video_id(url):
 
 def _calculate_score(views, likes):
     if views == 0:
-        return 0
-    reach = min(math.log10(views + 1) / 8, 1.0)
-    engagement = min(math.log10(likes + 1) / 6, 1.0) if likes > 0 else 0
-    return min(round(reach * 60 + engagement * 40, 1), 100)
+        return 50.0
+    rate = likes / views
+    if rate >= 0.08:
+        return 90.0
+    elif rate >= 0.05:
+        return 75.0
+    elif rate >= 0.03:
+        return 60.0
+    elif rate >= 0.01:
+        return 40.0
+    return 20.0
 
 
 def fetch_video_data(url):

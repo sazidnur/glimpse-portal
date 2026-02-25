@@ -86,6 +86,9 @@ def youtube_fetch(request):
         publisher = _get_or_create_publisher(data['channel_title'], data.get('channel_id', ''))
 
         Videos = apps.get_model('supabase', 'Videos')
+        if Videos.objects.using('supabase').filter(videourl=data['video_url']).exists():
+            return JsonResponse({'error': 'Video already exists'}, status=409)
+
         video = Videos.objects.using('supabase').create(
             title=data['title'],
             videourl=data['video_url'],
@@ -156,6 +159,9 @@ def youtube_fetch_api(request):
         publisher = _get_or_create_publisher(data['channel_title'], data.get('channel_id', ''))
 
         Videos = apps.get_model('supabase', 'Videos')
+        if Videos.objects.using('supabase').filter(videourl=data['video_url']).exists():
+            return Response({'error': 'Video already exists'}, status=409)
+
         video = Videos.objects.using('supabase').create(
             title=data['title'],
             videourl=data['video_url'],
