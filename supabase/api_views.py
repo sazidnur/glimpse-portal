@@ -4,6 +4,7 @@ REST API for WordPress News Integration and Admin utilities.
 
 import json
 import logging
+from datetime import datetime
 
 from django.core.cache import cache
 from django.http import JsonResponse
@@ -90,7 +91,7 @@ def youtube_fetch(request):
             videourl=data['video_url'],
             source='YouTube',
             publisher=publisher,
-            timestamp=timezone.now(),
+            timestamp=_parse_timestamp(data.get('published_at', '')),
             score=data.get('score', 0),
             thumbnailurl=data['thumbnail_url'],
         )
@@ -131,3 +132,51 @@ def _get_or_create_publisher(channel_title, channel_id):
             profileiconurl=icon_url,
             platform='youtube',
         )
+
+
+def _parse_timestamp(published_at):
+    if not published_at:
+        return timezone.now()
+    try:
+        dt = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+        return dt
+    except (ValueError, TypeError):
+        return timezone.now()
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def youtube_fetch_api(request):
+    url = request.data.get('url', '').strip()
+    if not url:
+        return Response({'error': 'URL is required'}, status=400)
+
+    try:
+        data = fetch_video_data(url)
+        publisher = _get_or_create_publisher(data['channel_title'], data.get('channel_id', ''))
+
+        Videos = apps.get_model('supabase', 'Videos')
+        video = Videos.objects.using('supabase').create(
+            title=data['title'],
+            videourl=data['video_url'],
+            source='YouTube',
+            publisher=publisher,
+            timestamp=_parse_timestamp(data.get('published_at', '')),
+            score=data.get('score', 0),
+            thumbnailurl=data['thumbnail_url'],
+        )
+
+        return Response({
+            'id': video.id,
+            'title': video.title,
+            'videourl': video.videourl,
+            'thumbnailurl': video.thumbnailurl,
+            'publisher': publisher.title if publisher else None,
+            'timestamp': video.timestamp.isoformat(),
+        }, status=201)
+
+    except ValueError as e:
+        return Response({'error': str(e)}, status=400)
+    except Exception as e:
+        logger.exception('YouTube fetch API failed')
+        return Response({'error': str(e)}, status=500)

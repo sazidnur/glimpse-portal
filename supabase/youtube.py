@@ -81,6 +81,7 @@ def _fetch_via_api(video_id, api_key, original_url):
         'channel_id': snippet.get('channelId', ''),
         'thumbnail_url': thumbnail_url,
         'video_url': original_url,
+        'published_at': snippet.get('publishedAt', ''),
         'score': score,
     }
 
@@ -103,6 +104,7 @@ def _fetch_via_oembed(video_id, original_url):
         'channel_id': '',
         'thumbnail_url': data.get('thumbnail_url', ''),
         'video_url': original_url,
+        'published_at': '',
         'score': 0,
     }
 
