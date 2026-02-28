@@ -66,7 +66,7 @@ You can also warm manually via API or the admin dashboard.
 
 ### DB Fallback
 
-If Redis throws an error, list requests fall back to querying the DB directly. The response includes `"cache": "DB_FALLBACK"` so you know it's not from cache. Not ideal for latency, but the API stays up.
+If Redis throws an error, list requests fall back to querying the DB directly. Not ideal for latency, but the API stays up.
 
 ### Memory
 
@@ -109,12 +109,9 @@ Response:
   "total": 73,
   "page": 1,
   "limit": 10,
-  "pages": 8,
-  "cache": "REDIS"
+  "pages": 8
 }
 ```
-
-The `cache` field is `"REDIS"` or `"DB_FALLBACK"`.
 
 ### Create (single)
 

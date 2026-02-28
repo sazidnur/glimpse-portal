@@ -32,12 +32,12 @@ class CachedListView(APIView):
         try:
             if request.query_params.get("all", "").lower() == "true":
                 result = self.cache.get_all(max_items=MAX_ALL)
-                return Response({**result, "cache": "REDIS"})
+                return Response(result)
 
             page = _parse_int(request.query_params.get("page"), default=1, min_val=1)
             limit = _parse_int(request.query_params.get("limit"), default=10, min_val=1, max_val=MAX_LIMIT)
             result = self.cache.get_paginated(page=page, limit=limit)
-            return Response({**result, "cache": "REDIS"})
+            return Response(result)
 
         except Exception:
             logger.exception("%s list failed, falling back to DB", self.model.__name__)
@@ -65,7 +65,6 @@ class CachedListView(APIView):
                 "page": page,
                 "limit": limit,
                 "pages": (total + limit - 1) // limit if limit > 0 else 0,
-                "cache": "DB_FALLBACK",
             })
         except Exception:
             logger.exception("DB fallback also failed")
