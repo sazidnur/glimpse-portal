@@ -39,8 +39,8 @@ class APISecurityMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        # Only apply to /api/ paths
-        if request.path.startswith('/api/'):
+        # Only apply to /api/ paths, but skip /api/v1/ (public API with its own auth)
+        if request.path.startswith('/api/') and not request.path.startswith('/api/v1/'):
             client_ip = self.get_client_ip(request)
             
             # Log the request
