@@ -1,17 +1,10 @@
-"""
-Serializers for News API.
-"""
-
 from django.utils import timezone
 from rest_framework import serializers
+
 from .models import News
 
 
 class NewsListSerializer(serializers.ModelSerializer):
-    """
-    Lightweight serializer for news listings.
-    Returns only essential fields with human-readable timestamp.
-    """
     time_ago = serializers.SerializerMethodField()
     
     class Meta:
@@ -19,7 +12,6 @@ class NewsListSerializer(serializers.ModelSerializer):
         fields = ['title', 'summary', 'source', 'imageurl', 'time_ago']
     
     def get_time_ago(self, obj):
-        """Convert timestamp to relative time (e.g., '5 mins ago')."""
         if not obj.timestamp:
             return ''
         

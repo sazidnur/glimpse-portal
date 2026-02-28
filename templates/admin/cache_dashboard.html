@@ -1,0 +1,323 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}Redis Cache Dashboard{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">Home</a>
+    &rsaquo; Cache Dashboard
+</div>
+{% endblock %}
+
+{% block content %}
+<style>
+    .cache-dashboard {
+        max-width: 1100px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .cache-dashboard h2 {
+        margin: 0 0 6px;
+        font-size: 20px;
+        color: #333;
+    }
+    .cache-dashboard p.subtitle {
+        color: #666;
+        margin: 0 0 28px;
+        font-size: 13px;
+    }
+
+    .global-actions {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 28px;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+
+    .resource-section {
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        padding: 24px;
+        margin-bottom: 24px;
+        transition: box-shadow 0.2s;
+    }
+    .resource-section:hover {
+        box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    .resource-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+    .resource-header h3 {
+        margin: 0;
+        font-size: 16px;
+        color: #333;
+    }
+    .resource-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 12px;
+    }
+    .stat-card {
+        background: #f8f9fa;
+        border: 1px solid #eee;
+        border-radius: 8px;
+        padding: 16px;
+        text-align: center;
+    }
+    .stat-card .label {
+        font-size: 11px;
+        text-transform: uppercase;
+        color: #888;
+        letter-spacing: 0.5px;
+        margin-bottom: 6px;
+    }
+    .stat-card .value {
+        font-size: 22px;
+        font-weight: 700;
+        color: #417690;
+    }
+    .stat-card .value.green { color: #28a745; }
+    .stat-card .value.orange { color: #e67e22; }
+    .stat-card .value.red { color: #dc3545; }
+
+    .btn-cache {
+        padding: 8px 20px;
+        font-size: 13px;
+        font-weight: 600;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: opacity 0.2s, transform 0.1s;
+        color: #fff;
+    }
+    .btn-cache:hover { opacity: 0.9; }
+    .btn-cache:active { transform: scale(0.98); }
+    .btn-cache:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-warm { background: #417690; }
+    .btn-flush { background: #dc3545; }
+    .btn-refresh { background: #28a745; }
+    .btn-warm-all { background: #2c5777; }
+    .btn-flush-all { background: #a71d2a; }
+
+    .status-bar {
+        margin-top: 16px;
+        padding: 10px 16px;
+        border-radius: 6px;
+        font-size: 13px;
+        display: none;
+    }
+    .status-bar.info { background: #d1ecf1; color: #0c5460; display: block; }
+    .status-bar.success { background: #d4edda; color: #155724; display: block; }
+    .status-bar.error { background: #f8d7da; color: #721c24; display: block; }
+
+    .loading-spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255,255,255,0.3);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+        vertical-align: middle;
+        margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .last-updated {
+        font-size: 12px;
+        color: #999;
+        margin-top: 12px;
+    }
+</style>
+
+<div class="cache-dashboard">
+    <h2>Redis Cache Dashboard</h2>
+    <p class="subtitle">Manage all Redis sorted-set caches from one place. Operate globally or per resource.</p>
+
+    <div class="global-actions">
+        <button type="button" class="btn-cache btn-refresh" id="btn-refresh-all" title="Refresh all stats">Refresh All</button>
+        <button type="button" class="btn-cache btn-warm-all" id="btn-warm-all" title="Warm all caches from DB">Warm All</button>
+        <button type="button" class="btn-cache btn-flush-all" id="btn-flush-all" title="Flush all caches">Flush All</button>
+    </div>
+
+    <div id="resources-container"></div>
+
+    <div class="status-bar" id="global-status"></div>
+    <div class="last-updated" id="last-updated"></div>
+</div>
+
+<script>
+(function() {
+    const RESOURCES = {{ resources_json|safe }};
+    const csrfToken = (document.cookie.match('(^|;)\\s*csrftoken\\s*=\\s*([^;]+)') || []).pop() || '';
+    const container = document.getElementById('resources-container');
+    const globalStatus = document.getElementById('global-status');
+
+    function setStatus(el, msg, type) {
+        el.textContent = msg;
+        el.className = 'status-bar ' + type;
+    }
+    function clearStatus(el) { el.className = 'status-bar'; el.textContent = ''; }
+
+    function setLoading(btn, loading) {
+        if (loading) {
+            btn._orig = btn.innerHTML;
+            btn.innerHTML = '<span class="loading-spinner"></span>' + btn.textContent;
+            btn.disabled = true;
+        } else {
+            btn.innerHTML = btn._orig || btn.textContent;
+            btn.disabled = false;
+        }
+    }
+
+    function buildResourceHTML(r) {
+        return `
+        <div class="resource-section" id="section-${r.key}">
+            <div class="resource-header">
+                <h3>${r.label}</h3>
+                <div class="resource-actions">
+                    <button type="button" class="btn-cache btn-warm btn-warm-one" data-key="${r.key}" title="Warm ${r.label} cache">Warm</button>
+                    <button type="button" class="btn-cache btn-flush btn-flush-one" data-key="${r.key}" title="Flush ${r.label} cache">Flush</button>
+                </div>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-card"><div class="label">Cached</div><div class="value" id="stat-${r.key}-cached">—</div></div>
+                <div class="stat-card"><div class="label">DB Total</div><div class="value" id="stat-${r.key}-db">—</div></div>
+                <div class="stat-card"><div class="label">Sync</div><div class="value" id="stat-${r.key}-sync">—</div></div>
+                <div class="stat-card"><div class="label">Memory</div><div class="value" id="stat-${r.key}-mem">—</div></div>
+                <div class="stat-card"><div class="label">Peak</div><div class="value" id="stat-${r.key}-peak">—</div></div>
+            </div>
+        </div>`;
+    }
+
+    container.innerHTML = RESOURCES.map(buildResourceHTML).join('');
+
+    function loadStats(key) {
+        return fetch(`stats/${key}/`, { headers: { 'X-CSRFToken': csrfToken } })
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById(`stat-${key}-cached`).textContent = data.total_items.toLocaleString();
+                document.getElementById(`stat-${key}-db`).textContent = data.db_total.toLocaleString();
+                document.getElementById(`stat-${key}-mem`).textContent = data.redis_used_memory;
+                document.getElementById(`stat-${key}-peak`).textContent = data.redis_peak_memory;
+
+                const syncEl = document.getElementById(`stat-${key}-sync`);
+                if (data.total_items === data.db_total) {
+                    syncEl.textContent = '✓ Synced';
+                    syncEl.className = 'value green';
+                } else if (data.total_items === 0) {
+                    syncEl.textContent = 'Cold';
+                    syncEl.className = 'value red';
+                } else {
+                    syncEl.textContent = (data.db_total - data.total_items) + ' behind';
+                    syncEl.className = 'value orange';
+                }
+            });
+    }
+
+    function loadAllStats() {
+        return Promise.all(RESOURCES.map(r => loadStats(r.key)));
+    }
+
+    function warmOne(key) {
+        return fetch(`warm/${key}/`, { method: 'POST', headers: { 'X-CSRFToken': csrfToken } }).then(r => r.json());
+    }
+
+    function flushOne(key) {
+        return fetch(`flush/${key}/`, { method: 'POST', headers: { 'X-CSRFToken': csrfToken } }).then(r => r.json());
+    }
+
+    document.getElementById('btn-refresh-all').addEventListener('click', function() {
+        const btn = this;
+        setLoading(btn, true);
+        clearStatus(globalStatus);
+        loadAllStats()
+            .then(() => {
+                document.getElementById('last-updated').textContent = 'Last refreshed: ' + new Date().toLocaleTimeString();
+                setLoading(btn, false);
+            })
+            .catch(err => { setStatus(globalStatus, 'Failed: ' + err.message, 'error'); setLoading(btn, false); });
+    });
+
+    document.getElementById('btn-warm-all').addEventListener('click', function() {
+        if (!confirm('Warm ALL caches from DB?')) return;
+        const btn = this;
+        setLoading(btn, true);
+        setStatus(globalStatus, 'Warming all caches...', 'info');
+        Promise.all(RESOURCES.map(r => warmOne(r.key)))
+            .then(results => {
+                const summary = results.map((d, i) => RESOURCES[i].label + ': ' + (d.warmed || 0)).join(', ');
+                setStatus(globalStatus, 'All warmed — ' + summary, 'success');
+                setLoading(btn, false);
+                loadAllStats();
+            })
+            .catch(err => { setStatus(globalStatus, 'Failed: ' + err.message, 'error'); setLoading(btn, false); });
+    });
+
+    document.getElementById('btn-flush-all').addEventListener('click', function() {
+        if (!confirm('⚠️ Flush ALL caches? They will auto-rebuild on next API request.')) return;
+        const btn = this;
+        setLoading(btn, true);
+        setStatus(globalStatus, 'Flushing all caches...', 'info');
+        Promise.all(RESOURCES.map(r => flushOne(r.key)))
+            .then(() => {
+                setStatus(globalStatus, 'All caches flushed.', 'success');
+                setLoading(btn, false);
+                loadAllStats();
+            })
+            .catch(err => { setStatus(globalStatus, 'Failed: ' + err.message, 'error'); setLoading(btn, false); });
+    });
+
+    document.querySelectorAll('.btn-warm-one').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const key = this.dataset.key;
+            const label = RESOURCES.find(r => r.key === key).label;
+            if (!confirm('Warm ' + label + ' cache from DB?')) return;
+            setLoading(this, true);
+            setStatus(globalStatus, 'Warming ' + label + '...', 'info');
+            warmOne(key)
+                .then(data => {
+                    setStatus(globalStatus, label + ' warmed — ' + (data.warmed || 0) + ' items.', 'success');
+                    setLoading(this, false);
+                    loadStats(key);
+                })
+                .catch(err => { setStatus(globalStatus, 'Failed: ' + err.message, 'error'); setLoading(this, false); });
+        });
+    });
+
+    document.querySelectorAll('.btn-flush-one').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const key = this.dataset.key;
+            const label = RESOURCES.find(r => r.key === key).label;
+            if (!confirm('⚠️ Flush ' + label + ' cache?')) return;
+            setLoading(this, true);
+            setStatus(globalStatus, 'Flushing ' + label + '...', 'info');
+            flushOne(key)
+                .then(() => {
+                    setStatus(globalStatus, label + ' cache flushed.', 'success');
+                    setLoading(this, false);
+                    loadStats(key);
+                })
+                .catch(err => { setStatus(globalStatus, 'Failed: ' + err.message, 'error'); setLoading(this, false); });
+        });
+    });
+
+    loadAllStats().then(() => {
+        document.getElementById('last-updated').textContent = 'Last refreshed: ' + new Date().toLocaleTimeString();
+    });
+})();
+</script>
+{% endblock %}

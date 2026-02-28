@@ -1,0 +1,14 @@
+{% extends "admin/index.html" %}
+{% load i18n %}
+
+{% block content %}
+<div style="margin-bottom:24px;">
+    <a href="{% url 'admin:cache_dashboard' %}"
+       style="display:inline-flex;align-items:center;gap:8px;padding:10px 22px;
+              background:#417690;color:#fff;border-radius:6px;text-decoration:none;
+              font-size:14px;font-weight:600;box-shadow:0 1px 4px rgba(0,0,0,.12);">
+        &#9881; Redis Cache Dashboard
+    </a>
+</div>
+{{ block.super }}
+{% endblock %}

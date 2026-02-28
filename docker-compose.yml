@@ -20,6 +20,22 @@ services:
       retries: 5
 
   # ===========================================
+  # Redis Cache (for API caching)
+  # ===========================================
+  redis:
+    image: redis:7-alpine
+    container_name: glimpse-portal-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================
   # Django Portal (Path: glimpseapp.net/portal)
   # Uses local PostgreSQL for Django + Supabase for business models
   # ===========================================
@@ -31,6 +47,8 @@ services:
     restart: unless-stopped
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     env_file: .env
     environment:
@@ -48,20 +66,22 @@ services:
       - PORTAL_URL_PREFIX=${PORTAL_URL_PREFIX:-portal}
       - CSRF_TRUSTED_ORIGINS=${CSRF_TRUSTED_ORIGINS:-https://glimpseapp.net}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-https://glimpseapp.net}
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - static_data:/app/staticfiles
       - media_data:/app/media
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik_proxy"
-      # HTTPS router for /portal path (priority 100 to beat WordPress catch-all)
-      - "traefik.http.routers.glimpse-portal.rule=Host(`${SITE_DOMAIN:-glimpseapp.net}`) && PathPrefix(`/portal`)"
+      # HTTPS router for /portal and /api paths
+      - "traefik.http.routers.glimpse-portal.rule=Host(`${SITE_DOMAIN:-glimpseapp.net}`) && (PathPrefix(`/portal`) || PathPrefix(`/api`))"
       - "traefik.http.routers.glimpse-portal.entrypoints=websecure"
       - "traefik.http.routers.glimpse-portal.tls=true"
       - "traefik.http.routers.glimpse-portal.priority=100"
       - "traefik.http.services.glimpse-portal.loadbalancer.server.port=8000"
       # HTTP -> HTTPS redirect
-      - "traefik.http.routers.glimpse-portal-http.rule=Host(`${SITE_DOMAIN:-glimpseapp.net}`) && PathPrefix(`/portal`)"
+      - "traefik.http.routers.glimpse-portal-http.rule=Host(`${SITE_DOMAIN:-glimpseapp.net}`) && (PathPrefix(`/portal`) || PathPrefix(`/api`))"
       - "traefik.http.routers.glimpse-portal-http.entrypoints=web"
       - "traefik.http.routers.glimpse-portal-http.priority=100"
       - "traefik.http.routers.glimpse-portal-http.middlewares=glimpse-portal-https-redirect"
@@ -74,6 +94,7 @@ volumes:
   db_data:
   static_data:
   media_data:
+  redis_data:
 
 networks:
   traefik:

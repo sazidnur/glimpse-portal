@@ -216,30 +216,33 @@ REST_FRAMEWORK = {
 ALLOWED_API_IPS = config('ALLOWED_API_IPS', default='', cast=Csv())
 
 # ===========================================
-# Caching Configuration
+# Caching Configuration (Redis)
 # ===========================================
-# Using local memory cache for development
-# Use Redis/Memcached in production for better performance
+REDIS_URL = config('REDIS_URL', default='redis://localhost:6379/0')
+
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'glimpse-api-cache',
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': REDIS_URL,
         'TIMEOUT': 300,  # 5 minutes default
         'OPTIONS': {
-            'MAX_ENTRIES': 1000,
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
         }
     }
 }
 
-# For production with Redis (uncomment and configure):
-# REDIS_URL = config('REDIS_URL', default=None)
-# if REDIS_URL:
-#     CACHES = {
-#         'default': {
-#             'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-#             'LOCATION': REDIS_URL,
-#         }
-#     }
+# Fallback to local memory cache if Redis is not available (development)
+if not REDIS_URL or REDIS_URL == 'none':
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'glimpse-api-cache',
+            'TIMEOUT': 300,
+            'OPTIONS': {
+                'MAX_ENTRIES': 1000,
+            }
+        }
+    }
 
 # Security settings for production
 if not DEBUG:

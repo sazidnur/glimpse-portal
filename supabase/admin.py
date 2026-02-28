@@ -3,10 +3,73 @@ from django.apps import apps
 from django.urls import path
 from django.http import JsonResponse
 from django.utils.html import format_html
+from django.template.response import TemplateResponse
+
+from api.v1.resources import news_cache, video_cache
+
+import json
+
+
+CACHE_REGISTRY = [
+    {"key": "news", "label": "News", "cache": news_cache, "model": "News"},
+    {"key": "video", "label": "Videos", "cache": video_cache, "model": "Videos"},
+]
 
 
 def _get_model(name):
     return apps.get_model('supabase', name)
+
+
+def _cache_by_key(key):
+    for entry in CACHE_REGISTRY:
+        if entry["key"] == key:
+            return entry
+    return None
+
+
+
+def cache_dashboard_view(request):
+    resources_json = json.dumps([{"key": e["key"], "label": e["label"]} for e in CACHE_REGISTRY])
+    context = {
+        **admin.site.each_context(request),
+        'title': 'Redis Cache Dashboard',
+        'resources_json': resources_json,
+    }
+    return TemplateResponse(request, 'admin/cache_dashboard.html', context)
+
+
+def cache_stats_json(request, key):
+    entry = _cache_by_key(key)
+    if not entry:
+        return JsonResponse({'error': 'Unknown cache key'}, status=404)
+    try:
+        stats = entry["cache"].stats()
+        stats['db_total'] = _get_model(entry["model"]).objects.count()
+        return JsonResponse(stats)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+def cache_warm_json(request, key):
+    entry = _cache_by_key(key)
+    if not entry:
+        return JsonResponse({'error': 'Unknown cache key'}, status=404)
+    try:
+        count = entry["cache"].warm()
+        return JsonResponse({'warmed': count})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+def cache_flush_json(request, key):
+    entry = _cache_by_key(key)
+    if not entry:
+        return JsonResponse({'error': 'Unknown cache key'}, status=404)
+    try:
+        entry["cache"].flush()
+        return JsonResponse({'flushed': True})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 class VideosAdmin(admin.ModelAdmin):
@@ -97,7 +160,6 @@ class VideosAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         return True
 
-
 class VideopublishersAdmin(admin.ModelAdmin):
     list_display = ['id', 'title', 'url', 'platform', 'icon_preview']
     list_per_page = 25
@@ -146,7 +208,32 @@ class VideopublishersAdmin(admin.ModelAdmin):
 admin.site.register(_get_model('Videos'), VideosAdmin)
 admin.site.register(_get_model('Videopublishers'), VideopublishersAdmin)
 
-CUSTOM_MODELS = {'Videos', 'Videopublishers'}
+
+class NewsAdmin(admin.ModelAdmin):
+    list_display = ['id', 'title', 'source', 'timestamp', 'score']
+    list_per_page = 25
+    search_fields = ['title', 'source', 'summary']
+    list_filter = ['timestamp']
+
+
+admin.site.register(_get_model('News'), NewsAdmin)
+
+
+_original_get_urls = admin.AdminSite.get_urls
+
+def _patched_get_urls(self):
+    custom = [
+        path('cache-dashboard/', self.admin_view(cache_dashboard_view), name='cache_dashboard'),
+        path('cache-dashboard/stats/<str:key>/', self.admin_view(cache_stats_json), name='cache_dashboard_stats'),
+        path('cache-dashboard/warm/<str:key>/', self.admin_view(cache_warm_json), name='cache_dashboard_warm'),
+        path('cache-dashboard/flush/<str:key>/', self.admin_view(cache_flush_json), name='cache_dashboard_flush'),
+    ]
+    return custom + _original_get_urls(self)
+
+admin.AdminSite.get_urls = _patched_get_urls
+
+
+CUSTOM_MODELS = {'Videos', 'Videopublishers', 'News'}
 supabase_models = apps.get_app_config('supabase').get_models()
 for model in supabase_models:
     if model.__name__ in CUSTOM_MODELS:
