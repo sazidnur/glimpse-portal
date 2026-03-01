@@ -9,10 +9,13 @@ portal_prefix = settings.PORTAL_URL_PREFIX
 urlpatterns = [
     path(f'{portal_prefix}', RedirectView.as_view(url=f'/{portal_prefix}/', permanent=True)),
     path(f'{portal_prefix}/api/', include('supabase.urls')),
-    path('api/v1/', include('api.v1.urls')),
     path('origin/api/v1/', include('api.v1.urls')),  # CF Worker origin path
     path(f'{portal_prefix}/', admin.site.urls),
 ]
+
+# In development, expose /api/v1/ directly (no Worker needed)
+if settings.DEBUG:
+    urlpatterns.insert(2, path('api/v1/', include('api.v1.urls')))
 
 # Debug toolbar URLs (only in development)
 if settings.DEBUG:

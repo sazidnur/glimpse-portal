@@ -26,6 +26,7 @@ class APISecurityMiddleware:
     2. Add security headers to API responses
     3. Log API requests for monitoring
     4. Protect /origin/ path — only CF Worker can access it
+    5. Block direct /api/v1/ in production (must go through Worker)
     
     Configure in settings.py:
         ALLOWED_API_IPS = ['1.2.3.4', '5.6.7.8']
@@ -50,7 +51,12 @@ class APISecurityMiddleware:
                 logger.warning(f"Blocked direct /origin/ access from {self.get_client_ip(request)}")
                 return JsonResponse({'error': 'Forbidden'}, status=403)
 
-        # Only apply to /api/ paths, but skip /api/v1/ (public API with its own auth)
+        # Block direct /api/v1/ in production — must go through CF Worker
+        if request.path.startswith('/api/v1/') and not settings.DEBUG:
+            logger.warning(f"Blocked direct /api/v1/ access from {self.get_client_ip(request)}")
+            return JsonResponse({'error': 'Forbidden'}, status=403)
+
+        # IP filtering for other /api/ paths (portal internal API)
         if request.path.startswith('/api/') and not request.path.startswith('/api/v1/'):
             client_ip = self.get_client_ip(request)
             

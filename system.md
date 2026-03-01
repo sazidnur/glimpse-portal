@@ -593,19 +593,3 @@ npx wrangler deploy
 ```
 
 For local dev: `npx wrangler dev` starts a server at `http://localhost:8787`.
-
-</details>
-
----
-
-<details open>
-<summary><h2>Future Topics</h2></summary>
-
-- News categories and topic filtering
-- Admin panel cache sync hooks (auto warm on save/delete)
-- Rate limiting and API key management
-- Deployment and CI/CD pipeline
-- WebSocket push for real-time cache updates
-- ~~Cloudflare edge caching and API gateway~~ (done — see above)
-
-</details>

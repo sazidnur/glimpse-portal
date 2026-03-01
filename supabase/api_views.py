@@ -1,12 +1,9 @@
-"""
-REST API for WordPress News Integration and Admin utilities.
-"""
+"""REST API for admin utilities (YouTube, health check)."""
 
 import json
 import logging
 from datetime import datetime
 
-from django.core.cache import cache
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -16,43 +13,9 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
-from .models import News
-from .serializers import NewsListSerializer
 from .youtube import fetch_video_data, fetch_channel_icon
 
 logger = logging.getLogger(__name__)
-
-# Cache timeout (5 minutes)
-CACHE_TIMEOUT = 300
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def news_list(request):
-    """
-    Get latest 20 news articles.
-    
-    Response: [{title, summary, source, imageurl, time_ago}, ...]
-    """
-    cache_key = 'api:news:latest:20'
-    
-    # Try cache first
-    cached = cache.get(cache_key)
-    if cached is not None:
-        response = Response(cached)
-        response['X-Cache'] = 'HIT'
-        return response
-    
-    # Fetch from database
-    news = News.objects.order_by('-timestamp')[:20]
-    data = NewsListSerializer(news, many=True).data
-    
-    # Cache for 5 minutes
-    cache.set(cache_key, data, CACHE_TIMEOUT)
-    
-    response = Response(data)
-    response['X-Cache'] = 'MISS'
-    return response
 
 
 @api_view(['GET'])
