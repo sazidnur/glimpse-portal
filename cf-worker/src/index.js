@@ -3,6 +3,11 @@ const TOKEN_EXPIRY = 7200;
 
 // --- JWT (HMAC-SHA256) ---
 
+// Cache imported CryptoKey objects so crypto.subtle.importKey()
+// runs only once per isolate lifetime, not on every request.
+let _cachedSignKey = null;
+let _cachedVerifyKey = null;
+
 function base64UrlEncode(data) {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   let binary = "";
@@ -17,13 +22,21 @@ function base64UrlDecode(str) {
 }
 
 async function getHMACKey(secret, usage) {
-  return crypto.subtle.importKey(
+  const isSign = usage.includes("sign");
+  if (isSign && _cachedSignKey) return _cachedSignKey;
+  if (!isSign && _cachedVerifyKey) return _cachedVerifyKey;
+
+  const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
     { name: "HMAC", hash: "SHA-256" },
     false,
     usage
   );
+
+  if (isSign) _cachedSignKey = key;
+  else _cachedVerifyKey = key;
+  return key;
 }
 
 async function generateToken(env) {
@@ -143,6 +156,67 @@ async function handleGetToken(request, env) {
   return corsJSON({ token, token_type: "Bearer", expires_in: TOKEN_EXPIRY });
 }
 
+// --- Cache warming (shared by cron + /warm endpoint) ---
+
+const WARM_ENDPOINTS = [
+  "/api/v1/news/?page=1&limit=10",
+  "/api/v1/news/?page=2&limit=10",
+  "/api/v1/news/?page=3&limit=10",
+  "/api/v1/videos/?page=1&limit=10",
+  "/api/v1/videos/?page=2&limit=10",
+];
+
+async function warmCache(env) {
+  const cache = caches.default;
+  const cacheTTL = parseInt(env.CACHE_TTL) || DEFAULT_CACHE_TTL;
+  const workerDomain = env.WORKER_DOMAIN || "glimpseapp.net";
+  const results = [];
+
+  await Promise.allSettled(
+    WARM_ENDPOINTS.map(async (endpoint) => {
+      try {
+        const response = await fetch(`${env.ORIGIN_BASE}${endpoint}`, {
+          headers: {
+            Authorization: `Token ${env.DRF_TOKEN}`,
+            "X-Origin-Secret": env.ORIGIN_PATH_SECRET,
+            Accept: "application/json",
+          },
+        });
+
+        if (response.ok) {
+          const cached = new Response(response.body, response);
+          cached.headers.set("Cache-Control", `s-maxage=${cacheTTL}, must-revalidate`);
+          cached.headers.set("X-Cache", "PREWARMED");
+          await cache.put(new Request(`https://${workerDomain}${endpoint}`), cached);
+          results.push({ endpoint, status: "ok" });
+        } else {
+          results.push({ endpoint, status: "error", code: response.status });
+        }
+      } catch (e) {
+        console.error(`Pre-warm failed for ${endpoint}:`, e.message);
+        results.push({ endpoint, status: "error", error: e.message });
+      }
+    })
+  );
+
+  return results;
+}
+
+async function handleWarm(request, env) {
+  if (request.method !== "POST") {
+    return corsJSON({ error: "POST required" }, 405);
+  }
+
+  const appSecret = request.headers.get("X-App-Secret") || "";
+  if (!appSecret || appSecret !== env.APP_SECRET) {
+    return corsJSON({ error: "Forbidden" }, 403);
+  }
+
+  const results = await warmCache(env);
+  const ok = results.filter((r) => r.status === "ok").length;
+  return corsJSON({ warmed: ok, total: WARM_ENDPOINTS.length, results });
+}
+
 // --- Main Worker ---
 
 export default {
@@ -163,6 +237,11 @@ export default {
     const tokenPath = url.pathname.replace(/\/+$/, "");
     if (tokenPath === "/api/v1/get-token") {
       return handleGetToken(request, env);
+    }
+
+    // Warm endpoint (no JWT needed, uses APP_SECRET)
+    if (tokenPath === "/api/v1/warm") {
+      return handleWarm(request, env);
     }
 
     // Non-GET → proxy to origin (client handles their own DRF auth)
@@ -206,38 +285,8 @@ export default {
 
   // Cron: pre-warm popular endpoints
   async scheduled(event, env, ctx) {
-    const cache = caches.default;
-    const cacheTTL = parseInt(env.CACHE_TTL) || DEFAULT_CACHE_TTL;
-    const workerDomain = env.WORKER_DOMAIN || "glimpseapp.net";
-
-    const endpoints = [
-      "/api/v1/news/",
-      "/api/v1/news/?page=1&limit=10",
-      "/api/v1/videos/",
-      "/api/v1/videos/?page=1&limit=10",
-    ];
-
-    await Promise.allSettled(
-      endpoints.map(async (endpoint) => {
-        try {
-          const response = await fetch(`${env.ORIGIN_BASE}${endpoint}`, {
-            headers: {
-              Authorization: `Token ${env.DRF_TOKEN}`,
-              "X-Origin-Secret": env.ORIGIN_PATH_SECRET,
-              Accept: "application/json",
-            },
-          });
-
-          if (response.ok) {
-            const cached = new Response(response.body, response);
-            cached.headers.set("Cache-Control", `s-maxage=${cacheTTL}, must-revalidate`);
-            cached.headers.set("X-Cache", "PREWARMED");
-            await cache.put(new Request(`https://${workerDomain}${endpoint}`), cached);
-          }
-        } catch (e) {
-          console.error(`Pre-warm failed for ${endpoint}:`, e.message);
-        }
-      })
-    );
+    const results = await warmCache(env);
+    const ok = results.filter((r) => r.status === "ok").length;
+    console.log(`Cron warm: ${ok}/${WARM_ENDPOINTS.length} endpoints warmed`);
   },
 };

@@ -63,6 +63,22 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
+      - name: Warm edge cache after deploy
+        if: steps.deploy.outcome == 'success'
+        run: |
+          echo "Warming edge cache via /api/v1/warm ..."
+          RESP=$(curl -sf -X POST "https://glimpseapp.net/api/v1/warm/" \
+            -H "X-App-Secret: ${{ secrets.CF_APP_SECRET }}" \
+            -H "Content-Type: application/json" 2>/dev/null || echo "")
+
+          if [ -z "$RESP" ]; then
+            echo "::warning::Cache warm failed (secrets may not be set yet). Skipping."
+          else
+            echo "$RESP" | python3 -m json.tool 2>/dev/null || echo "$RESP"
+            echo "✅ Edge cache warmed"
+          fi
+        continue-on-error: true
+
       - name: Verify secrets are set on Cloudflare
         if: steps.deploy.outcome == 'success'
         id: secrets_check

@@ -18,4 +18,4 @@ WORKER_DOMAIN = "glimpseapp.net"
 #   ORIGIN_PATH_SECRET — Shared secret to access /origin/ path on Django
 
 [triggers]
-crons = ["*/30 * * * *"]
+crons = ["*/25 * * * *"]

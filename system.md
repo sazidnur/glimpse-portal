@@ -64,6 +64,13 @@ When Redis is empty (fresh deploy, restart, or flush), the first API request tri
 
 You can also warm manually via API or the admin dashboard.
 
+### The `_populated` Flag
+
+`SortedSetCache` keeps a `_populated` boolean in memory. After the first successful `ensure()` check, it skips the Redis `ZCARD` round-trip on all subsequent requests (saves ~2-5ms per call).
+
+- Resets to `False` on `flush()`, so auto-warm still triggers
+- **Self-healing guard**: If `_populated=True` but `ZCARD` returns 0 (Redis was wiped externally via `FLUSHALL`, OOM eviction, or restart), `get_paginated()` and `get_all()` detect the mismatch, reset the flag, re-warm from DB, and retry — no manual intervention needed
+
 ### DB Fallback
 
 If Redis throws an error, list requests fall back to querying the DB directly. Not ideal for latency, but the API stays up.
@@ -294,7 +301,7 @@ The dashboard auto-renders the new card. No template changes needed.
 | Method | What it does |
 |--------|-------------|
 | `warm()` | Load all items from DB into Redis |
-| `ensure()` | Warm only if cache is empty |
+| `ensure()` | Warm only if cache is empty (skips Redis check after first call via `_populated` flag) |
 | `get_paginated(page, limit)` | Paginated read from sorted set |
 | `get_all(max_items)` | All items (capped) |
 | `add(obj)` | Add single item to cache + sorted set |
@@ -348,6 +355,14 @@ Two databases: local PostgreSQL for Django internals (auth, sessions), Supabase 
 ### Traefik
 
 Traefik reverse proxy routes `/portal` and `/api` to Django with priority 100. Config in `docker-compose.yml` labels.
+
+### Cold Start Latency (CF Worker)
+
+If the Worker isolate hasn't received a request in ~30s-few minutes, Cloudflare evicts it. The next request triggers a cold start (new V8 isolate spinup) adding ~50-100ms. This is the main reason the first request takes ~130ms vs ~30ms for subsequent requests within the same warm isolate.
+
+Mitigations in place:
+- **HMAC key caching**: The `CryptoKey` used for JWT signing/verification is cached at module level (`_cachedSignKey`, `_cachedVerifyKey`). `crypto.subtle.importKey()` runs once per isolate lifetime instead of every request.
+- **Cron keeps isolate warm**: The `*/25` cron acts as a keep-alive — when it fires, it also warms the isolate.
 
 </details>
 
@@ -480,7 +495,7 @@ news = fetchAPI("https://glimpseapp.net/api/v1/news/?page=1&limit=10")
 
 ### Edge Caching
 
-Every successful GET response is cached at Cloudflare's edge for 30 minutes. The cache key is the full URL including query parameters, so `/api/v1/news/?page=1` and `/api/v1/news/?page=2` are cached separately.
+Every successful GET response is cached at Cloudflare's edge for 30 minutes (`s-maxage=1800`). The cache key is the full URL including query parameters, so `/api/v1/news/?page=1` and `/api/v1/news/?page=2` are cached separately.
 
 Responses include an `X-Cache` header so you can see what happened:
 - `HIT` — Served from edge cache, didn't touch origin
@@ -491,16 +506,46 @@ Error responses (4xx, 5xx) are never cached.
 
 When content is created or deleted through POST/DELETE, the cached GET responses will go stale. They automatically expire after 30 minutes. For a news/video feed, this is fine — users seeing slightly old data for a few minutes isn't a problem.
 
+Maximum staleness = cron interval = 25 minutes.
+
 ### Cron Pre-Warming
 
-A scheduled job runs every 30 minutes and pre-fetches the most common endpoints so they're always warm in the edge cache:
+A scheduled job runs every **25 minutes** (`*/25 * * * *`) and pre-fetches the most common endpoints so they're always warm in the edge cache:
 
-- `/api/v1/news/`
 - `/api/v1/news/?page=1&limit=10`
-- `/api/v1/videos/`
+- `/api/v1/news/?page=2&limit=10`
+- `/api/v1/news/?page=3&limit=10`
 - `/api/v1/videos/?page=1&limit=10`
+- `/api/v1/videos/?page=2&limit=10`
 
-This means the first real user request after a cache expiry still gets a fast response.
+**Why 25 min cron with 30 min TTL?** The cron runs 5 minutes before the cache expires, creating a safe overlap. New cache entries are written while old ones are still valid — no gap where users hit origin.
+
+The warming logic lives in a shared `warmCache()` function used by both the cron handler and the `/warm` endpoint (see below). Endpoints to warm are defined in a single `WARM_ENDPOINTS` constant.
+
+### Post-Deploy Cache Warming (`/warm` endpoint)
+
+After a fresh deploy, the edge cache is empty and the cron hasn't run yet. To avoid cold misses, the Worker exposes a `/warm` endpoint:
+
+```
+POST https://glimpseapp.net/api/v1/warm/
+X-App-Secret: your-app-secret
+```
+
+Response:
+```json
+{
+  "warmed": 5,
+  "total": 5,
+  "results": [
+    { "endpoint": "/api/v1/news/?page=1&limit=10", "status": "ok" },
+    ...
+  ]
+}
+```
+
+This runs the exact same `warmCache()` function as the cron — same endpoints, same logic, single source of truth.
+
+The GitHub Actions deploy workflow (`deploy-cf-worker.yml`) automatically calls this after a successful deploy. It requires `CF_APP_SECRET` as a GitHub repo secret (same value as the Worker's `APP_SECRET`).
 
 ### Env Variables
 
@@ -508,11 +553,17 @@ Set secrets via Wrangler CLI (never commit these):
 
 ```bash
 npx wrangler secret put TOKEN_SECRET        # Random 64-char string for JWT signing
-npx wrangler secret put APP_SECRET          # The secret your app sends to get tokens
+npx wrangler secret put APP_SECRET          # The secret your app sends to get tokens + /warm
 npx wrangler secret put DRF_TOKEN           # Django REST Framework auth token
 npx wrangler secret put ORIGIN_BASE         # https://glimpseapp.net/origin
 npx wrangler secret put ORIGIN_PATH_SECRET  # Same value as ORIGIN_PATH_SECRET in Django .env
 ```
+
+GitHub Actions secret (for post-deploy cache warming):
+
+| Secret | Value | Where to set |
+|--------|-------|-------------|
+| `CF_APP_SECRET` | Same as Worker's `APP_SECRET` | GitHub Repo → Settings → Secrets → Actions |
 
 Django side (`.env`):
 
@@ -528,6 +579,8 @@ Plain variables in `wrangler.toml`:
 |----------|-------|-------------|
 | `CACHE_TTL` | `1800` | Edge cache duration in seconds (30 min) |
 | `WORKER_DOMAIN` | `glimpseapp.net` | Used for cron pre-warm cache key URLs |
+
+> **Note:** Cloudflare Worker secrets are **write-only** — once set, you cannot view them in the dashboard or via API. You can only overwrite with a new value.
 
 ### Files
 
