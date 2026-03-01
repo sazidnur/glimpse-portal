@@ -90,7 +90,7 @@ jobs:
 
       - name: Verify deployment
         if: steps.deploy.outcome == 'success'
-        run: npx wrangler deployments list --limit 1
+        run: npx wrangler deployments list
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
