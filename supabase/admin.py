@@ -75,6 +75,9 @@ def cache_flush_json(request, key):
 class VideosAdmin(admin.ModelAdmin):
     list_display = ['id', 'title', 'publisher_name', 'timestamp', 'score', 'thumbnail_preview_small']
     list_per_page = 25
+    list_select_related = ['publisher']
+    ordering = ['-id']
+    show_full_result_count = False
     search_fields = ['title', 'source']
     readonly_fields = [
         'id', 'title', 'videourl', 'source', 'publisher',
