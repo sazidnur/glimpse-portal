@@ -362,6 +362,8 @@ There's a Cloudflare Worker sitting between the internet and our Django server. 
 
 It only touches `/api/v1/` paths. The admin panel, website, static files — none of that goes through the Worker.
 
+In production, Django does **not** register the `/api/v1/` URL pattern at all — it only registers `/origin/api/v1/`. The middleware also blocks `/api/v1/` when `DEBUG=False` as defense-in-depth. This means the only way to reach the API in production is through the Worker. In local development (`DEBUG=True`), `/api/v1/` is available directly for convenience.
+
 ### How the Request Flow Works
 
 ```
@@ -396,9 +398,7 @@ The Worker JWT is a lightweight layer that protects the previously-public GET en
 
 ```
 POST https://glimpseapp.net/api/v1/get-token
-Content-Type: application/json
-
-{ "app_secret": "your-shared-secret" }
+X-App-Secret: your-shared-secret
 ```
 
 Response:
@@ -461,7 +461,7 @@ tokenExpiry = 0
 
 function getToken():
     response = POST("https://glimpseapp.net/api/v1/get-token", {
-        body: { app_secret: APP_SECRET }
+        headers: { "X-App-Secret": APP_SECRET }
     })
     token = response.token
     tokenExpiry = now() + response.expires_in

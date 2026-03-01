@@ -46,14 +46,10 @@
             "method": "POST",
             "header": [
               {
-                "key": "Content-Type",
-                "value": "application/json"
+                "key": "X-App-Secret",
+                "value": "{{app_secret}}"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"app_secret\": \"{{app_secret}}\"\n}"
-            },
             "url": {
               "raw": "{{base_url}}/api/v1/get-token",
               "host": ["{{base_url}}"],

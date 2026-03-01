@@ -134,14 +134,8 @@ async function handleGetToken(request, env) {
     return corsJSON({ error: "POST required" }, 405);
   }
 
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return corsJSON({ error: "Invalid JSON body" }, 400);
-  }
-
-  if (!body.app_secret || body.app_secret !== env.APP_SECRET) {
+  const appSecret = request.headers.get("X-App-Secret") || "";
+  if (!appSecret || appSecret !== env.APP_SECRET) {
     return corsJSON({ error: "Forbidden" }, 403);
   }
 
