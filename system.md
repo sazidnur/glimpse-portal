@@ -386,7 +386,7 @@ The Worker is deployed on `glimpseapp.net/api/v1/*`. When it needs fresh data fr
 
 This system uses two separate tokens for different purposes:
 
-**Worker JWT** — A short-lived token (15 minutes) that the Worker creates and validates. This is what your app uses for reading data via GET requests. The app never talks to Django to get this token — it comes from the Worker itself.
+**Worker JWT** — A short-lived token (2 hours) that the Worker creates and validates. This is what your app uses for reading data via GET requests. The app never talks to Django to get this token — it comes from the Worker itself.
 
 **DRF Token** — The existing Django REST Framework token. Used for write operations (POST, DELETE) and also used internally by the Worker to fetch data from the origin. Your app still uses this for creating/deleting content, same as before.
 

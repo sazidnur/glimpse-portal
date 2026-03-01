@@ -1,5 +1,5 @@
 const DEFAULT_CACHE_TTL = 1800;
-const TOKEN_EXPIRY = 900;
+const TOKEN_EXPIRY = 7200;
 
 // --- JWT (HMAC-SHA256) ---
 
