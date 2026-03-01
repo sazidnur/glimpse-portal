@@ -15,6 +15,7 @@ class SortedSetCache:
         self.model = model
         self.serialize_fn = serialize_fn
         self.ttl = ttl
+        self._populated = False  # avoids redundant ZCARD on every request
 
     def _redis(self):
         return get_redis_connection("default")
@@ -72,9 +73,12 @@ class SortedSetCache:
         return self._redis().zcard(self.sorted_set_key) > 0
 
     def ensure(self):
+        if self._populated:
+            return
         if not self.is_populated():
             logger.info("%s cache empty, warming from DB...", self.member_prefix)
             self.warm()
+        self._populated = True
 
     def _backfill(self, r, members, items):
         missing_ids = []
@@ -102,6 +106,14 @@ class SortedSetCache:
         members = r.zrevrange(self.sorted_set_key, start, start + limit - 1)
         total = r.zcard(self.sorted_set_key)
 
+        # Guard: if Redis was wiped externally, re-warm automatically
+        if total == 0 and self._populated:
+            logger.warning("%s Redis appears wiped, re-warming...", self.member_prefix)
+            self._populated = False
+            self.ensure()
+            members = r.zrevrange(self.sorted_set_key, start, start + limit - 1)
+            total = r.zcard(self.sorted_set_key)
+
         items = []
         if members:
             self._backfill(r, members, items)
@@ -119,6 +131,14 @@ class SortedSetCache:
         r = self._redis()
         members = r.zrevrange(self.sorted_set_key, 0, max_items - 1)
         total = r.zcard(self.sorted_set_key)
+
+        # Guard: if Redis was wiped externally, re-warm automatically
+        if total == 0 and self._populated:
+            logger.warning("%s Redis appears wiped, re-warming...", self.member_prefix)
+            self._populated = False
+            self.ensure()
+            members = r.zrevrange(self.sorted_set_key, 0, max_items - 1)
+            total = r.zcard(self.sorted_set_key)
 
         items = []
         if members:
@@ -172,6 +192,7 @@ class SortedSetCache:
             pipe.delete(self._obj_key(self._extract_id(m)))
         pipe.delete(self.sorted_set_key)
         pipe.execute()
+        self._populated = False  # reset so ensure() re-checks after flush
         logger.info("Flushed %s cache", self.member_prefix)
 
     def stats(self):
