@@ -1,0 +1,21 @@
+name = "glimpse-api-gateway"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+routes = [
+  { pattern = "glimpseapp.net/api/v1/*", zone_name = "glimpseapp.net" }
+]
+
+[vars]
+CACHE_TTL = "1800"
+WORKER_DOMAIN = "glimpseapp.net"
+
+# Secrets (set via wrangler secret put):
+#   TOKEN_SECRET       — HMAC key for Worker JWTs
+#   APP_SECRET         — Shared secret for /api/v1/get-token
+#   DRF_TOKEN          — DRF auth token for origin fetch
+#   ORIGIN_BASE        — https://glimpseapp.net/origin
+#   ORIGIN_PATH_SECRET — Shared secret to access /origin/ path on Django
+
+[triggers]
+crons = ["*/30 * * * *"]

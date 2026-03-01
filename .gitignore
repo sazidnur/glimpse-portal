@@ -139,6 +139,10 @@ Thumbs.db
 # Docker
 .docker/
 
+# Node / Cloudflare Worker
+node_modules/
+.wrangler/
+
 # SSL certificates (keep structure, ignore actual certs)
 nginx/ssl/*.pem
 nginx/ssl/*.crt

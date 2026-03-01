@@ -215,6 +215,9 @@ REST_FRAMEWORK = {
 # Example: ALLOWED_API_IPS=1.2.3.4,5.6.7.8
 ALLOWED_API_IPS = config('ALLOWED_API_IPS', default='', cast=Csv())
 
+# CF Worker origin path secret — protects /origin/ from direct access
+ORIGIN_PATH_SECRET = config('ORIGIN_PATH_SECRET', default='')
+
 # ===========================================
 # Caching Configuration (Redis)
 # ===========================================

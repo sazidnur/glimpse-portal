@@ -354,6 +354,251 @@ Traefik reverse proxy routes `/portal` and `/api` to Django with priority 100. C
 ---
 
 <details open>
+<summary><h2>Cloudflare Edge Worker (API Gateway)</h2></summary>
+
+### What Is This?
+
+There's a Cloudflare Worker sitting between the internet and our Django server. It acts as a gatekeeper for all `GET /api/v1/*` requests. Think of it as a bouncer + speed layer — it checks who you are before letting you read data, and it serves cached responses from Cloudflare's edge so the origin server doesn't get hammered.
+
+It only touches `/api/v1/` paths. The admin panel, website, static files — none of that goes through the Worker.
+
+### How the Request Flow Works
+
+```
+Your App
+   │
+   ▼
+Cloudflare Worker  (glimpseapp.net/api/v1/*)
+   │
+   ├── GET request?  → Check JWT → Serve from edge cache (or fetch origin)
+   ├── POST/DELETE?   → Pass straight through to Django (you handle DRF auth)
+   └── Not /api/v1/?  → Pass straight through to origin
+   │
+   ▼
+Django + DRF  (glimpseapp.net/origin/api/v1/*)  ← Worker fetches from here
+```
+
+The Worker is deployed on `glimpseapp.net/api/v1/*`. When it needs fresh data from Django, it can't fetch from the same path (that would loop back into itself). So Django also mounts the same views at `/origin/api/v1/*`. This path is protected by a shared secret header (`X-Origin-Secret`) — only the Worker knows it. No extra subdomain needed, no server IP exposed.
+
+### Two Types of Tokens
+
+This system uses two separate tokens for different purposes:
+
+**Worker JWT** — A short-lived token (15 minutes) that the Worker creates and validates. This is what your app uses for reading data via GET requests. The app never talks to Django to get this token — it comes from the Worker itself.
+
+**DRF Token** — The existing Django REST Framework token. Used for write operations (POST, DELETE) and also used internally by the Worker to fetch data from the origin. Your app still uses this for creating/deleting content, same as before.
+
+The Worker JWT is a lightweight layer that protects the previously-public GET endpoints. Users of your app never see the DRF token for read operations — only the Worker uses it behind the scenes when it needs to fetch fresh data.
+
+### What Each Request Type Does
+
+**Getting a token (for your app to read data):**
+
+```
+POST https://glimpseapp.net/api/v1/get-token
+Content-Type: application/json
+
+{ "app_secret": "your-shared-secret" }
+```
+
+Response:
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "token_type": "Bearer",
+  "expires_in": 900
+}
+```
+
+Your app should call this once, cache the token, and refresh it before it expires (every 15 min).
+
+**Reading data (GET endpoints — news, videos, etc.):**
+
+```
+GET https://glimpseapp.net/api/v1/news/?page=1&limit=10
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
+```
+
+The Worker validates the JWT, then either:
+- Returns the cached response instantly (`X-Cache: HIT`)
+- Fetches from origin using the DRF token, caches it, returns it (`X-Cache: MISS`)
+
+**Writing data (POST, DELETE — same as before):**
+
+```
+POST https://glimpseapp.net/api/v1/news/create/
+Authorization: Token your-drf-token
+Content-Type: application/json
+
+{ "title": "...", "summary": "...", "source": "..." }
+```
+
+The Worker doesn't interfere here. It forwards the request to Django as-is. Your app sends the DRF token directly.
+
+### Setting Up Auth in Your App
+
+Here's the flow your app should follow:
+
+1. **On app startup (or when the current token is expired):**
+   - Call `POST /api/v1/get-token` with your `app_secret`
+   - Store the returned JWT and its expiry time
+
+2. **For every GET request:**
+   - Attach the JWT: `Authorization: Bearer <jwt>`
+   - If you get a 401 back, fetch a new token and retry
+
+3. **For POST/DELETE requests:**
+   - Use the DRF token directly: `Authorization: Token <drf-token>`
+   - The Worker doesn't check these — they go straight to Django
+
+Simple example:
+
+```
+// Pseudocode for any client
+
+token = null
+tokenExpiry = 0
+
+function getToken():
+    response = POST("https://glimpseapp.net/api/v1/get-token", {
+        body: { app_secret: APP_SECRET }
+    })
+    token = response.token
+    tokenExpiry = now() + response.expires_in
+
+function fetchAPI(endpoint):
+    if token is null or now() > tokenExpiry:
+        getToken()
+
+    return GET(endpoint, {
+        headers: { Authorization: "Bearer " + token }
+    })
+
+// Usage
+news = fetchAPI("https://glimpseapp.net/api/v1/news/?page=1&limit=10")
+```
+
+### Edge Caching
+
+Every successful GET response is cached at Cloudflare's edge for 30 minutes. The cache key is the full URL including query parameters, so `/api/v1/news/?page=1` and `/api/v1/news/?page=2` are cached separately.
+
+Responses include an `X-Cache` header so you can see what happened:
+- `HIT` — Served from edge cache, didn't touch origin
+- `MISS` — Fetched from origin, now cached for next time
+- `PREWARMED` — Cron job pre-filled this cache entry
+
+Error responses (4xx, 5xx) are never cached.
+
+When content is created or deleted through POST/DELETE, the cached GET responses will go stale. They automatically expire after 30 minutes. For a news/video feed, this is fine — users seeing slightly old data for a few minutes isn't a problem.
+
+### Cron Pre-Warming
+
+A scheduled job runs every 30 minutes and pre-fetches the most common endpoints so they're always warm in the edge cache:
+
+- `/api/v1/news/`
+- `/api/v1/news/?page=1&limit=10`
+- `/api/v1/videos/`
+- `/api/v1/videos/?page=1&limit=10`
+
+This means the first real user request after a cache expiry still gets a fast response.
+
+### Env Variables
+
+Set secrets via Wrangler CLI (never commit these):
+
+```bash
+npx wrangler secret put TOKEN_SECRET        # Random 64-char string for JWT signing
+npx wrangler secret put APP_SECRET          # The secret your app sends to get tokens
+npx wrangler secret put DRF_TOKEN           # Django REST Framework auth token
+npx wrangler secret put ORIGIN_BASE         # https://glimpseapp.net/origin
+npx wrangler secret put ORIGIN_PATH_SECRET  # Same value as ORIGIN_PATH_SECRET in Django .env
+```
+
+Django side (`.env`):
+
+```
+ORIGIN_PATH_SECRET=your-random-secret-here
+```
+
+This secret must match between the Worker and Django. Generate it the same way as the others (`-join ((1..32) | ForEach-Object { "{0:x2}" -f (Get-Random -Max 256) })`).
+
+Plain variables in `wrangler.toml`:
+
+| Variable | Value | What it does |
+|----------|-------|-------------|
+| `CACHE_TTL` | `1800` | Edge cache duration in seconds (30 min) |
+| `WORKER_DOMAIN` | `glimpseapp.net` | Used for cron pre-warm cache key URLs |
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `cf-worker/src/index.js` | The Worker script |
+| `cf-worker/wrangler.toml` | Wrangler config (routes, vars, cron) |
+| `cf-worker/package.json` | Dependencies (wrangler) |
+| `cf-worker/Dockerfile` | Container for wrangler — no local Node needed |
+| `cf-worker/.dockerignore` | Keeps node_modules out of the image |
+
+### Deploy (Docker — recommended)
+
+No need to install Node or Wrangler locally. Everything runs in a container.
+
+**First time setup:**
+
+```bash
+cd cf-worker
+
+# Build the container
+docker build -t glimpse-worker .
+
+# Get an API token from: Cloudflare Dashboard → My Profile → API Tokens
+# Use the "Edit Cloudflare Workers" template
+# Set it as an env variable:
+set CLOUDFLARE_API_TOKEN=your-token-here
+
+# Set secrets (interactive, one at a time)
+docker run --rm -it -e CLOUDFLARE_API_TOKEN=%CLOUDFLARE_API_TOKEN% glimpse-worker secret put TOKEN_SECRET
+docker run --rm -it -e CLOUDFLARE_API_TOKEN=%CLOUDFLARE_API_TOKEN% glimpse-worker secret put APP_SECRET
+docker run --rm -it -e CLOUDFLARE_API_TOKEN=%CLOUDFLARE_API_TOKEN% glimpse-worker secret put DRF_TOKEN
+docker run --rm -it -e CLOUDFLARE_API_TOKEN=%CLOUDFLARE_API_TOKEN% glimpse-worker secret put ORIGIN_BASE
+docker run --rm -it -e CLOUDFLARE_API_TOKEN=%CLOUDFLARE_API_TOKEN% glimpse-worker secret put ORIGIN_PATH_SECRET
+```
+
+**Deploy (every time you update the worker):**
+
+```bash
+docker run --rm -e CLOUDFLARE_API_TOKEN=%CLOUDFLARE_API_TOKEN% glimpse-worker deploy
+```
+
+**Live logs:**
+
+```bash
+docker run --rm -e CLOUDFLARE_API_TOKEN=%CLOUDFLARE_API_TOKEN% glimpse-worker tail
+```
+
+### Deploy (without Docker)
+
+If you prefer installing locally:
+
+```bash
+cd cf-worker
+npm install
+npx wrangler login
+npx wrangler secret put TOKEN_SECRET
+npx wrangler secret put APP_SECRET
+npx wrangler secret put DRF_TOKEN
+npx wrangler secret put ORIGIN_BASE
+npx wrangler secret put ORIGIN_PATH_SECRET
+npx wrangler deploy
+```
+
+For local dev: `npx wrangler dev` starts a server at `http://localhost:8787`.
+
+</details>
+
+---
+
+<details open>
 <summary><h2>Future Topics</h2></summary>
 
 - News categories and topic filtering
@@ -361,5 +606,6 @@ Traefik reverse proxy routes `/portal` and `/api` to Django with priority 100. C
 - Rate limiting and API key management
 - Deployment and CI/CD pipeline
 - WebSocket push for real-time cache updates
+- ~~Cloudflare edge caching and API gateway~~ (done — see above)
 
 </details>

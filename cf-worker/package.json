@@ -1,0 +1,18 @@
+{
+  "name": "glimpse-api-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloudflare edge worker — auth + caching proxy for Glimpse Portal API",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "docker:build": "docker build -t glimpse-worker .",
+    "docker:deploy": "docker run --rm -e CLOUDFLARE_API_TOKEN=%CLOUDFLARE_API_TOKEN% glimpse-worker deploy",
+    "docker:secret": "docker run --rm -it -e CLOUDFLARE_API_TOKEN=%CLOUDFLARE_API_TOKEN% glimpse-worker secret put",
+    "docker:tail": "docker run --rm -e CLOUDFLARE_API_TOKEN=%CLOUDFLARE_API_TOKEN% glimpse-worker tail"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

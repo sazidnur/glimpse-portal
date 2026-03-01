@@ -1,0 +1,164 @@
+{
+  "info": {
+    "name": "Glimpse API Gateway",
+    "description": "Cloudflare Worker endpoints for Glimpse Portal API.\n\nUsage:\n1. Call \"Get Token\" first — it auto-saves the JWT.\n2. Then call News or Videos — they use the saved token automatically.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://glimpseapp.net",
+      "type": "string"
+    },
+    {
+      "key": "app_secret",
+      "value": "YOUR_APP_SECRET_HERE",
+      "type": "string"
+    },
+    {
+      "key": "worker_token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Get Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const data = pm.response.json();",
+                  "    pm.collectionVariables.set('worker_token', data.token);",
+                  "    console.log('Token saved. Expires in ' + data.expires_in + 's');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"app_secret\": \"{{app_secret}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/get-token",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "get-token"]
+            },
+            "description": "Get a short-lived JWT (15 min). The token is auto-saved to the collection variable `worker_token` for use in other requests."
+          }
+        }
+      ]
+    },
+    {
+      "name": "News",
+      "item": [
+        {
+          "name": "List News",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{worker_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/news/?page=1&limit=10",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "news", ""],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" }
+              ]
+            },
+            "description": "Paginated news list. Requires Worker JWT."
+          }
+        },
+        {
+          "name": "List All News",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{worker_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/news/?all=true",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "news", ""],
+              "query": [
+                { "key": "all", "value": "true" }
+              ]
+            },
+            "description": "All news items (capped at 10,000). Requires Worker JWT."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Videos",
+      "item": [
+        {
+          "name": "List Videos",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{worker_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/videos/?page=1&limit=10",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "videos", ""],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" }
+              ]
+            },
+            "description": "Paginated videos list. Requires Worker JWT."
+          }
+        },
+        {
+          "name": "List All Videos",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{worker_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/videos/?all=true",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "videos", ""],
+              "query": [
+                { "key": "all", "value": "true" }
+              ]
+            },
+            "description": "All video items (capped at 10,000). Requires Worker JWT."
+          }
+        }
+      ]
+    }
+  ]
+}

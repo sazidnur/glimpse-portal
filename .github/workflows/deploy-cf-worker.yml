@@ -1,0 +1,151 @@
+name: Deploy CF Worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "cf-worker/**"
+
+jobs:
+  deploy:
+    name: Deploy to Cloudflare
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cf-worker
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check CLOUDFLARE_API_TOKEN is set
+        run: |
+          if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN secret is not set."
+            echo "## ❌ Missing GitHub Secret" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**\`CLOUDFLARE_API_TOKEN\`** is not configured in this repo." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### How to fix:" >> $GITHUB_STEP_SUMMARY
+            echo "1. Go to **Cloudflare Dashboard → My Profile → API Tokens**" >> $GITHUB_STEP_SUMMARY
+            echo "2. Create a token using the **Edit Cloudflare Workers** template" >> $GITHUB_STEP_SUMMARY
+            echo "3. Go to **GitHub Repo → Settings → Secrets → Actions → New repository secret**" >> $GITHUB_STEP_SUMMARY
+            echo "4. Name: \`CLOUDFLARE_API_TOKEN\`, Value: your token" >> $GITHUB_STEP_SUMMARY
+            echo "5. Re-run this workflow" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: cf-worker/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Check if worker exists
+        id: check
+        run: |
+          if npx wrangler deployments list 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        continue-on-error: true
+
+      - name: Deploy worker
+        id: deploy
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Verify secrets are set on Cloudflare
+        if: steps.deploy.outcome == 'success'
+        id: secrets_check
+        run: |
+          REQUIRED_SECRETS="TOKEN_SECRET APP_SECRET DRF_TOKEN ORIGIN_BASE ORIGIN_PATH_SECRET"
+          SECRETS_JSON=$(npx wrangler secret list 2>/dev/null || echo "[]")
+          MISSING=""
+
+          for secret in $REQUIRED_SECRETS; do
+            if ! echo "$SECRETS_JSON" | grep -q "\"$secret\""; then
+              MISSING="$MISSING $secret"
+            fi
+          done
+
+          if [ -n "$MISSING" ]; then
+            echo "missing=$MISSING" >> $GITHUB_OUTPUT
+            echo "secrets_missing=true" >> $GITHUB_OUTPUT
+            echo "::warning::Missing Worker secrets:$MISSING"
+          else
+            echo "missing=" >> $GITHUB_OUTPUT
+            echo "secrets_missing=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Verify deployment
+        if: steps.deploy.outcome == 'success'
+        run: npx wrangler deployments list --limit 1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## ☁️ CF Worker Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Deploy failed
+          if [ "${{ steps.deploy.outcome }}" = "failure" ]; then
+            echo "### ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Check the deploy step logs above for details." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ steps.check.outputs.exists }}" = "false" ]; then
+              echo "This appears to be a **fresh deploy**. Make sure:" >> $GITHUB_STEP_SUMMARY
+              echo "- The Cloudflare zone \`glimpseapp.net\` exists" >> $GITHUB_STEP_SUMMARY
+              echo "- The API token has **Edit Workers** permission on this zone" >> $GITHUB_STEP_SUMMARY
+            fi
+            exit 0
+          fi
+
+          # Deploy succeeded but secrets missing
+          if [ "${{ steps.secrets_check.outputs.secrets_missing }}" = "true" ]; then
+            echo "### ⚠️ Deployed but Missing Worker Secrets" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The worker code is deployed, but these **Cloudflare Worker secrets** are not set:" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            for s in ${{ steps.secrets_check.outputs.missing }}; do
+              echo "- \`$s\`" >> $GITHUB_STEP_SUMMARY
+            done
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The worker **will not work** until all secrets are configured." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### How to fix:" >> $GITHUB_STEP_SUMMARY
+            echo "Run these commands locally (needs Docker + the glimpse-worker image):" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            for s in ${{ steps.secrets_check.outputs.missing }}; do
+              echo "docker run --rm -it -e CLOUDFLARE_API_TOKEN=your-token glimpse-worker secret put $s" >> $GITHUB_STEP_SUMMARY
+            done
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "After setting secrets, the worker starts working immediately — no redeploy needed." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          # All good
+          if [ "${{ steps.check.outputs.exists }}" = "false" ]; then
+            echo "**Type:** ✅ Fresh deploy" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Type:** ✅ Update" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "**Worker:** \`glimpse-api-gateway\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Route:** \`glimpseapp.net/api/v1/*\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** \`${{ github.event_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
