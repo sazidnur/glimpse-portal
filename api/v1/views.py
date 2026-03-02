@@ -84,17 +84,9 @@ class CachedCreateView(APIView):
 
         if many:
             objects = serializer.save()
-            try:
-                self.cache.add_many(objects)
-            except Exception as e:
-                logger.warning("Failed to push %d %s items to Redis: %s", len(objects), self.cache.member_prefix, e)
             return Response({"created": len(objects), "items": self.serializer_class(objects, many=True).data}, status=201)
 
         obj = serializer.save()
-        try:
-            self.cache.add(obj)
-        except Exception as e:
-            logger.warning("Failed to push %s:%d to Redis: %s", self.cache.member_prefix, obj.id, e)
         return Response(self.serializer_class(obj).data, status=201)
 
 
@@ -115,10 +107,6 @@ class CachedDeleteView(APIView):
             return Response({"error": f"{self.model.__name__} not found"}, status=404)
 
         obj.delete()
-        try:
-            self.cache.delete(pk)
-        except Exception as e:
-            logger.warning("Failed to remove %s:%d from Redis: %s", self.cache.member_prefix, pk, e)
         return Response({"deleted": pk}, status=200)
 
     def _delete_batch(self, request):
@@ -131,10 +119,6 @@ class CachedDeleteView(APIView):
         not_found = [i for i in ids if i not in found_ids]
 
         existing.delete()
-        try:
-            self.cache.delete_many(found_ids)
-        except Exception as e:
-            logger.warning("Failed to remove %d %s items from Redis: %s", len(found_ids), self.cache.member_prefix, e)
 
         result = {"deleted": found_ids, "count": len(found_ids)}
         if not_found:
