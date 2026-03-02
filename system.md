@@ -149,7 +149,28 @@ POST /api/v1/news/create/
 ]
 ```
 
-Returns `{ "created": 2, "items": [...] }` with `201`.
+Items are validated and saved individually — valid items are saved even if others fail (partial write).
+
+Returns `201` if at least one item was saved, `400` if all fail.
+
+Success (all saved):
+```json
+{ "created": 2, "failed": 0, "items": [...] }
+```
+
+Partial success (some failed):
+```json
+{
+  "created": 1,
+  "failed": 1,
+  "items": [...],
+  "errors": [
+    { "index": 1, "errors": { "source": ["news with this source already exists."] } }
+  ]
+}
+```
+
+`errors` is only present when `failed > 0`. Each entry has `index` (position in the input array) and the validation errors for that item.
 
 ### Delete (single)
 

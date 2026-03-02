@@ -78,16 +78,31 @@ class CachedCreateView(APIView):
 
     def post(self, request):
         many = isinstance(request.data, list)
-        serializer = self.serializer_class(data=request.data, many=many)
-        if not serializer.is_valid():
-            return Response({"errors": serializer.errors}, status=400)
 
-        if many:
-            objects = serializer.save()
-            return Response({"created": len(objects), "items": self.serializer_class(objects, many=True).data}, status=201)
+        if not many:
+            serializer = self.serializer_class(data=request.data)
+            if not serializer.is_valid():
+                return Response({"errors": serializer.errors}, status=400)
+            obj = serializer.save()
+            return Response(self.serializer_class(obj).data, status=201)
 
-        obj = serializer.save()
-        return Response(self.serializer_class(obj).data, status=201)
+        saved, errors = [], []
+        for idx, item in enumerate(request.data):
+            s = self.serializer_class(data=item)
+            if s.is_valid():
+                saved.append(s.save())
+            else:
+                errors.append({"index": idx, "errors": s.errors})
+
+        result = {
+            "created": len(saved),
+            "failed": len(errors),
+            "items": self.serializer_class(saved, many=True).data,
+        }
+        if errors:
+            result["errors"] = errors
+        status = 201 if saved else 400
+        return Response(result, status=status)
 
 
 class CachedDeleteView(APIView):
