@@ -1,0 +1,732 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}Cloudflare Cache Analytics{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">Home</a>
+    &rsaquo; Cloudflare Cache Analytics
+</div>
+{% endblock %}
+
+{% block content %}
+<style>
+  .cfa-wrap { max-width: 1200px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+
+  .cfa-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
+  .cfa-header h2 { margin: 0 0 4px; font-size: 20px; color: #333; }
+  .cfa-header p  { margin: 0; font-size: 13px; color: #777; }
+
+  .cfa-controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .cfa-controls label { font-size: 12px; color: #777; font-weight: 600; }
+  .range-btn {
+    padding: 5px 13px; font-size: 12px; font-weight: 600;
+    border: 1px solid #d0d7de; border-radius: 5px;
+    background: #fff; color: #444; cursor: pointer; transition: all .15s;
+  }
+  .range-btn:hover  { background: #f3f4f6; border-color: #aaa; }
+  .range-btn.active { background: #417690; color: #fff; border-color: #417690; }
+
+  .cfa-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 22px; }
+  .stat-card {
+    background: #fff; border: 1px solid #e4e8ec; border-radius: 10px;
+    padding: 18px 20px; display: flex; flex-direction: column; gap: 5px; transition: box-shadow .15s;
+  }
+  .stat-card:hover { box-shadow: 0 2px 14px rgba(0,0,0,.07); }
+  .stat-card.total  { border-left: 4px solid #417690; }
+  .stat-card.worker { border-left: 4px solid #27ae60; }
+  .stat-card.cdn    { border-left: 4px solid #2980b9; }
+  .stat-card.origin { border-left: 4px solid #e74c3c; }
+  .sc-label { font-size: 10px; text-transform: uppercase; letter-spacing: .7px; color: #999; font-weight: 700; }
+  .sc-value { font-size: 30px; font-weight: 700; line-height: 1.1; color: #1a1a1a; }
+  .sc-pct   { font-size: 12px; font-weight: 600; }
+  .sc-sub   { font-size: 11px; color: #aaa; }
+  .pct-green { color: #27ae60; } .pct-blue { color: #2980b9; }
+  .pct-red   { color: #e74c3c; } .pct-grey { color: #888; }
+
+  .cfa-charts { display: grid; grid-template-columns: 1fr 310px; gap: 18px; margin-bottom: 22px; }
+  @media (max-width: 860px) { .cfa-charts { grid-template-columns: 1fr; } }
+  .chart-panel {
+    background: #fff; border: 1px solid #e4e8ec; border-radius: 10px;
+    padding: 22px; transition: box-shadow .15s;
+  }
+  .chart-panel:hover { box-shadow: 0 2px 12px rgba(0,0,0,.06); }
+  .chart-panel h3 { margin: 0 0 18px; font-size: 14px; font-weight: 600; color: #333; }
+  .chart-wrap { position: relative; }
+
+  .cfa-table-wrap {
+    background: #fff; border: 1px solid #e4e8ec; border-radius: 10px;
+    padding: 22px; margin-bottom: 22px; overflow-x: auto;
+  }
+  .cfa-table-wrap h3 { margin: 0 0 14px; font-size: 14px; font-weight: 600; color: #333; }
+  .cfa-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .cfa-table th { text-align: left; padding: 7px 12px; background: #f6f8fa; color: #555; font-weight: 700; border-bottom: 1px solid #e4e8ec; white-space: nowrap; }
+  .cfa-table td { padding: 7px 12px; border-bottom: 1px solid #f0f2f4; color: #333; }
+  .cfa-table tr:last-child td { border-bottom: none; }
+  .cfa-table tr:hover td { background: #fbfcfd; }
+  .bar-cell { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+  .mini-bar { height: 5px; border-radius: 3px; }
+
+  .cfa-loading, .cfa-error, .cfa-empty { text-align: center; padding: 56px 24px; color: #999; font-size: 14px; }
+  .cfa-error { color: #c0392b; }
+  .spinner {
+    display: inline-block; width: 18px; height: 18px;
+    border: 2px solid #e0e0e0; border-top-color: #417690;
+    border-radius: 50%; animation: spin .65s linear infinite;
+    vertical-align: middle; margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .cfa-notice {
+    background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;
+    padding: 18px 22px; font-size: 13.5px; color: #555; margin-bottom: 22px; line-height: 1.75;
+  }
+  .cfa-notice code { background: #f5f5f5; padding: 1px 6px; border-radius: 3px; font-size: 12px; color: #b91c1c; }
+  .cfa-meta { font-size: 11px; color: #bbb; text-align: right; margin-bottom: 18px; }
+</style>
+
+<div class="cfa-wrap">
+  <div class="cfa-header">
+    <div>
+      <h2>Cloudflare Cache Analytics</h2>
+      <p>Requests served by Worker microcache, CDN/tiered cache, and origin. Batched every 60 s per isolate.</p>
+    </div>
+    <div class="cfa-controls">
+      <label>Range:&nbsp;</label>
+      <button class="range-btn" data-range="10m">10m</button>
+      <button class="range-btn" data-range="30m">30m</button>
+      <button class="range-btn" data-range="1h">1h</button>
+      <button class="range-btn" data-range="6h">6h</button>
+      <button class="range-btn active" data-range="24h">24h</button>
+      <button class="range-btn" data-range="7d">7d</button>
+      <button class="range-btn" data-range="30d">30d</button>
+    </div>
+  </div>
+
+  {% if not has_credentials %}
+  <div class="cfa-notice">
+    <strong>Credentials not configured.</strong> Add these to your <code>.env</code> and restart:
+    <ul style="margin:8px 0 0 18px;">
+      <li><code>CF_ACCOUNT_ID</code> — Cloudflare dashboard → right sidebar → "Account ID" (free, no paid plan needed)</li>
+      <li><code>CF_ANALYTICS_TOKEN</code> — API token with <em>Account Analytics: Read</em> only
+        (<a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank">create here</a>)</li>
+    </ul>
+  </div>
+  {% endif %}
+
+  <div id="cfa-content">
+    <div class="cfa-loading"><span class="spinner"></span> Loading analytics&hellip;</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  const DATA_URL  = "{% url 'admin:cf_analytics_data' %}";
+  const HAS_CREDS = {{ has_credentials|yesno:"true,false" }};
+
+  let lineChart = null, donutChart = null;
+  let activeRange = "24h";
+
+  const C = {
+    worker: { line: '#27ae60', fill: 'rgba(39,174,96,.1)'  },
+    cdn:    { line: '#2980b9', fill: 'rgba(41,128,185,.1)' },
+    origin: { line: '#e74c3c', fill: 'rgba(231,76,60,.1)'  },
+  };
+
+  function fmtNum(n) {
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+    return n.toString();
+  }
+  function pct(n, t) { return t === 0 ? '—' : (n / t * 100).toFixed(1) + '%'; }
+  function fmtTs(iso, unit) {
+    const d = new Date(iso);
+    if (unit === 'day')  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    if (unit === 'hour') return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function render(data) {
+    const { series, totals, unit } = data;
+    const t = totals.total;
+
+    document.getElementById('cfa-content').innerHTML = `
+      <div class="cfa-meta">
+        ${data.from.replace('T',' ').slice(0,16)} &rarr; ${data.to.replace('T',' ').slice(0,16)} UTC
+        &nbsp;|&nbsp; Updated: ${new Date().toLocaleTimeString()}
+      </div>
+      <div class="cfa-stats">
+        <div class="stat-card total">
+          <div class="sc-label">Total Requests</div>
+          <div class="sc-value">${fmtNum(t)}</div>
+          <div class="sc-sub">across all layers</div>
+        </div>
+        <div class="stat-card worker">
+          <div class="sc-label">Worker Cache</div>
+          <div class="sc-value">${fmtNum(totals.worker)}</div>
+          <div class="sc-pct pct-green">${pct(totals.worker, t)} hit rate</div>
+          <div class="sc-sub">PoP microcache &mdash; 2 min TTL + 15 s SWR</div>
+        </div>
+        <div class="stat-card cdn">
+          <div class="sc-label">CDN / Tiered</div>
+          <div class="sc-value">${fmtNum(totals.cdn)}</div>
+          <div class="sc-pct pct-blue">${pct(totals.cdn, t)} hit rate</div>
+          <div class="sc-sub">Edge + upper tier &mdash; 30 min TTL + 120 s SWR</div>
+        </div>
+        <div class="stat-card origin">
+          <div class="sc-label">Origin Hits</div>
+          <div class="sc-value">${fmtNum(totals.origin)}</div>
+          <div class="sc-pct pct-red">${pct(totals.origin, t)} of requests</div>
+          <div class="sc-sub">Reached Django &mdash; lower is better</div>
+        </div>
+      </div>
+      <div class="cfa-charts">
+        <div class="chart-panel">
+          <h3>Request volume by layer</h3>
+          <div class="chart-wrap" style="height:260px"><canvas id="lineChart"></canvas></div>
+        </div>
+        <div class="chart-panel">
+          <h3>Layer distribution</h3>
+          <div class="chart-wrap" style="height:260px"><canvas id="donutChart"></canvas></div>
+        </div>
+      </div>
+      <div class="cfa-table-wrap">
+        <h3>Breakdown by time bucket</h3>
+        ${series.length === 0
+          ? '<div class="cfa-empty">No data for this period.</div>'
+          : buildTable(series, unit, t)}
+      </div>`;
+
+    buildCharts(series, totals, unit, t);
+  }
+
+  function buildCharts(series, totals, unit, t) {
+    if (lineChart)  { lineChart.destroy();  lineChart  = null; }
+    if (donutChart) { donutChart.destroy(); donutChart = null; }
+
+    const labels = series.map(s => fmtTs(s.ts, unit));
+    const dense  = series.length > 60;
+
+    lineChart = new Chart(document.getElementById('lineChart'), {
+      type: 'line',
+      data: { labels, datasets: [
+        { label: 'Worker', data: series.map(s => s.worker), borderColor: C.worker.line, backgroundColor: C.worker.fill, fill: true, tension: .35, pointRadius: dense ? 0 : 3, borderWidth: 1.5 },
+        { label: 'CDN',    data: series.map(s => s.cdn),    borderColor: C.cdn.line,    backgroundColor: C.cdn.fill,    fill: true, tension: .35, pointRadius: dense ? 0 : 3, borderWidth: 1.5 },
+        { label: 'Origin', data: series.map(s => s.origin), borderColor: C.origin.line, backgroundColor: C.origin.fill, fill: true, tension: .35, pointRadius: dense ? 0 : 3, borderWidth: 1.5 },
+      ]},
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'top', labels: { boxWidth: 10, font: { size: 11 } } },
+          tooltip: { callbacks: { label: c => ` ${c.dataset.label}: ${fmtNum(c.raw)}` } },
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { size: 10 }, maxTicksLimit: 10, maxRotation: 30 } },
+          y: { beginAtZero: true, ticks: { font: { size: 10 }, callback: v => fmtNum(v) } },
+        },
+      },
+    });
+
+    if (t > 0) {
+      donutChart = new Chart(document.getElementById('donutChart'), {
+        type: 'doughnut',
+        data: {
+          labels: ['Worker', 'CDN', 'Origin'],
+          datasets: [{ data: [totals.worker, totals.cdn, totals.origin], backgroundColor: [C.worker.line, C.cdn.line, C.origin.line], borderWidth: 2, borderColor: '#fff' }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false, cutout: '70%',
+          plugins: {
+            legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 }, padding: 14 } },
+            tooltip: { callbacks: { label: c => ` ${c.label}: ${fmtNum(c.raw)} (${pct(c.raw, t)})` } },
+          },
+        },
+      });
+    }
+  }
+
+  function buildTable(series, unit, totalAll) {
+    const maxRow = Math.max(...series.map(s => s.worker + s.cdn + s.origin), 1);
+    const rows = series.slice().reverse().map(s => {
+      const rt  = s.worker + s.cdn + s.origin;
+      const sc  = 120 / maxRow;
+      return `<tr>
+        <td style="white-space:nowrap">${fmtTs(s.ts, unit)}</td>
+        <td><div class="bar-cell"><div class="mini-bar" style="width:${Math.round(s.worker*sc)}px;background:#27ae60"></div>${fmtNum(s.worker)}</div></td>
+        <td><div class="bar-cell"><div class="mini-bar" style="width:${Math.round(s.cdn*sc)}px;background:#2980b9"></div>${fmtNum(s.cdn)}</div></td>
+        <td><div class="bar-cell"><div class="mini-bar" style="width:${Math.round(s.origin*sc)}px;background:#e74c3c"></div>${fmtNum(s.origin)}</div></td>
+        <td>${fmtNum(rt)}</td>
+        <td style="color:#888">${pct(s.worker, rt)}</td>
+      </tr>`;
+    }).join('');
+    return `<table class="cfa-table">
+      <thead><tr><th>Time</th><th>Worker</th><th>CDN</th><th>Origin</th><th>Total</th><th>Worker %</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+
+  function showError(msg) {
+    document.getElementById('cfa-content').innerHTML = `<div class="cfa-error">&#9888; ${msg}</div>`;
+  }
+
+  function load(range) {
+    document.getElementById('cfa-content').innerHTML =
+      '<div class="cfa-loading"><span class="spinner"></span> Loading&hellip;</div>';
+    fetch(`${DATA_URL}?range=${range}`)
+      .then(r => r.json())
+      .then(d => { if (d.error) { showError(d.error); return; } render(d); })
+      .catch(e => showError('Fetch failed: ' + e.message));
+  }
+
+  document.querySelectorAll('.range-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeRange = btn.dataset.range;
+      load(activeRange);
+    });
+  });
+
+  if (HAS_CREDS) {
+    load(activeRange);
+  } else {
+    document.getElementById('cfa-content').innerHTML =
+      '<div class="cfa-empty">Configure credentials above to view analytics.</div>';
+  }
+})();
+</script>
+{% endblock %}
+
+{% endblock %}
+
+{% block content %}
+<style>
+  .cfa-wrap {
+    max-width: 1200px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .cfa-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .cfa-header h2 { margin: 0 0 4px; font-size: 20px; color: #333; }
+  .cfa-header p  { margin: 0; font-size: 13px; color: #777; }
+
+  /* Time range controls */
+  .cfa-controls {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .cfa-controls label { font-size: 12px; color: #666; margin-right: 2px; }
+  .range-btn {
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    background: #fff;
+    color: #444;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .range-btn:hover  { background: #f0f0f0; border-color: #aaa; }
+  .range-btn.active { background: #417690; color: #fff; border-color: #417690; }
+
+  /* Stat cards */
+  .cfa-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .stat-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: box-shadow .15s;
+  }
+  .stat-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,.07); }
+  .stat-card .sc-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    color: #999;
+    font-weight: 600;
+  }
+  .stat-card .sc-value {
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1;
+    color: #222;
+  }
+  .stat-card .sc-pct {
+    font-size: 13px;
+    font-weight: 600;
+    margin-top: 2px;
+  }
+  .stat-card .sc-sub { font-size: 12px; color: #999; }
+  .sc-pct.blue   { color: #417690; }
+  .sc-pct.green  { color: #27ae60; }
+  .sc-pct.orange { color: #e67e22; }
+  .sc-pct.red    { color: #e74c3c; }
+  .stat-card.highlight { border-left: 4px solid #417690; }
+  .stat-card.worker    { border-left: 4px solid #27ae60; }
+  .stat-card.cdn       { border-left: 4px solid #2980b9; }
+  .stat-card.origin    { border-left: 4px solid #e74c3c; }
+
+  /* Chart panels */
+  .cfa-charts {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 20px;
+    margin-bottom: 24px;
+  }
+  @media (max-width: 900px) { .cfa-charts { grid-template-columns: 1fr; } }
+  .chart-panel {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 24px;
+    transition: box-shadow .15s;
+  }
+  .chart-panel:hover { box-shadow: 0 2px 12px rgba(0,0,0,.06); }
+  .chart-panel h3    { margin: 0 0 20px; font-size: 15px; color: #333; }
+  .chart-container   { position: relative; }
+
+  /* Table */
+  .cfa-table-wrap {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+  .cfa-table-wrap h3 { margin: 0 0 16px; font-size: 15px; color: #333; }
+  .cfa-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .cfa-table th {
+    text-align: left;
+    padding: 8px 12px;
+    background: #f5f7f8;
+    color: #555;
+    font-weight: 600;
+    border-bottom: 1px solid #e0e0e0;
+  }
+  .cfa-table td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; color: #333; }
+  .cfa-table tr:last-child td { border-bottom: none; }
+  .cfa-table tr:hover td { background: #f9fbfc; }
+  .bar-cell { display: flex; align-items: center; gap: 8px; }
+  .mini-bar { height: 6px; border-radius: 3px; min-width: 2px; }
+
+  /* States */
+  .cfa-loading, .cfa-error, .cfa-empty {
+    text-align: center;
+    padding: 48px 24px;
+    color: #888;
+    font-size: 14px;
+  }
+  .cfa-error { color: #c0392b; }
+  .spinner {
+    display: inline-block;
+    width: 20px; height: 20px;
+    border: 2px solid #ddd;
+    border-top-color: #417690;
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* No-creds notice */
+  .cfa-notice {
+    background: #fff8e1;
+    border: 1px solid #ffe082;
+    border-radius: 8px;
+    padding: 20px 24px;
+    font-size: 14px;
+    color: #555;
+    margin-bottom: 24px;
+    line-height: 1.7;
+  }
+  .cfa-notice code {
+    background: #f5f5f5;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 13px;
+    color: #c0392b;
+  }
+
+  /* Last updated badge */
+  .cfa-meta {
+    font-size: 12px;
+    color: #aaa;
+    text-align: right;
+    margin-top: -12px;
+    margin-bottom: 20px;
+  }
+</style>
+
+<div class="cfa-wrap">
+  <div class="cfa-header">
+    <div>
+      <h2>Cloudflare Cache Analytics</h2>
+      <p>Request distribution across Worker microcache, CDN/tiered cache, and origin. Data batched every 60 s per isolate.</p>
+    </div>
+    <div class="cfa-controls">
+      <label>Range:</label>
+      <button class="range-btn" data-hours="1">1h</button>
+      <button class="range-btn" data-hours="6">6h</button>
+      <button class="range-btn active" data-hours="24">24h</button>
+      <button class="range-btn" data-hours="48">48h</button>
+      <button class="range-btn" data-hours="168">7d</button>
+    </div>
+  </div>
+
+  {% if not has_credentials %}
+  <div class="cfa-notice">
+    <strong>Credentials not configured.</strong> Set these two environment variables and restart the server:
+    <ul style="margin:10px 0 0 20px;">
+      <li><code>CF_ACCOUNT_ID</code> &mdash; your Cloudflare Account ID (dashboard → top-right menu)</li>
+      <li><code>CF_ANALYTICS_TOKEN</code> &mdash; a Cloudflare API token with <em>Account Analytics: Read</em> permission
+        (<a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank">create one here</a>)</li>
+    </ul>
+  </div>
+  {% endif %}
+
+  <div id="cfa-content">
+    <div class="cfa-loading"><span class="spinner"></span> Loading analytics&hellip;</div>
+  </div>
+</div>
+
+<!-- Chart.js from CDN — no package install needed -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  const DATA_URL = "{% url 'admin:cf_analytics_data' %}";
+  const hasCredentials = {{ has_credentials|yesno:"true,false" }};
+
+  let lineChart = null;
+  let donutChart = null;
+  let currentHours = 24;
+
+  const COLORS = {
+    worker: { border: '#27ae60', bg: 'rgba(39,174,96,.12)' },
+    cdn:    { border: '#2980b9', bg: 'rgba(41,128,185,.12)' },
+    origin: { border: '#e74c3c', bg: 'rgba(231,76,60,.12)' },
+  };
+
+  function fmtNum(n) {
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+    return String(n);
+  }
+  function pct(n, total) {
+    return total === 0 ? '0%' : (n / total * 100).toFixed(1) + '%';
+  }
+  function fmtTs(ts, unit) {
+    const d = new Date(ts);
+    if (unit === 'day') return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function render(data) {
+    const { series, totals, unit } = data;
+    const total = totals.total;
+
+    const html = `
+      <div class="cfa-meta" id="cfa-updated">Updated: ${new Date().toLocaleTimeString()}</div>
+
+      <div class="cfa-stats">
+        <div class="stat-card highlight">
+          <div class="sc-label">Total Requests</div>
+          <div class="sc-value">${fmtNum(total)}</div>
+          <div class="sc-sub">across all layers</div>
+        </div>
+        <div class="stat-card worker">
+          <div class="sc-label">Worker Cache</div>
+          <div class="sc-value">${fmtNum(totals.worker)}</div>
+          <div class="sc-pct green">${pct(totals.worker, total)} hit rate</div>
+          <div class="sc-sub">Served from PoP microcache</div>
+        </div>
+        <div class="stat-card cdn">
+          <div class="sc-label">CDN / Tiered</div>
+          <div class="sc-value">${fmtNum(totals.cdn)}</div>
+          <div class="sc-pct blue">${pct(totals.cdn, total)} hit rate</div>
+          <div class="sc-sub">Served from edge / upper tier</div>
+        </div>
+        <div class="stat-card origin">
+          <div class="sc-label">Origin Hits</div>
+          <div class="sc-value">${fmtNum(totals.origin)}</div>
+          <div class="sc-pct red">${pct(totals.origin, total)} hit rate</div>
+          <div class="sc-sub">Requests that reached Django</div>
+        </div>
+      </div>
+
+      <div class="cfa-charts">
+        <div class="chart-panel">
+          <h3>Request volume by layer</h3>
+          <div class="chart-container" style="height:280px">
+            <canvas id="lineChart"></canvas>
+          </div>
+        </div>
+        <div class="chart-panel">
+          <h3>Layer distribution</h3>
+          <div class="chart-container" style="height:280px">
+            <canvas id="donutChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="cfa-table-wrap">
+        <h3>Breakdown by time bucket</h3>
+        ${series.length === 0
+          ? '<div class="cfa-empty">No data for this period.</div>'
+          : renderTable(series, unit, total)
+        }
+      </div>
+    `;
+
+    document.getElementById('cfa-content').innerHTML = html;
+
+    // Destroy old charts before re-creating
+    if (lineChart)  { lineChart.destroy();  lineChart  = null; }
+    if (donutChart) { donutChart.destroy(); donutChart = null; }
+
+    const labels  = series.map(s => fmtTs(s.ts, unit));
+    const workers = series.map(s => s.worker);
+    const cdns    = series.map(s => s.cdn);
+    const origins = series.map(s => s.origin);
+
+    lineChart = new Chart(document.getElementById('lineChart'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Worker',    data: workers, borderColor: COLORS.worker.border, backgroundColor: COLORS.worker.bg, fill: true, tension: .3, pointRadius: series.length > 48 ? 0 : 3 },
+          { label: 'CDN',       data: cdns,    borderColor: COLORS.cdn.border,    backgroundColor: COLORS.cdn.bg,    fill: true, tension: .3, pointRadius: series.length > 48 ? 0 : 3 },
+          { label: 'Origin',    data: origins, borderColor: COLORS.origin.border, backgroundColor: COLORS.origin.bg, fill: true, tension: .3, pointRadius: series.length > 48 ? 0 : 3 },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'top', labels: { boxWidth: 12, font: { size: 12 } } },
+          tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmtNum(ctx.raw)}` } },
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { size: 11 }, maxTicksLimit: 12 } },
+          y: { beginAtZero: true, ticks: { font: { size: 11 }, callback: v => fmtNum(v) } },
+        },
+      },
+    });
+
+    if (total > 0) {
+      donutChart = new Chart(document.getElementById('donutChart'), {
+        type: 'doughnut',
+        data: {
+          labels: ['Worker', 'CDN', 'Origin'],
+          datasets: [{
+            data: [totals.worker, totals.cdn, totals.origin],
+            backgroundColor: [COLORS.worker.border, COLORS.cdn.border, COLORS.origin.border],
+            borderWidth: 2,
+            borderColor: '#fff',
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '68%',
+          plugins: {
+            legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 12 }, padding: 16 } },
+            tooltip: { callbacks: {
+              label: ctx => {
+                const v = ctx.raw;
+                const p = total > 0 ? (v / total * 100).toFixed(1) : 0;
+                return ` ${ctx.label}: ${fmtNum(v)} (${p}%)`;
+              }
+            }},
+          },
+        },
+      });
+    }
+  }
+
+  function renderTable(series, unit, totalAll) {
+    const rows = series.slice().reverse().map(s => {
+      const rowTotal = s.worker + s.cdn + s.origin;
+      const wBar = totalAll > 0 ? Math.round(s.worker / totalAll * 160) : 0;
+      const cBar = totalAll > 0 ? Math.round(s.cdn    / totalAll * 160) : 0;
+      const oBar = totalAll > 0 ? Math.round(s.origin / totalAll * 160) : 0;
+      return `<tr>
+        <td>${fmtTs(s.ts, unit)}</td>
+        <td><div class="bar-cell"><div class="mini-bar" style="width:${wBar}px;background:#27ae60"></div>${fmtNum(s.worker)}</div></td>
+        <td><div class="bar-cell"><div class="mini-bar" style="width:${cBar}px;background:#2980b9"></div>${fmtNum(s.cdn)}</div></td>
+        <td><div class="bar-cell"><div class="mini-bar" style="width:${oBar}px;background:#e74c3c"></div>${fmtNum(s.origin)}</div></td>
+        <td>${fmtNum(rowTotal)}</td>
+      </tr>`;
+    }).join('');
+    return `
+      <table class="cfa-table">
+        <thead><tr>
+          <th>Time</th><th>Worker</th><th>CDN</th><th>Origin</th><th>Total</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  function showError(msg) {
+    document.getElementById('cfa-content').innerHTML =
+      `<div class="cfa-error">&#9888; ${msg}</div>`;
+  }
+
+  function load(hours) {
+    document.getElementById('cfa-content').innerHTML =
+      '<div class="cfa-loading"><span class="spinner"></span> Loading analytics&hellip;</div>';
+
+    fetch(`${DATA_URL}?hours=${hours}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) { showError(data.error); return; }
+        render(data);
+      })
+      .catch(e => showError('Failed to fetch analytics: ' + e.message));
+  }
+
+  // Range buttons
+  document.querySelectorAll('.range-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentHours = parseInt(btn.dataset.hours);
+      load(currentHours);
+    });
+  });
+
+  if (hasCredentials) {
+    load(currentHours);
+  } else {
+    document.getElementById('cfa-content').innerHTML =
+      '<div class="cfa-empty">Configure credentials above to view analytics.</div>';
+  }
+})();
+</script>
+{% endblock %}

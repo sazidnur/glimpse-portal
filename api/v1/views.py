@@ -32,12 +32,18 @@ class CachedListView(APIView):
         try:
             if request.query_params.get("all", "").lower() == "true":
                 result = self.cache.get_all(max_items=MAX_ALL)
-                return Response(result)
+                response = Response(result)
+            else:
+                page = _parse_int(request.query_params.get("page"), default=1, min_val=1)
+                limit = _parse_int(request.query_params.get("limit"), default=10, min_val=1, max_val=MAX_LIMIT)
+                result = self.cache.get_paginated(page=page, limit=limit)
+                response = Response(result)
 
-            page = _parse_int(request.query_params.get("page"), default=1, min_val=1)
-            limit = _parse_int(request.query_params.get("limit"), default=10, min_val=1, max_val=MAX_LIMIT)
-            result = self.cache.get_paginated(page=page, limit=limit)
-            return Response(result)
+            # Tell Cloudflare CDN it may serve stale for 120 s while revalidating in background.
+            # cf.cacheTtl=1800 in the Worker overrides s-maxage, but CF reads stale-while-revalidate
+            # from origin headers independently, so this directive reaches the CDN layer.
+            response["Cache-Control"] = "stale-while-revalidate=120"
+            return response
 
         except Exception:
             logger.exception("%s list failed, falling back to DB", self.model.__name__)

@@ -259,6 +259,12 @@ if not DEBUG:
 # YouTube API
 YOUTUBE_API_KEY = config('YOUTUBE_API_KEY', default='')
 
+# Cloudflare Analytics Engine (for admin CF analytics dashboard)
+# CF_ANALYTICS_TOKEN must be a Cloudflare API token with "Account Analytics: Read" permission.
+# Create one at: https://dash.cloudflare.com/profile/api-tokens
+CF_ACCOUNT_ID = config('CF_ACCOUNT_ID', default='')
+CF_ANALYTICS_TOKEN = config('CF_ANALYTICS_TOKEN', default='')
+
 # Debug toolbar settings
 INTERNAL_IPS = ['127.0.0.1']
 

@@ -4,10 +4,14 @@ from django.urls import path
 from django.http import JsonResponse
 from django.utils.html import format_html
 from django.template.response import TemplateResponse
+from django.conf import settings
 
 from api.v1.resources import news_cache, video_cache
 
 import json
+import urllib.request
+import urllib.error
+from datetime import datetime, timezone, timedelta
 
 
 CACHE_REGISTRY = [
@@ -224,12 +228,136 @@ admin.site.register(_get_model('News'), NewsAdmin)
 
 _original_get_urls = admin.AdminSite.get_urls
 
+# --- Cloudflare Cache Analytics ---
+
+CF_GQL_ENDPOINT = "https://api.cloudflare.com/client/v4/graphql"
+
+
+def cf_analytics_view(request):
+    has_credentials = bool(
+        getattr(settings, "CF_ACCOUNT_ID", "") and
+        getattr(settings, "CF_ANALYTICS_TOKEN", "")
+    )
+    context = {
+        **admin.site.each_context(request),
+        "title": "Cloudflare Cache Analytics",
+        "has_credentials": has_credentials,
+    }
+    return TemplateResponse(request, "admin/cf_analytics.html", context)
+
+
+def cf_analytics_data_json(request):
+    account_id = getattr(settings, "CF_ACCOUNT_ID", "")
+    token = getattr(settings, "CF_ANALYTICS_TOKEN", "")
+    if not account_id or not token:
+        return JsonResponse({"error": "CF_ACCOUNT_ID and CF_ANALYTICS_TOKEN not configured."}, status=503)
+
+    # Supported ranges → (minutes, bucket_unit)
+    # Analytics Engine minimum bucket is 1 minute; max lookback ~3 months.
+    RANGES = {
+        "10m":  (10,       "minute"),
+        "30m":  (30,       "minute"),
+        "1h":   (60,       "minute"),
+        "6h":   (360,      "minute"),
+        "24h":  (1440,     "hour"),
+        "7d":   (10080,    "hour"),
+        "30d":  (43200,    "day"),
+    }
+    range_key = request.GET.get("range", "24h")
+    if range_key not in RANGES:
+        range_key = "24h"
+    minutes, unit = RANGES[range_key]
+
+    now = datetime.now(timezone.utc)
+    from_time = (now - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    to_time = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    query = """
+    {
+      viewer {
+        accounts(filter: { accountTag: "%s" }) {
+          workersAnalyticsEngineAdaptiveGroups(
+            dataset: "cache_analytics"
+            filter: { datetime_geq: "%s", datetime_leq: "%s" }
+            limit: 10000
+            orderBy: [datetime_ASC]
+          ) {
+            sum { double1 double2 double3 }
+            dimensions { ts: truncatedTime(unit: %s) }
+          }
+        }
+      }
+    }
+    """ % (account_id, from_time, to_time, unit)
+
+    try:
+        req = urllib.request.Request(
+            CF_GQL_ENDPOINT,
+            data=json.dumps({"query": query}).encode(),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return JsonResponse({"error": f"CF API HTTP {e.code}: {e.reason}"}, status=502)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+    errors = data.get("errors")
+    if errors:
+        return JsonResponse({"error": errors[0].get("message", "GraphQL error")}, status=502)
+
+    groups = (
+        data.get("data", {})
+        .get("viewer", {})
+        .get("accounts", [{}])[0]
+        .get("workersAnalyticsEngineAdaptiveGroups", [])
+    )
+
+    series = [
+        {
+            "ts": g["dimensions"]["ts"],
+            "worker": int(g["sum"]["double1"] or 0),
+            "cdn": int(g["sum"]["double2"] or 0),
+            "origin": int(g["sum"]["double3"] or 0),
+        }
+        for g in groups
+    ]
+
+    total_worker = sum(s["worker"] for s in series)
+    total_cdn = sum(s["cdn"] for s in series)
+    total_origin = sum(s["origin"] for s in series)
+    total_all = total_worker + total_cdn + total_origin
+
+    return JsonResponse({
+        "series": series,
+        "totals": {
+            "worker": total_worker,
+            "cdn": total_cdn,
+            "origin": total_origin,
+            "total": total_all,
+        },
+        "unit": unit,
+        "range": range_key,
+        "from": from_time,
+        "to": to_time,
+    })
+
+
+
+
 def _patched_get_urls(self):
     custom = [
         path('cache-dashboard/', self.admin_view(cache_dashboard_view), name='cache_dashboard'),
         path('cache-dashboard/stats/<str:key>/', self.admin_view(cache_stats_json), name='cache_dashboard_stats'),
         path('cache-dashboard/warm/<str:key>/', self.admin_view(cache_warm_json), name='cache_dashboard_warm'),
         path('cache-dashboard/flush/<str:key>/', self.admin_view(cache_flush_json), name='cache_dashboard_flush'),
+        path('cf-analytics/', self.admin_view(cf_analytics_view), name='cf_analytics'),
+        path('cf-analytics/data/', self.admin_view(cf_analytics_data_json), name='cf_analytics_data'),
     ]
     return custom + _original_get_urls(self)
 
