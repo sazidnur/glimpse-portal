@@ -11,7 +11,7 @@ from api.v1.resources import news_cache, video_cache
 import json
 import urllib.request
 import urllib.error
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 
 CACHE_REGISTRY = [
@@ -230,8 +230,6 @@ _original_get_urls = admin.AdminSite.get_urls
 
 # --- Cloudflare Cache Analytics ---
 
-CF_GQL_ENDPOINT = "https://api.cloudflare.com/client/v4/graphql"
-
 
 def cf_analytics_view(request):
     has_credentials = bool(
@@ -252,106 +250,101 @@ def cf_analytics_data_json(request):
     if not account_id or not token:
         return JsonResponse({"error": "CF_ACCOUNT_ID and CF_ANALYTICS_TOKEN not configured."}, status=503)
 
-    # Supported ranges → (minutes, bucket_unit)
-    # Analytics Engine minimum bucket is 1 minute; max lookback ~3 months.
+    # Supported ranges → (WHERE interval, bucket interval, bucket unit label)
+    # Analytics Engine SQL API uses ClickHouse-style INTERVAL syntax: INTERVAL '10' MINUTE
     RANGES = {
-        "10m":  (10,       "minute"),
-        "30m":  (30,       "minute"),
-        "1h":   (60,       "minute"),
-        "6h":   (360,      "minute"),
-        "24h":  (1440,     "hour"),
-        "7d":   (10080,    "hour"),
-        "30d":  (43200,    "day"),
+        "10m": ("'10' MINUTE", "'1' MINUTE", "minute"),
+        "30m": ("'30' MINUTE", "'1' MINUTE", "minute"),
+        "1h":  ("'1' HOUR",    "'1' MINUTE", "minute"),
+        "6h":  ("'6' HOUR",    "'5' MINUTE", "minute"),
+        "24h": ("'24' HOUR",   "'1' HOUR",   "hour"),
+        "7d":  ("'7' DAY",     "'1' HOUR",   "hour"),
+        "30d": ("'30' DAY",    "'1' DAY",    "day"),
     }
     range_key = request.GET.get("range", "24h")
     if range_key not in RANGES:
         range_key = "24h"
-    minutes, unit = RANGES[range_key]
+    where_interval, bucket_interval, unit = RANGES[range_key]
 
-    now = datetime.now(timezone.utc)
-    from_time = (now - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    to_time = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    sql = (
+        "SELECT"
+        f" toStartOfInterval(timestamp, INTERVAL {bucket_interval}) AS ts,"
+        " SUM(double1) AS worker_hits,"
+        " SUM(double2) AS cdn_hits,"
+        " SUM(double3) AS origin_hits"
+        " FROM cache_analytics"
+        f" WHERE timestamp >= NOW() - INTERVAL {where_interval}"
+        " GROUP BY ts ORDER BY ts ASC"
+    )
 
-    query = """
-    {
-      viewer {
-        accounts(filter: { accountTag: "%s" }) {
-          cache_analyticsAdaptiveGroups(
-            filter: { datetime_geq: "%s", datetime_leq: "%s" }
-            limit: 10000
-            orderBy: [datetime_ASC]
-          ) {
-            sum { double1 double2 double3 }
-            dimensions { ts: truncatedTime(unit: %s) }
-          }
-        }
-      }
-    }
-    """ % (account_id, from_time, to_time, unit)
+    sql_endpoint = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/analytics_engine/sql"
 
     try:
         req = urllib.request.Request(
-            CF_GQL_ENDPOINT,
-            data=json.dumps({"query": query}).encode(),
+            sql_endpoint,
+            data=sql.encode(),
             headers={
                 "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
+                "Content-Type": "text/plain",
             },
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
         body = ""
         try:
-            body = e.read().decode()[:300]
+            body = e.read().decode()[:500]
         except Exception:
             pass
         return JsonResponse({"error": f"CF API HTTP {e.code}: {e.reason}", "detail": body}, status=502)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
-    errors = data.get("errors")
-    if errors:
-        msg = errors[0].get("message", "GraphQL error")
-        # Dataset field doesn't exist yet — Worker hasn't been deployed or hasn't written data yet
-        if "unknown field" in msg and "cache_analytics" in msg:
-            return JsonResponse({"error": "No analytics data yet. Deploy the Cloudflare Worker and it will populate once the first writeDataPoint() flush occurs (within 60 s of traffic)."}, status=200)
-        return JsonResponse({"error": f"CF GraphQL: {msg}"}, status=502)
+    rows = data.get("data", [])
+    if not rows:
+        # No data yet — Worker hasn't written any data points
+        now = datetime.now(timezone.utc)
+        return JsonResponse({
+            "series": [],
+            "totals": {"worker": 0, "cdn": 0, "origin": 0, "total": 0},
+            "unit": unit,
+            "range": range_key,
+            "from": "",
+            "to": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "message": "No analytics data yet. Deploy the Cloudflare Worker and traffic will populate within ~60 s.",
+        })
 
-    try:
-        accounts = data.get("data", {}).get("viewer", {}).get("accounts", [])
-        groups = accounts[0].get("cache_analyticsAdaptiveGroups", []) if accounts else []
-    except (IndexError, KeyError, TypeError) as e:
-        return JsonResponse({"error": f"Unexpected CF response shape: {e}"}, status=502)
-
-    series = [
-        {
-            "ts": g["dimensions"]["ts"],
-            "worker": int(g["sum"]["double1"] or 0),
-            "cdn": int(g["sum"]["double2"] or 0),
-            "origin": int(g["sum"]["double3"] or 0),
-        }
-        for g in groups
-    ]
+    series = []
+    for row in rows:
+        # Timestamps come as "YYYY-MM-DD HH:MM:SS" — convert to ISO 8601 for JS Date()
+        ts_raw = row.get("ts", "")
+        ts_iso = ts_raw.replace(" ", "T") + "Z" if ts_raw and "T" not in ts_raw else ts_raw
+        series.append({
+            "ts": ts_iso,
+            "worker": int(float(row.get("worker_hits") or 0)),
+            "cdn":    int(float(row.get("cdn_hits")    or 0)),
+            "origin": int(float(row.get("origin_hits") or 0)),
+        })
 
     total_worker = sum(s["worker"] for s in series)
-    total_cdn = sum(s["cdn"] for s in series)
+    total_cdn    = sum(s["cdn"]    for s in series)
     total_origin = sum(s["origin"] for s in series)
-    total_all = total_worker + total_cdn + total_origin
+    total_all    = total_worker + total_cdn + total_origin
 
+    now = datetime.now(timezone.utc)
     return JsonResponse({
         "series": series,
         "totals": {
             "worker": total_worker,
-            "cdn": total_cdn,
+            "cdn":    total_cdn,
             "origin": total_origin,
-            "total": total_all,
+            "total":  total_all,
         },
-        "unit": unit,
+        "unit":  unit,
         "range": range_key,
-        "from": from_time,
-        "to": to_time,
+        "from":  series[0]["ts"] if series else "",
+        "to":    now.strftime("%Y-%m-%dT%H:%M:%SZ"),
     })
 
 
