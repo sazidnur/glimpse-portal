@@ -128,7 +128,9 @@ async function verifyToken(token, env) {
 // preflight and non-cached responses pick it up via addCORS / corsJSON.
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  // Only methods the Worker actually handles. PUT/DELETE are not used and
+  // listing them widens the CORS preflight surface unnecessarily.
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
   "Access-Control-Max-Age": "86400",
 };
@@ -175,9 +177,17 @@ async function fetchOriginGET(url, env) {
 
 async function proxyToOrigin(request, env) {
   const url = new URL(request.url);
-  const headers = new Headers(request.headers);
-  headers.delete("host");
-  headers.set("X-Origin-Secret", env.ORIGIN_PATH_SECRET);
+  // Build a clean header set — only forward safe, known headers to origin.
+  // Never blindly forward all client headers; that leaks any injected header
+  // (e.g. X-Forwarded-For spoofing, internal secrets) straight through.
+  const headers = new Headers({
+    "X-Origin-Secret": env.ORIGIN_PATH_SECRET,
+    "Content-Type": request.headers.get("Content-Type") || "application/json",
+    Accept: request.headers.get("Accept") || "application/json",
+  });
+  // Forward the client's DRF token if present (needed for write operations).
+  const clientAuth = request.headers.get("Authorization");
+  if (clientAuth) headers.set("Authorization", clientAuth);
 
   const init = { method: request.method, headers };
   if (!["GET", "HEAD"].includes(request.method)) {
@@ -233,17 +243,22 @@ async function warmCache(env) {
         });
 
         if (originResp.ok) {
-          // L2: store in caches.default (CDN layer) with full CDN TTL.
-          const cdnClone = originResp.clone();
-          const cdnEntry = new Response(cdnClone.body, cdnClone);
+          // Build CDN and microcache entries from separate clones — a Response body
+          // can only be consumed once, so we clone before reading either.
+          const cdnEntry = new Response(originResp.clone().body, originResp);
           cdnEntry.headers.set("Cache-Control", `s-maxage=${CDN_CACHE_TTL}, stale-while-revalidate=${CDN_SWR}`);
-          await caches.default.put(new Request(publicUrl), cdnEntry);
+          cdnEntry.headers.delete("Set-Cookie");
+          cdnEntry.headers.delete("Vary");
 
-          // L1: store in named microcache with short TTL.
           const microEntry = new Response(originResp.body, originResp);
           microEntry.headers.set("Cache-Control", `s-maxage=${WORKER_CACHE_TTL}, stale-while-revalidate=${WORKER_SWR}`);
-          microEntry.headers.set("X-Cache", "WARM");
-          await microcache.put(new Request(publicUrl), microEntry);
+          microEntry.headers.set("X-Cache", "HIT");
+
+          // Write both layers in parallel — neither depends on the other.
+          await Promise.all([
+            caches.default.put(new Request(publicUrl), cdnEntry),
+            microcache.put(new Request(publicUrl), microEntry),
+          ]);
 
           results.push({ endpoint, status: "ok" });
         } else {
@@ -327,7 +342,10 @@ export default {
       _counts.WORKER++;
       maybeFlushAnalytics(env);
       const r = new Response(response.body, response);
-      r.headers.set("X-Cache", "WORKER");
+      // X-Cache: HIT = served from cache (L1 Worker or L2 CDN), MISS = origin fetched.
+      // Standard values — do not expose internal layer names (WORKER/CDN/ORIGIN)
+      // as that leaks caching architecture details to clients.
+      r.headers.set("X-Cache", "HIT");
       for (const [k, v] of Object.entries(getCORSHeaders(env))) r.headers.set(k, v);
       return r;
     }
@@ -335,19 +353,20 @@ export default {
     // ── L2: CDN layer via caches.default (CDN_CACHE_TTL) ────────────────────────
     // cf.cacheEverything does NOT work for same-zone subrequests — CF returns DYNAMIC
     // and never stores the entry. We manage caches.default explicitly instead.
-    const publicUrl = `https://${env.WORKER_DOMAIN}${url.pathname}${url.search}`;
+    const workerDomain = env.WORKER_DOMAIN || "glimpseapp.net"; // fallback guards against misconfiguration
+    const publicUrl = `https://${workerDomain}${url.pathname}${url.search}`;
     const cdnKey = new Request(publicUrl, { method: "GET" });
     response = await caches.default.match(cdnKey);
     let layer;
 
     if (response) {
-      layer = "CDN";
+      layer = "HIT";   // L2 CDN
       _counts.CDN++;
     } else {
       // ── L3: Origin ────────────────────────────────────────────────────────────
       const originResp = await fetchOriginGET(url, env);
       if (!originResp.ok) return addCORS(originResp, env);
-      layer = "ORIGIN";
+      layer = "MISS";   // L3 Origin
       _counts.ORIGIN++;
 
       // Persist to CDN layer: store a clean copy in caches.default with CDN_CACHE_TTL.
@@ -365,7 +384,7 @@ export default {
     // ── Build microcache entry + client response ─────────────────────────────────
     const toClient = new Response(response.body, response);
     toClient.headers.set("Cache-Control", `s-maxage=${WORKER_CACHE_TTL}, stale-while-revalidate=${WORKER_SWR}`);
-    toClient.headers.set("X-Cache", layer);
+    toClient.headers.set("X-Cache", layer); // HIT (CDN) or MISS (origin)
     for (const [k, v] of Object.entries(getCORSHeaders(env))) toClient.headers.set(k, v);
     ctx.waitUntil(
       microcache.put(cacheKey, toClient.clone()).then(() => maybeFlushAnalytics(env))
