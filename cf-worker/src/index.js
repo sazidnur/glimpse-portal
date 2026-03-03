@@ -1,5 +1,34 @@
-const DEFAULT_CACHE_TTL = 1800;
+// Layer 1: Worker microcache per PoP (absorbs burst traffic)
+const WORKER_CACHE_TTL = 120;    // 2 minutes
+// Layer 2: CDN / Tiered cache (upper tier + edge)
+const CDN_CACHE_TTL = 1800;      // 30 minutes — purge after hourly DB update
 const TOKEN_EXPIRY = 7200;
+
+// --- Analytics (Analytics Engine, free tier) ---
+// One datapoint per flush interval instead of per request.
+// Max usage: 144 datapoints/isolate/day at 10-min interval — well under 100k free limit.
+// After 100k/day limit: writes drop silently, no error, no charge.
+const _counts = { WORKER: 0, CDN: 0, ORIGIN: 0 };
+let _lastFlush = Date.now();
+const ANALYTICS_FLUSH_INTERVAL = 60_000; // 1 minute — 1,440 datapoints/isolate/day (well under 100k free limit)
+
+// Called inside ctx.waitUntil — fully off the response critical path.
+function maybeFlushAnalytics(env) {
+  const now = Date.now();
+  if (now - _lastFlush < ANALYTICS_FLUSH_INTERVAL) return;
+  const total = _counts.WORKER + _counts.CDN + _counts.ORIGIN;
+  if (total === 0) return;
+  // doubles[0]=workerHits, doubles[1]=cdnHits, doubles[2]=originHits
+  // Query via GraphQL: sum(double1)/sum(double2)/sum(double3) over any time range.
+  env.ANALYTICS?.writeDataPoint({
+    doubles: [_counts.WORKER, _counts.CDN, _counts.ORIGIN],
+    indexes: ["cache"],
+  });
+  _counts.WORKER = 0;
+  _counts.CDN = 0;
+  _counts.ORIGIN = 0;
+  _lastFlush = now;
+}
 
 // --- JWT (HMAC-SHA256) ---
 
@@ -87,7 +116,10 @@ async function verifyToken(token, env) {
 }
 
 // --- CORS ---
-
+// Access-Control-Allow-Origin is intentionally open (*) because all GET requests
+// require a short-lived Worker JWT — the JWT is the auth boundary, not the origin.
+// To restrict to your app domain set env.ALLOWED_ORIGIN (e.g. https://glimpseapp.net);
+// preflight and non-cached responses pick it up via addCORS / corsJSON.
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
@@ -95,32 +127,48 @@ const CORS_HEADERS = {
   "Access-Control-Max-Age": "86400",
 };
 
-function corsJSON(data, status = 200) {
+function getCORSHeaders(env) {
+  if (env?.ALLOWED_ORIGIN && env.ALLOWED_ORIGIN !== "*") {
+    return { ...CORS_HEADERS, "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN };
+  }
+  return CORS_HEADERS;
+}
+
+function corsJSON(data, status = 200, env) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    headers: { "Content-Type": "application/json", ...getCORSHeaders(env) },
   });
 }
 
-function addCORS(response) {
+function addCORS(response, env) {
   const resp = new Response(response.body, response);
-  for (const [k, v] of Object.entries(CORS_HEADERS)) resp.headers.set(k, v);
+  for (const [k, v] of Object.entries(getCORSHeaders(env))) resp.headers.set(k, v);
   return resp;
 }
 
-function handlePreflight() {
-  return new Response(null, { status: 204, headers: CORS_HEADERS });
+function handlePreflight(env) {
+  return new Response(null, { status: 204, headers: getCORSHeaders(env) });
 }
 
 // --- Origin ---
 
 async function fetchOriginGET(url, env) {
+  // Use cf options so Cloudflare populates the CDN tiered cache (upper tier + edge).
+  // cacheKey is the public Worker URL so CDN and Worker microcache share the same key.
+  const publicUrl = `https://${env.WORKER_DOMAIN}${url.pathname}${url.search}`;
   return fetch(`${env.ORIGIN_BASE}${url.pathname}${url.search}`, {
     method: "GET",
     headers: {
       Authorization: `Token ${env.DRF_TOKEN}`,
       "X-Origin-Secret": env.ORIGIN_PATH_SECRET,
       Accept: "application/json",
+    },
+    cf: {
+      cacheEverything: true,
+      cacheTtl: CDN_CACHE_TTL,
+      cacheTtlByStatus: { "200-299": CDN_CACHE_TTL, "404": 60, "500-599": 0 },
+      cacheKey: publicUrl,
     },
   });
 }
@@ -137,23 +185,23 @@ async function proxyToOrigin(request, env) {
   }
 
   const response = await fetch(`${env.ORIGIN_BASE}${url.pathname}${url.search}`, init);
-  return addCORS(response);
+  return addCORS(response, env);
 }
 
 // --- Token endpoint ---
 
 async function handleGetToken(request, env) {
   if (request.method !== "POST") {
-    return corsJSON({ error: "POST required" }, 405);
+    return corsJSON({ error: "POST required" }, 405, env);
   }
 
   const appSecret = request.headers.get("X-App-Secret") || "";
   if (!appSecret || appSecret !== env.APP_SECRET) {
-    return corsJSON({ error: "Forbidden" }, 403);
+    return corsJSON({ error: "Forbidden" }, 403, env);
   }
 
   const token = await generateToken(env);
-  return corsJSON({ token, token_type: "Bearer", expires_in: TOKEN_EXPIRY });
+  return corsJSON({ token, token_type: "Bearer", expires_in: TOKEN_EXPIRY }, 200, env);
 }
 
 // --- Cache warming (shared by cron + /warm endpoint) ---
@@ -168,32 +216,41 @@ const WARM_ENDPOINTS = [
 
 async function warmCache(env) {
   const cache = caches.default;
-  const cacheTTL = parseInt(env.CACHE_TTL) || DEFAULT_CACHE_TTL;
   const workerDomain = env.WORKER_DOMAIN || "glimpseapp.net";
   const results = [];
 
   await Promise.allSettled(
     WARM_ENDPOINTS.map(async (endpoint) => {
       try {
+        const publicUrl = `https://${workerDomain}${endpoint}`;
+
+        // Fetch with cf options: populates CDN tiered cache (upper tier + edge PoPs).
         const response = await fetch(`${env.ORIGIN_BASE}${endpoint}`, {
           headers: {
             Authorization: `Token ${env.DRF_TOKEN}`,
             "X-Origin-Secret": env.ORIGIN_PATH_SECRET,
             Accept: "application/json",
           },
+          cf: {
+            cacheEverything: true,
+            cacheTtl: CDN_CACHE_TTL,
+            cacheTtlByStatus: { "200-299": CDN_CACHE_TTL, "404": 60, "500-599": 0 },
+            cacheKey: publicUrl,
+          },
         });
 
         if (response.ok) {
-          const cached = new Response(response.body, response);
-          cached.headers.set("Cache-Control", `s-maxage=${cacheTTL}, must-revalidate`);
-          cached.headers.set("X-Cache", "PREWARMED");
-          await cache.put(new Request(`https://${workerDomain}${endpoint}`), cached);
+          // Also seed the local Worker microcache so the first real request is instant.
+          const microcached = new Response(response.body, response);
+          microcached.headers.set("Cache-Control", `s-maxage=${WORKER_CACHE_TTL}, stale-while-revalidate=15`);
+          microcached.headers.set("X-Cache", "WARM");
+          await cache.put(new Request(publicUrl), microcached);
           results.push({ endpoint, status: "ok" });
         } else {
           results.push({ endpoint, status: "error", code: response.status });
         }
       } catch (e) {
-        console.error(`Pre-warm failed for ${endpoint}:`, e.message);
+        console.error(`Warm failed for ${endpoint}:`, e.message);
         results.push({ endpoint, status: "error", error: e.message });
       }
     })
@@ -204,17 +261,17 @@ async function warmCache(env) {
 
 async function handleWarm(request, env) {
   if (request.method !== "POST") {
-    return corsJSON({ error: "POST required" }, 405);
+    return corsJSON({ error: "POST required" }, 405, env);
   }
 
   const appSecret = request.headers.get("X-App-Secret") || "";
   if (!appSecret || appSecret !== env.APP_SECRET) {
-    return corsJSON({ error: "Forbidden" }, 403);
+    return corsJSON({ error: "Forbidden" }, 403, env);
   }
 
   const results = await warmCache(env);
   const ok = results.filter((r) => r.status === "ok").length;
-  return corsJSON({ warmed: ok, total: WARM_ENDPOINTS.length, results });
+  return corsJSON({ warmed: ok, total: WARM_ENDPOINTS.length, results }, 200, env);
 }
 
 // --- Main Worker ---
@@ -222,7 +279,6 @@ async function handleWarm(request, env) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const cacheTTL = parseInt(env.CACHE_TTL) || DEFAULT_CACHE_TTL;
 
     // Only intercept /api/v1/ — everything else passes through
     if (!url.pathname.startsWith("/api/v1/")) {
@@ -230,7 +286,7 @@ export default {
     }
 
     if (request.method === "OPTIONS") {
-      return handlePreflight();
+      return handlePreflight(env);
     }
 
     // Token endpoint (no JWT needed)
@@ -252,12 +308,12 @@ export default {
     // GET → require Worker JWT
     const authHeader = request.headers.get("Authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return corsJSON({ error: "Authorization: Bearer <token> required" }, 401);
+      return corsJSON({ error: "Authorization: Bearer <token> required" }, 401, env);
     }
 
     const authResult = await verifyToken(authHeader.slice(7), env);
     if (!authResult.valid) {
-      return corsJSON({ error: authResult.error }, 401);
+      return corsJSON({ error: authResult.error }, 401, env);
     }
 
     // Edge cache lookup (key includes query params for pagination)
@@ -266,27 +322,38 @@ export default {
     let response = await cache.match(cacheKey);
 
     if (response) {
-      response = new Response(response.body, response);
-      response.headers.set("X-Cache", "HIT");
-      return addCORS(response);
+      // Single Response copy: set X-Cache + CORS in one pass. maybeFlushAnalytics is
+      // synchronous (timestamp check only), no Promise/waitUntil allocation needed.
+      const r = new Response(response.body, response);
+      r.headers.set("X-Cache", "WORKER");
+      for (const [k, v] of Object.entries(getCORSHeaders(env))) r.headers.set(k, v);
+      _counts.WORKER++;
+      maybeFlushAnalytics(env);
+      return r;
     }
 
-    // Cache miss → fetch from origin with DRF token
+    // Worker miss → fetch; cf options let Cloudflare check CDN/upper-tier before origin.
     response = await fetchOriginGET(url, env);
-    if (!response.ok) return addCORS(response);
+    if (!response.ok) return addCORS(response, env);
 
-    response = new Response(response.body, response);
-    response.headers.set("Cache-Control", `s-maxage=${cacheTTL}, must-revalidate`);
-    response.headers.set("X-Cache", "MISS");
-    ctx.waitUntil(cache.put(cacheKey, response.clone()));
+    // cf.cacheStatus: HIT/STALE/REVALIDATED/UPDATING all mean CDN served it (no origin hit).
+    // MISS/EXPIRED/BYPASS/DYNAMIC mean origin was actually contacted.
+    const cdnStatus = response.cf?.cacheStatus ?? "MISS";
+    const layer = ["HIT", "STALE", "REVALIDATED", "UPDATING"].includes(cdnStatus) ? "CDN" : "ORIGIN";
+    _counts[layer]++;
 
-    return addCORS(response);
+    // Single Response copy: set Cache-Control, X-Cache, and CORS in one pass.
+    // stale-while-revalidate=15: Worker microcache may serve stale for 15s while Cloudflare
+    // revalidates in background. Prevents thundering herd when 2-min microcache TTL expires.
+    const microcached = new Response(response.body, response);
+    microcached.headers.set("Cache-Control", `s-maxage=${WORKER_CACHE_TTL}, stale-while-revalidate=15`);
+    microcached.headers.set("X-Cache", layer);
+    for (const [k, v] of Object.entries(getCORSHeaders(env))) microcached.headers.set(k, v);
+    ctx.waitUntil(
+      cache.put(cacheKey, microcached.clone()).then(() => maybeFlushAnalytics(env))
+    );
+    return microcached;
   },
-
-  // Cron: pre-warm popular endpoints
-  async scheduled(event, env, ctx) {
-    const results = await warmCache(env);
-    const ok = results.filter((r) => r.status === "ok").length;
-    console.log(`Cron warm: ${ok}/${WARM_ENDPOINTS.length} endpoints warmed`);
-  },
+  // No cron: freshness is controlled by Cloudflare purge API after each hourly DB update.
+  // Call the /api/v1/warm endpoint manually after purging if you need to pre-seed caches.
 };
