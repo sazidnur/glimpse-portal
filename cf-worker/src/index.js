@@ -1,8 +1,14 @@
-// Layer 1: Worker microcache per PoP (absorbs burst traffic)
-const WORKER_CACHE_TTL = 120;    // 2 minutes
-// Layer 2: CDN / Tiered cache (upper tier + edge)
-const CDN_CACHE_TTL = 1800;      // 30 minutes — purge after hourly DB update
-const TOKEN_EXPIRY = 7200;
+// ─── Timing constants ────────────────────────────────────────────────────────
+// Layer 1: Worker named microcache per PoP (absorbs burst traffic)
+const WORKER_CACHE_TTL = 120;    // seconds — microcache TTL
+const WORKER_SWR       = 15;     // seconds — stale-while-revalidate for microcache
+// Layer 2: Cloudflare CDN / Tiered cache (upper tier + edge)
+const CDN_CACHE_TTL    = 1800;   // seconds — CDN TTL (override via cf.cacheTtl)
+const CDN_SWR          = 120;    // seconds — stale-while-revalidate for CDN layer
+// Worker microcache name — MUST be different from caches.default to avoid
+// overwriting the CDN-cached entry at the same URL key.
+const MICROCACHE_NAME  = "worker-microcache";
+const TOKEN_EXPIRY     = 7200;   // seconds — JWT lifetime
 
 // --- Analytics (Analytics Engine, free tier) ---
 // One datapoint per flush interval instead of per request.
@@ -215,7 +221,7 @@ const WARM_ENDPOINTS = [
 ];
 
 async function warmCache(env) {
-  const cache = caches.default;
+  const cache = await caches.open(MICROCACHE_NAME);
   const workerDomain = env.WORKER_DOMAIN || "glimpseapp.net";
   const results = [];
 
@@ -240,9 +246,10 @@ async function warmCache(env) {
         });
 
         if (response.ok) {
-          // Also seed the local Worker microcache so the first real request is instant.
+          // Seed the Worker microcache (named cache, isolated from caches.default).
+          // Plain publicUrl is safe as key — named cache never collides with CDN.
           const microcached = new Response(response.body, response);
-          microcached.headers.set("Cache-Control", `s-maxage=${WORKER_CACHE_TTL}, stale-while-revalidate=15`);
+          microcached.headers.set("Cache-Control", `s-maxage=${WORKER_CACHE_TTL}, stale-while-revalidate=${WORKER_SWR}`);
           microcached.headers.set("X-Cache", "WARM");
           await cache.put(new Request(publicUrl), microcached);
           results.push({ endpoint, status: "ok" });
@@ -316,8 +323,12 @@ export default {
       return corsJSON({ error: authResult.error }, 401, env);
     }
 
-    // Edge cache lookup (key includes query params for pagination)
-    const cache = caches.default;
+    // Worker microcache lookup.
+    // IMPORTANT: use caches.open(MICROCACHE_NAME) — a named cache — NOT caches.default.
+    // caches.default is shared with the CDN cache. Writing to it with s-maxage=120 would
+    // overwrite the CDN's 1800s entry at the same URL, making CDN hits impossible.
+    // Named caches are isolated per Worker and never interfere with CDN caching.
+    const cache = await caches.open(MICROCACHE_NAME);
     const cacheKey = new Request(url.toString(), { method: "GET" });
     let response = await cache.match(cacheKey);
 
@@ -332,7 +343,8 @@ export default {
       return r;
     }
 
-    // Worker miss → fetch; cf options let Cloudflare check CDN/upper-tier before origin.
+    // Worker miss → fetch; cf options let Cloudflare CDN check its cache (keyed by publicUrl)
+    // before contacting origin. CDN key is the bare public URL with no prefix.
     response = await fetchOriginGET(url, env);
     if (!response.ok) return addCORS(response, env);
 
@@ -343,10 +355,10 @@ export default {
     _counts[layer]++;
 
     // Single Response copy: set Cache-Control, X-Cache, and CORS in one pass.
-    // stale-while-revalidate=15: Worker microcache may serve stale for 15s while Cloudflare
-    // revalidates in background. Prevents thundering herd when 2-min microcache TTL expires.
+    // s-maxage=WORKER_CACHE_TTL applies to this named-cache entry only.
+    // The CDN entry (at publicUrl in caches.default, set by cf.cacheTtl=1800) is unaffected.
     const microcached = new Response(response.body, response);
-    microcached.headers.set("Cache-Control", `s-maxage=${WORKER_CACHE_TTL}, stale-while-revalidate=15`);
+    microcached.headers.set("Cache-Control", `s-maxage=${WORKER_CACHE_TTL}, stale-while-revalidate=${WORKER_SWR}`);
     microcached.headers.set("X-Cache", layer);
     for (const [k, v] of Object.entries(getCORSHeaders(env))) microcached.headers.set(k, v);
     ctx.waitUntil(
