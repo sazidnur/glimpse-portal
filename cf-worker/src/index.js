@@ -359,7 +359,8 @@ export default {
     // The CDN entry (at publicUrl in caches.default, set by cf.cacheTtl=1800) is unaffected.
     const microcached = new Response(response.body, response);
     microcached.headers.set("Cache-Control", `s-maxage=${WORKER_CACHE_TTL}, stale-while-revalidate=${WORKER_SWR}`);
-    microcached.headers.set("X-Cache", layer);
+    // X-Cache: WORKER|CDN|ORIGIN — include raw CF cacheStatus for diagnostics
+    microcached.headers.set("X-Cache", `${layer}:${cdnStatus}`);
     for (const [k, v] of Object.entries(getCORSHeaders(env))) microcached.headers.set(k, v);
     ctx.waitUntil(
       cache.put(cacheKey, microcached.clone()).then(() => maybeFlushAnalytics(env))
