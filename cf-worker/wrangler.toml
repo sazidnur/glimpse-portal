@@ -2,12 +2,6 @@ name = "glimpse-api-gateway"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
-# Cap CPU time per invocation. Free plan maximum is 10ms; setting it explicitly
-# guards against runaway code consuming full budget. Wall-clock (I/O wait) is unlimited.
-# Daily request cap (100k free) is enforced by Cloudflare automatically — no config needed.
-[limits]
-cpu_ms = 10
-
 routes = [
   { pattern = "glimpseapp.net/api/v1/*", zone_name = "glimpseapp.net" }
 ]
