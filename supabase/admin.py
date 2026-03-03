@@ -6,7 +6,7 @@ from django.utils.html import format_html
 from django.template.response import TemplateResponse
 from django.conf import settings
 
-from api.v1.resources import news_cache, video_cache
+from api.v1.resources import news_cache, video_cache, metadata_cache
 
 import json
 import urllib.request
@@ -72,6 +72,32 @@ def cache_flush_json(request, key):
     try:
         entry["cache"].flush()
         return JsonResponse({'flushed': True})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+def metadata_flush_json(request):
+    """Flush the metadata Redis cache. Next API request rebuilds it from DB."""
+    try:
+        metadata_cache.flush()
+        return JsonResponse({'flushed': True, 'message': 'Metadata cache purged. Next request will rebuild from DB.'})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+def metadata_rebuild_json(request):
+    """Flush metadata cache then immediately rebuild it from DB."""
+    from api.v1.resources import MetadataListView
+    from django.test import RequestFactory
+    try:
+        metadata_cache.flush()
+        # Trigger a DB read to repopulate cache
+        factory = RequestFactory()
+        fake_request = factory.get('/api/v1/metadata/')
+        view = MetadataListView()
+        view.request = fake_request
+        view._from_db()
+        return JsonResponse({'rebuilt': True, 'message': 'Metadata cache purged and rebuilt from DB.'})
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
@@ -356,6 +382,8 @@ def _patched_get_urls(self):
         path('cache-dashboard/stats/<str:key>/', self.admin_view(cache_stats_json), name='cache_dashboard_stats'),
         path('cache-dashboard/warm/<str:key>/', self.admin_view(cache_warm_json), name='cache_dashboard_warm'),
         path('cache-dashboard/flush/<str:key>/', self.admin_view(cache_flush_json), name='cache_dashboard_flush'),
+        path('cache-dashboard/metadata/flush/', self.admin_view(metadata_flush_json), name='cache_dashboard_metadata_flush'),
+        path('cache-dashboard/metadata/rebuild/', self.admin_view(metadata_rebuild_json), name='cache_dashboard_metadata_rebuild'),
         path('cf-analytics/', self.admin_view(cf_analytics_view), name='cf_analytics'),
         path('cf-analytics/data/', self.admin_view(cf_analytics_data_json), name='cf_analytics_data'),
     ]

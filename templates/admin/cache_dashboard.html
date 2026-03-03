@@ -111,6 +111,7 @@
     .btn-refresh { background: #28a745; }
     .btn-warm-all { background: #2c5777; }
     .btn-flush-all { background: #a71d2a; }
+    .btn-rebuild { background: #6f42c1; }
 
     .status-bar {
         margin-top: 16px;
@@ -154,6 +155,20 @@
     </div>
 
     <div id="resources-container"></div>
+
+    <!-- Metadata cache — single-key, separate from sorted-set caches -->
+    <div class="resource-section" id="section-metadata">
+        <div class="resource-header">
+            <h3>Metadata <span style="font-size: 12px; color: #888; font-weight: normal;">(categories, topics, divisions, publishers)</span></h3>
+            <div class="resource-actions">
+                <button type="button" class="btn-cache btn-rebuild" id="btn-metadata-rebuild" title="Flush &amp; rebuild metadata from DB">Rebuild</button>
+                <button type="button" class="btn-cache btn-flush" id="btn-metadata-flush" title="Flush metadata cache only">Flush</button>
+            </div>
+        </div>
+        <div class="stats-grid">
+            <div class="stat-card"><div class="label">Status</div><div class="value" id="stat-metadata-status">—</div></div>
+        </div>
+    </div>
 
     <div class="status-bar" id="global-status"></div>
     <div class="last-updated" id="last-updated"></div>
@@ -313,6 +328,43 @@
                 })
                 .catch(err => { setStatus(globalStatus, 'Failed: ' + err.message, 'error'); setLoading(this, false); });
         });
+    });
+
+    // Metadata cache buttons
+    document.getElementById('btn-metadata-flush').addEventListener('click', function() {
+        if (!confirm('⚠️ Flush Metadata cache? Next API request will rebuild from DB.')) return;
+        const btn = this;
+        setLoading(btn, true);
+        setStatus(globalStatus, 'Flushing metadata cache...', 'info');
+        fetch('metadata/flush/', { method: 'POST', headers: { 'X-CSRFToken': csrfToken } })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) throw new Error(data.error);
+                setStatus(globalStatus, 'Metadata cache flushed.', 'success');
+                const statusEl = document.getElementById('stat-metadata-status');
+                statusEl.textContent = 'Cold';
+                statusEl.className = 'value red';
+                setLoading(btn, false);
+            })
+            .catch(err => { setStatus(globalStatus, 'Failed: ' + err.message, 'error'); setLoading(btn, false); });
+    });
+
+    document.getElementById('btn-metadata-rebuild').addEventListener('click', function() {
+        if (!confirm('Flush & rebuild Metadata cache from DB?')) return;
+        const btn = this;
+        setLoading(btn, true);
+        setStatus(globalStatus, 'Rebuilding metadata cache...', 'info');
+        fetch('metadata/rebuild/', { method: 'POST', headers: { 'X-CSRFToken': csrfToken } })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) throw new Error(data.error);
+                setStatus(globalStatus, 'Metadata cache rebuilt from DB.', 'success');
+                const statusEl = document.getElementById('stat-metadata-status');
+                statusEl.textContent = '✓ Cached';
+                statusEl.className = 'value green';
+                setLoading(btn, false);
+            })
+            .catch(err => { setStatus(globalStatus, 'Failed: ' + err.message, 'error'); setLoading(btn, false); });
     });
 
     loadAllStats().then(() => {
