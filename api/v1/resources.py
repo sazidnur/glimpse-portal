@@ -1,6 +1,17 @@
-from supabase.models import News, Videos
-from .cache import SortedSetCache
-from .serializers import NewsDetailSerializer, VideoDetailSerializer
+import logging
+
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from supabase.models import (
+    News, Videos, Categories, Topics, Divisions, Videopublishers,
+)
+from .cache import SortedSetCache, MetadataCache
+from .serializers import (
+    NewsDetailSerializer, VideoDetailSerializer,
+    CategorySerializer, TopicSerializer, DivisionSerializer, VideoPublisherSerializer,
+)
 from .views import (
     CachedListView,
     CachedCreateView,
@@ -9,6 +20,8 @@ from .views import (
     CacheWarmView,
     CacheFlushView,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _news_serializer(obj):
@@ -40,6 +53,7 @@ def _video_serializer(obj):
 
 news_cache = SortedSetCache(prefix="news", model=News, serialize_fn=_news_serializer)
 video_cache = SortedSetCache(prefix="video", model=Videos, serialize_fn=_video_serializer)
+metadata_cache = MetadataCache()
 
 
 class NewsListView(CachedListView):
@@ -96,3 +110,53 @@ class VideoCacheWarmView(CacheWarmView):
 
 class VideoCacheFlushView(CacheFlushView):
     cache = video_cache
+
+
+class MetadataListView(APIView):
+    """Returns categories, topics, divisions, and video publishers in one call."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        try:
+            cached = metadata_cache.get()
+            if cached is not None:
+                response = Response(cached)
+                response["Cache-Control"] = "s-maxage=86400, stale-while-revalidate=3600"
+                return response
+        except Exception:
+            logger.warning("Metadata Redis read failed, falling back to DB")
+
+        return self._from_db()
+
+    def _from_db(self):
+        try:
+            data = {
+                "categories": CategorySerializer(
+                    Categories.objects.filter(enabled=True).order_by("order"),
+                    many=True,
+                ).data,
+                "topics": TopicSerializer(
+                    Topics.objects.filter(enabled=True).order_by("order"),
+                    many=True,
+                ).data,
+                "divisions": DivisionSerializer(
+                    Divisions.objects.all().order_by("order"),
+                    many=True,
+                ).data,
+                "publishers": VideoPublisherSerializer(
+                    Videopublishers.objects.all(),
+                    many=True,
+                ).data,
+            }
+
+            try:
+                metadata_cache.set(data)
+            except Exception:
+                logger.warning("Failed to write metadata to Redis cache")
+
+            response = Response(data)
+            response["Cache-Control"] = "s-maxage=86400, stale-while-revalidate=3600"
+            return response
+        except Exception:
+            logger.exception("Metadata DB query failed")
+            return Response({"error": "Service unavailable"}, status=503)

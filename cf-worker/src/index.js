@@ -5,6 +5,7 @@ const WORKER_SWR       = 15;     // seconds — stale-while-revalidate for micro
 // Layer 2: Cloudflare CDN / Tiered cache (upper tier + edge)
 const CDN_CACHE_TTL    = 1800;   // seconds — CDN TTL (override via cf.cacheTtl)
 const CDN_SWR          = 120;    // seconds — stale-while-revalidate for CDN layer
+const METADATA_CDN_TTL = 86400;  // 1 day — metadata changes infrequently
 // Worker microcache name — MUST be different from caches.default to avoid
 // overwriting the CDN-cached entry at the same URL key.
 const MICROCACHE_NAME  = "worker-microcache";
@@ -373,7 +374,10 @@ export default {
       // Strip Set-Cookie and Vary so the entry is stored and reused for all callers.
       const cdnClone = originResp.clone();
       const cdnEntry = new Response(cdnClone.body, cdnClone);
-      cdnEntry.headers.set("Cache-Control", `s-maxage=${CDN_CACHE_TTL}, stale-while-revalidate=${CDN_SWR}`);
+      const cdnTtl = url.pathname.replace(/\/+$/, "") === "/api/v1/metadata"
+        ? METADATA_CDN_TTL
+        : CDN_CACHE_TTL;
+      cdnEntry.headers.set("Cache-Control", `s-maxage=${cdnTtl}, stale-while-revalidate=${CDN_SWR}`);
       cdnEntry.headers.delete("Set-Cookie");
       cdnEntry.headers.delete("Vary");
       ctx.waitUntil(caches.default.put(cdnKey, cdnEntry));

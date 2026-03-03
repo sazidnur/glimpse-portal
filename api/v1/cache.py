@@ -204,3 +204,29 @@ class SortedSetCache:
             "redis_used_memory": mem.get("used_memory_human", "unknown"),
             "redis_peak_memory": mem.get("used_memory_peak_human", "unknown"),
         }
+
+
+class MetadataCache:
+    """Single-key Redis cache for the combined metadata response."""
+
+    KEY = "metadata:all"
+
+    def __init__(self, ttl=60 * 60 * 24):
+        self.ttl = ttl
+
+    def _redis(self):
+        return get_redis_connection("default")
+
+    def get(self):
+        raw = self._redis().get(self.KEY)
+        if raw is None:
+            return None
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        return json.loads(raw)
+
+    def set(self, data):
+        self._redis().set(self.KEY, json.dumps(data), ex=self.ttl)
+
+    def flush(self):
+        self._redis().delete(self.KEY)

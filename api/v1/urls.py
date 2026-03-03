@@ -13,6 +13,7 @@ from .resources import (
     VideoCacheStatsView,
     VideoCacheWarmView,
     VideoCacheFlushView,
+    MetadataListView,
 )
 
 urlpatterns = [
@@ -31,4 +32,6 @@ urlpatterns = [
     path("videos/cache/", VideoCacheStatsView.as_view(), name="video_cache_stats"),
     path("videos/cache/warm/", VideoCacheWarmView.as_view(), name="video_cache_warm"),
     path("videos/cache/flush/", VideoCacheFlushView.as_view(), name="video_cache_flush"),
+
+    path("metadata/", MetadataListView.as_view(), name="metadata_list"),
 ]

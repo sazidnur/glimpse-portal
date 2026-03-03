@@ -1,7 +1,9 @@
 from django.utils import timezone
 from rest_framework import serializers
 
-from supabase.models import News, Videos
+from supabase.models import (
+    News, Videos, Categories, Topics, Divisions, Videopublishers,
+)
 
 
 class NewsDetailSerializer(serializers.ModelSerializer):
@@ -47,3 +49,31 @@ class VideoDetailSerializer(serializers.ModelSerializer):
         if 'timestamp' not in validated_data or validated_data['timestamp'] is None:
             validated_data['timestamp'] = timezone.now()
         return Videos.objects.create(**validated_data)
+
+
+class CategorySerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Categories
+        fields = ['id', 'name', 'enabled', 'order']
+
+
+class TopicSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Topics
+        fields = ['id', 'name', 'order', 'enabled', 'image']
+
+
+class DivisionSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Divisions
+        fields = ['id', 'name', 'order']
+
+
+class VideoPublisherSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Videopublishers
+        fields = ['id', 'title', 'url', 'profileiconurl', 'platform']
