@@ -303,20 +303,25 @@ def cf_analytics_data_json(request):
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        return JsonResponse({"error": f"CF API HTTP {e.code}: {e.reason}"}, status=502)
+        body = ""
+        try:
+            body = e.read().decode()[:300]
+        except Exception:
+            pass
+        return JsonResponse({"error": f"CF API HTTP {e.code}: {e.reason}", "detail": body}, status=502)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
     errors = data.get("errors")
     if errors:
-        return JsonResponse({"error": errors[0].get("message", "GraphQL error")}, status=502)
+        msg = errors[0].get("message", "GraphQL error")
+        return JsonResponse({"error": f"CF GraphQL: {msg}"}, status=502)
 
-    groups = (
-        data.get("data", {})
-        .get("viewer", {})
-        .get("accounts", [{}])[0]
-        .get("workersAnalyticsEngineAdaptiveGroups", [])
-    )
+    try:
+        accounts = data.get("data", {}).get("viewer", {}).get("accounts", [])
+        groups = accounts[0].get("workersAnalyticsEngineAdaptiveGroups", []) if accounts else []
+    except (IndexError, KeyError, TypeError) as e:
+        return JsonResponse({"error": f"Unexpected CF response shape: {e}"}, status=502)
 
     series = [
         {
