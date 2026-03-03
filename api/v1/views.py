@@ -39,10 +39,11 @@ class CachedListView(APIView):
                 result = self.cache.get_paginated(page=page, limit=limit)
                 response = Response(result)
 
-            # Tell Cloudflare CDN it may serve stale for 120 s while revalidating in background.
-            # cf.cacheTtl=1800 in the Worker overrides s-maxage, but CF reads stale-while-revalidate
-            # from origin headers independently, so this directive reaches the CDN layer.
-            response["Cache-Control"] = "stale-while-revalidate=120"
+            # CDN cache directive: s-maxage=1800 tells CF to cache for 30 min.
+            # stale-while-revalidate=120 gives CF a 2 min grace period to serve stale
+            # while revalidating in background. This works alongside cf.cacheTtl=1800
+            # set in the Worker's fetchOriginGET cf options.
+            response["Cache-Control"] = "s-maxage=1800, stale-while-revalidate=120"
             return response
 
         except Exception:

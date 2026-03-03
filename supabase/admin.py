@@ -276,8 +276,7 @@ def cf_analytics_data_json(request):
     {
       viewer {
         accounts(filter: { accountTag: "%s" }) {
-          workersAnalyticsEngineAdaptiveGroups(
-            dataset: "cache_analytics"
+          cache_analyticsAdaptiveGroups(
             filter: { datetime_geq: "%s", datetime_leq: "%s" }
             limit: 10000
             orderBy: [datetime_ASC]
@@ -315,11 +314,14 @@ def cf_analytics_data_json(request):
     errors = data.get("errors")
     if errors:
         msg = errors[0].get("message", "GraphQL error")
+        # Dataset field doesn't exist yet — Worker hasn't been deployed or hasn't written data yet
+        if "unknown field" in msg and "cache_analytics" in msg:
+            return JsonResponse({"error": "No analytics data yet. Deploy the Cloudflare Worker and it will populate once the first writeDataPoint() flush occurs (within 60 s of traffic)."}, status=200)
         return JsonResponse({"error": f"CF GraphQL: {msg}"}, status=502)
 
     try:
         accounts = data.get("data", {}).get("viewer", {}).get("accounts", [])
-        groups = accounts[0].get("workersAnalyticsEngineAdaptiveGroups", []) if accounts else []
+        groups = accounts[0].get("cache_analyticsAdaptiveGroups", []) if accounts else []
     except (IndexError, KeyError, TypeError) as e:
         return JsonResponse({"error": f"Unexpected CF response shape: {e}"}, status=502)
 
