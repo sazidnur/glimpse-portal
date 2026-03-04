@@ -7,6 +7,7 @@ services:
     image: postgres:16-alpine
     container_name: glimpse-portal-db
     restart: unless-stopped
+    mem_limit: 512m
     environment:
       POSTGRES_DB: ${DJANGO_DB_NAME:-glimpse_portal}
       POSTGRES_USER: ${DJANGO_DB_USER:-postgres}
@@ -26,7 +27,8 @@ services:
     image: redis:7-alpine
     container_name: glimpse-portal-redis
     restart: unless-stopped
-    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    mem_limit: 256m
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
     healthcheck:
@@ -45,6 +47,7 @@ services:
       dockerfile: Dockerfile
     container_name: glimpse-portal-django
     restart: unless-stopped
+    mem_limit: 512m
     depends_on:
       db:
         condition: service_healthy
