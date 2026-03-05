@@ -5,12 +5,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from supabase.models import (
-    News, Videos, Categories, Topics, Divisions, Videopublishers,
+    News, Videos, Categories, Topics, Divisions, Videopublishers, Sourcealias,
 )
 from .cache import SortedSetCache, MetadataCache
 from .serializers import (
     NewsDetailSerializer, VideoDetailSerializer,
     CategorySerializer, TopicSerializer, DivisionSerializer, VideoPublisherSerializer,
+    SourceAliasSerializer,
 )
 from .views import (
     CachedListView,
@@ -145,6 +146,10 @@ class MetadataListView(APIView):
                 ).data,
                 "publishers": VideoPublisherSerializer(
                     Videopublishers.objects.all(),
+                    many=True,
+                ).data,
+                "source_aliases": SourceAliasSerializer(
+                    Sourcealias.objects.all(),
                     many=True,
                 ).data,
             }

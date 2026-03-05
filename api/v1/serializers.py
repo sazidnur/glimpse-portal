@@ -2,7 +2,7 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from supabase.models import (
-    News, Videos, Categories, Topics, Divisions, Videopublishers,
+    News, Videos, Categories, Topics, Divisions, Videopublishers, Sourcealias,
 )
 
 
@@ -77,3 +77,10 @@ class VideoPublisherSerializer(serializers.ModelSerializer):
     class Meta:
         model = Videopublishers
         fields = ['id', 'title', 'url', 'profileiconurl', 'platform']
+
+
+class SourceAliasSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Sourcealias
+        fields = ['id', 'source', 'alias', 'alias_en']

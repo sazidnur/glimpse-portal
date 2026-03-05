@@ -53,6 +53,7 @@ class News(models.Model):
     score = models.FloatField(blank=True, null=True)
     topic = models.ForeignKey('Topics', models.DO_NOTHING, db_column='topic', blank=True, null=True)
     categoryid = models.ForeignKey(Categories, models.DO_NOTHING, db_column='categoryId', blank=True, null=True)  # Field name made lowercase.
+    divisionid = models.ForeignKey(Divisions, models.DO_NOTHING, db_column='divisionId', blank=True, null=True)  # Field name made lowercase.
 
     class Meta:
         managed = False
@@ -63,7 +64,8 @@ class News(models.Model):
 class Sourcealias(models.Model):
     id = models.BigAutoField(primary_key=True)
     source = models.TextField(unique=True)
-    alias = models.TextField(blank=True, null=True)
+    alias = models.TextField(blank=False, null=False)
+    alias_en = models.TextField(blank=False, null=False)
 
     class Meta:
         managed = False
@@ -122,7 +124,7 @@ class Videos(models.Model):
     publisher = models.ForeignKey(Videopublishers, models.DO_NOTHING, db_column='publisher', blank=True, null=True)
     timestamp = models.DateTimeField()
     score = models.FloatField(blank=True, null=True)
-    thumbnailurl = models.TextField(db_column='thumbnailUrl', blank=True, null=True)  # Field name made lowercase.
+    thumbnailurl = models.TextField(db_column='thumbnailUrl', blank=True, null=True, db_comment='thumbnailUrl')  # Field name made lowercase.
 
     class Meta:
         managed = False
