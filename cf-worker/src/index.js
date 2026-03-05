@@ -379,7 +379,7 @@ export default {
       const cdnEntry = new Response(cdnClone.body, cdnClone);
       const pathNormalized = url.pathname.replace(/\/+$/, "");
       const isMetadata = pathNormalized === "/api/v1/metadata";
-      const isNewsAll = pathNormalized === "/api/v1/news" && url.searchParams.get("all") === "true";
+      const isNewsAll = pathNormalized === "/api/v1/news" && url.searchParams.get("all")?.toLowerCase() === "true";
       let cdnTtl, cdnSwr;
       if (isMetadata) {
         cdnTtl = METADATA_CDN_TTL;
