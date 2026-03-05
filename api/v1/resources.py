@@ -36,6 +36,7 @@ def _news_serializer(obj):
         "score": obj.score,
         "topic_id": obj.topic_id,
         "category_id": obj.categoryid_id,
+        "division_id": obj.divisionid_id,
     }
 
 

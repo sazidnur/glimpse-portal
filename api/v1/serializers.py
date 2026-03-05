@@ -12,7 +12,7 @@ class NewsDetailSerializer(serializers.ModelSerializer):
         model = News
         fields = [
             'id', 'title', 'summary', 'source', 'imageurl',
-            'timestamp', 'score', 'topic', 'categoryid',
+            'timestamp', 'score', 'topic', 'categoryid', 'divisionid',
         ]
         extra_kwargs = {
             'imageurl': {'required': False},
@@ -20,6 +20,7 @@ class NewsDetailSerializer(serializers.ModelSerializer):
             'score': {'required': False},
             'topic': {'required': False},
             'categoryid': {'required': False},
+            'divisionid': {'required': False},
         }
 
     def create(self, validated_data):

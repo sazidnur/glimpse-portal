@@ -6,6 +6,9 @@ const WORKER_SWR       = 15;     // seconds — stale-while-revalidate for micro
 const CDN_CACHE_TTL    = 1800;   // seconds — CDN TTL (override via cf.cacheTtl)
 const CDN_SWR          = 120;    // seconds — stale-while-revalidate for CDN layer
 const METADATA_CDN_TTL = 86400;  // 1 day — metadata changes infrequently
+const METADATA_SWR     = 21600;  // 6 hours — stale-while-revalidate for metadata
+const NEWS_ALL_CDN_TTL = 86400;  // 1 day — news?all changes infrequently
+const NEWS_ALL_SWR     = 21600;  // 6 hours — stale-while-revalidate for news?all
 // Worker microcache name — MUST be different from caches.default to avoid
 // overwriting the CDN-cached entry at the same URL key.
 const MICROCACHE_NAME  = "worker-microcache";
@@ -374,10 +377,21 @@ export default {
       // Strip Set-Cookie and Vary so the entry is stored and reused for all callers.
       const cdnClone = originResp.clone();
       const cdnEntry = new Response(cdnClone.body, cdnClone);
-      const cdnTtl = url.pathname.replace(/\/+$/, "") === "/api/v1/metadata"
-        ? METADATA_CDN_TTL
-        : CDN_CACHE_TTL;
-      cdnEntry.headers.set("Cache-Control", `s-maxage=${cdnTtl}, stale-while-revalidate=${CDN_SWR}`);
+      const pathNormalized = url.pathname.replace(/\/+$/, "");
+      const isMetadata = pathNormalized === "/api/v1/metadata";
+      const isNewsAll = pathNormalized === "/api/v1/news" && url.searchParams.get("all") === "true";
+      let cdnTtl, cdnSwr;
+      if (isMetadata) {
+        cdnTtl = METADATA_CDN_TTL;
+        cdnSwr = METADATA_SWR;
+      } else if (isNewsAll) {
+        cdnTtl = NEWS_ALL_CDN_TTL;
+        cdnSwr = NEWS_ALL_SWR;
+      } else {
+        cdnTtl = CDN_CACHE_TTL;
+        cdnSwr = CDN_SWR;
+      }
+      cdnEntry.headers.set("Cache-Control", `s-maxage=${cdnTtl}, stale-while-revalidate=${cdnSwr}`);
       cdnEntry.headers.delete("Set-Cookie");
       cdnEntry.headers.delete("Vary");
       ctx.waitUntil(caches.default.put(cdnKey, cdnEntry));
