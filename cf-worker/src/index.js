@@ -4,7 +4,7 @@ const WORKER_CACHE_TTL = 120;    // seconds — microcache TTL
 const WORKER_SWR       = 15;     // seconds — stale-while-revalidate for microcache
 // Layer 2: Cloudflare CDN / Tiered cache (upper tier + edge)
 const CDN_CACHE_TTL    = 1800;   // seconds — CDN TTL (override via cf.cacheTtl)
-const CDN_SWR          = 120;    // seconds — stale-while-revalidate for CDN layer
+const CDN_SWR          = 1800;    // seconds — stale-while-revalidate for CDN layer
 const METADATA_CDN_TTL = 86400;  // 1 day — metadata changes infrequently
 const METADATA_SWR     = 21600;  // 6 hours — stale-while-revalidate for metadata
 const NEWS_ALL_CDN_TTL = 86400;  // 1 day — news?all changes infrequently
