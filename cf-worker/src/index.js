@@ -6,6 +6,9 @@ const NEWS_ALL_CDN_TTL = 86400;
 // Dedicated Worker microcache name.
 const MICROCACHE_NAME = "worker-microcache";
 const TOKEN_EXPIRY = 7200;
+const X_CACHE_WORKER = "0";
+const X_CACHE_CDN = "1";
+const X_CACHE_ORIGIN = "2";
 
 const _counts = { WORKER: 0, CDN: 0, ORIGIN: 0 };
 let _lastFlush = Date.now();
@@ -222,7 +225,7 @@ async function warmCache(env) {
         if (originResp.ok) {
           const microEntry = new Response(originResp.body, originResp);
           microEntry.headers.set("Cache-Control", `s-maxage=${WORKER_CACHE_TTL}, stale-while-revalidate=${WORKER_SWR}`);
-          microEntry.headers.set("X-Cache", "HIT");
+          microEntry.headers.set("X-Cache", X_CACHE_WORKER);
 
           await microcache.put(new Request(publicUrl), microEntry);
 
@@ -298,7 +301,7 @@ export default {
       _counts.WORKER++;
       maybeFlushAnalytics(env);
       const r = new Response(response.body, response);
-      r.headers.set("X-Cache", "HIT");
+      r.headers.set("X-Cache", X_CACHE_WORKER);
       for (const [k, v] of Object.entries(getCORSHeaders(env))) r.headers.set(k, v);
       return r;
     }
@@ -308,8 +311,8 @@ export default {
     if (!response.ok) return addCORS(response, env);
 
     const cfCacheStatus = response.headers.get("CF-Cache-Status");
-    const layer = isCDNHitStatus(cfCacheStatus) ? "HIT" : "MISS";
-    if (layer === "HIT") {
+    const layer = isCDNHitStatus(cfCacheStatus) ? X_CACHE_CDN : X_CACHE_ORIGIN;
+    if (layer === X_CACHE_CDN) {
       _counts.CDN++;
     } else {
       _counts.ORIGIN++;
@@ -323,5 +326,8 @@ export default {
       microcache.put(cacheKey, toClient.clone()).then(() => maybeFlushAnalytics(env))
     );
     return toClient;
+  },
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(warmCache(env));
   },
 };
