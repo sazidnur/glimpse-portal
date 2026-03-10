@@ -205,6 +205,7 @@ async function handleGetToken(request, env) {
 const WARM_ENDPOINTS = [
   "/api/v1/news/?page=1&limit=50",
   "/api/v1/news/?page=2&limit=50",
+  "/api/v1/news/?page=1&limit=20",
   "/api/v1/videos/?page=1&limit=50",
   "/api/v1/videos/?page=2&limit=50",
   "/api/v1/metadata",
