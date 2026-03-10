@@ -11,6 +11,7 @@ via the @api_security_required decorator for more granular control.
 """
 
 import logging
+from datetime import datetime, timezone
 from django.http import JsonResponse
 from django.conf import settings
 
@@ -75,6 +76,11 @@ class APISecurityMiddleware:
             request.client_ip = client_ip
         
         response = self.get_response(request)
+
+        # Marker for when origin generated this response body.
+        # Safe for caching: response headers do not alter cache key unless used in Vary.
+        if request.path.startswith('/origin/api/v1/'):
+            response['X-Origin-Generated-At'] = datetime.now(timezone.utc).isoformat()
         
         # Add security headers to API responses
         if request.path.startswith('/api/'):
