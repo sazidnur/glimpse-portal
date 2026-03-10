@@ -207,6 +207,8 @@ const WARM_ENDPOINTS = [
   "/api/v1/news/?page=2&limit=50",
   "/api/v1/videos/?page=1&limit=50",
   "/api/v1/videos/?page=2&limit=50",
+  "/api/v1/metadata",
+  "/api/v1/news/?all=true",
 ];
 
 async function warmCache(env) {
