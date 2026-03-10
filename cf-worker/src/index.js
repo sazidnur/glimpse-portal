@@ -1,12 +1,9 @@
 const WORKER_CACHE_TTL = 120;
 const WORKER_SWR = 15;
 const CDN_CACHE_TTL = 1800;
-const CDN_SWR = 1800;
 const METADATA_CDN_TTL = 86400;
-const METADATA_SWR = 21600;
 const NEWS_ALL_CDN_TTL = 86400;
-const NEWS_ALL_SWR = 21600;
-// Must differ from caches.default to keep microcache and CDN entries separate.
+// Dedicated Worker microcache name.
 const MICROCACHE_NAME = "worker-microcache";
 const TOKEN_EXPIRY = 7200;
 
@@ -141,14 +138,30 @@ function handlePreflight(env) {
   return new Response(null, { status: 204, headers: getCORSHeaders(env) });
 }
 
-async function fetchOriginGET(url, env) {
-  // Same-zone subrequests are not cached by cf.cacheEverything; cache manually.
+function getCDNTTL(url) {
+  const pathNormalized = url.pathname.replace(/\/+$/, "");
+  const isMetadata = pathNormalized === "/api/v1/metadata";
+  const isNewsAll = pathNormalized === "/api/v1/news" && url.searchParams.get("all")?.toLowerCase() === "true";
+  if (isMetadata) return METADATA_CDN_TTL;
+  if (isNewsAll) return NEWS_ALL_CDN_TTL;
+  return CDN_CACHE_TTL;
+}
+
+function isCDNHitStatus(status) {
+  return ["HIT", "REVALIDATED", "UPDATING", "STALE"].includes((status || "").toUpperCase());
+}
+
+async function fetchOriginGET(url, env, cdnTtl) {
   return fetch(`${env.ORIGIN_BASE}${url.pathname}${url.search}`, {
     method: "GET",
     headers: {
       Authorization: `Token ${env.DRF_TOKEN}`,
       "X-Origin-Secret": env.ORIGIN_PATH_SECRET,
       Accept: "application/json",
+    },
+    cf: {
+      cacheEverything: true,
+      cacheTtl: cdnTtl,
     },
   });
 }
@@ -202,30 +215,16 @@ async function warmCache(env) {
     WARM_ENDPOINTS.map(async (endpoint) => {
       try {
         const publicUrl = `https://${workerDomain}${endpoint}`;
-
-        const originResp = await fetch(`${env.ORIGIN_BASE}${endpoint}`, {
-          headers: {
-            Authorization: `Token ${env.DRF_TOKEN}`,
-            "X-Origin-Secret": env.ORIGIN_PATH_SECRET,
-            Accept: "application/json",
-          },
-        });
+        const endpointUrl = new URL(publicUrl);
+        const cdnTtl = getCDNTTL(endpointUrl);
+        const originResp = await fetchOriginGET(endpointUrl, env, cdnTtl);
 
         if (originResp.ok) {
-          // Response body can only be consumed once, so use separate clones.
-          const cdnEntry = new Response(originResp.clone().body, originResp);
-          cdnEntry.headers.set("Cache-Control", `s-maxage=${CDN_CACHE_TTL}, stale-while-revalidate=${CDN_SWR}`);
-          cdnEntry.headers.delete("Set-Cookie");
-          cdnEntry.headers.delete("Vary");
-
           const microEntry = new Response(originResp.body, originResp);
           microEntry.headers.set("Cache-Control", `s-maxage=${WORKER_CACHE_TTL}, stale-while-revalidate=${WORKER_SWR}`);
           microEntry.headers.set("X-Cache", "HIT");
 
-          await Promise.all([
-            caches.default.put(new Request(publicUrl), cdnEntry),
-            microcache.put(new Request(publicUrl), microEntry),
-          ]);
+          await microcache.put(new Request(publicUrl), microEntry);
 
           results.push({ endpoint, status: "ok" });
         } else {
@@ -304,43 +303,16 @@ export default {
       return r;
     }
 
-    const workerDomain = env.WORKER_DOMAIN || "glimpseapp.net";
-    const publicUrl = `https://${workerDomain}${url.pathname}${url.search}`;
-    const cdnKey = new Request(publicUrl, { method: "GET" });
-    response = await caches.default.match(cdnKey);
-    let layer;
+    const cdnTtl = getCDNTTL(url);
+    response = await fetchOriginGET(url, env, cdnTtl);
+    if (!response.ok) return addCORS(response, env);
 
-    if (response) {
-      layer = "HIT";
+    const cfCacheStatus = response.headers.get("CF-Cache-Status");
+    const layer = isCDNHitStatus(cfCacheStatus) ? "HIT" : "MISS";
+    if (layer === "HIT") {
       _counts.CDN++;
     } else {
-      const originResp = await fetchOriginGET(url, env);
-      if (!originResp.ok) return addCORS(originResp, env);
-      layer = "MISS";
       _counts.ORIGIN++;
-
-      const cdnClone = originResp.clone();
-      const cdnEntry = new Response(cdnClone.body, cdnClone);
-      const pathNormalized = url.pathname.replace(/\/+$/, "");
-      const isMetadata = pathNormalized === "/api/v1/metadata";
-      const isNewsAll = pathNormalized === "/api/v1/news" && url.searchParams.get("all")?.toLowerCase() === "true";
-      let cdnTtl, cdnSwr;
-      if (isMetadata) {
-        cdnTtl = METADATA_CDN_TTL;
-        cdnSwr = METADATA_SWR;
-      } else if (isNewsAll) {
-        cdnTtl = NEWS_ALL_CDN_TTL;
-        cdnSwr = NEWS_ALL_SWR;
-      } else {
-        cdnTtl = CDN_CACHE_TTL;
-        cdnSwr = CDN_SWR;
-      }
-      cdnEntry.headers.set("Cache-Control", `s-maxage=${cdnTtl}, stale-while-revalidate=${cdnSwr}`);
-      cdnEntry.headers.delete("Set-Cookie");
-      cdnEntry.headers.delete("Vary");
-      ctx.waitUntil(caches.default.put(cdnKey, cdnEntry));
-
-      response = originResp;
     }
 
     const toClient = new Response(response.body, response);
