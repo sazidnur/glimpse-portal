@@ -48,7 +48,7 @@ class APISecurityMiddleware:
         if request.path.startswith('/origin/'):
             origin_secret = getattr(settings, 'ORIGIN_PATH_SECRET', '')
             request_secret = request.META.get('HTTP_X_ORIGIN_SECRET', '')
-            if not origin_secret or request_secret != origin_secret:
+            if not origin_secret or request_secret != origin_secret and not settings.DEBUG:
                 logger.warning(f"Blocked direct /origin/ access from {self.get_client_ip(request)}")
                 return JsonResponse({'error': 'Forbidden'}, status=403)
 
@@ -58,7 +58,7 @@ class APISecurityMiddleware:
             return JsonResponse({'error': 'Forbidden'}, status=403)
 
         # IP filtering for other /api/ paths (portal internal API)
-        if request.path.startswith('/api/') and not request.path.startswith('/api/v1/'):
+        if request.path.startswith('/api/') and not request.path.startswith('/api/v1/') and not settings.DEBUG:
             client_ip = self.get_client_ip(request)
             
             # Log the request

@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime, timezone
 
 from django_redis import get_redis_connection
 
@@ -210,6 +211,7 @@ class MetadataCache:
     """Single-key Redis cache for the combined metadata response."""
 
     KEY = "metadata:all"
+    LAST_SYNC_KEY = "metadata:last_sync_at"
 
     def __init__(self, ttl=60 * 60 * 24):
         self.ttl = ttl
@@ -220,13 +222,43 @@ class MetadataCache:
     def get(self):
         raw = self._redis().get(self.KEY)
         if raw is None:
+            logger.info("Metadata cache MISS (%s)", self.KEY)
             return None
+        logger.info("Metadata cache HIT (%s)", self.KEY)
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8")
         return json.loads(raw)
 
     def set(self, data):
-        self._redis().set(self.KEY, json.dumps(data), ex=self.ttl)
+        r = self._redis()
+        pipe = r.pipeline()
+        pipe.set(self.KEY, json.dumps(data), ex=self.ttl)
+        pipe.set(self.LAST_SYNC_KEY, datetime.now(timezone.utc).isoformat())
+        pipe.execute()
+        logger.info(
+            "Metadata cache SET (%s) ttl=%ss categories=%d topics=%d divisions=%d publishers=%d source_aliases=%d",
+            self.KEY,
+            self.ttl,
+            len(data.get("categories", [])),
+            len(data.get("topics", [])),
+            len(data.get("divisions", [])),
+            len(data.get("publishers", [])),
+            len(data.get("source_aliases", [])),
+        )
 
     def flush(self):
         self._redis().delete(self.KEY)
+        logger.info("Metadata cache FLUSH (%s)", self.KEY)
+
+    def stats(self):
+        r = self._redis()
+        key_exists = bool(r.exists(self.KEY))
+        ttl_seconds = r.ttl(self.KEY)
+        last_sync_raw = r.get(self.LAST_SYNC_KEY)
+        if isinstance(last_sync_raw, bytes):
+            last_sync_raw = last_sync_raw.decode("utf-8")
+        return {
+            "cached": key_exists,
+            "ttl_seconds": ttl_seconds if ttl_seconds is not None else -2,
+            "last_sync_at": last_sync_raw or "",
+        }

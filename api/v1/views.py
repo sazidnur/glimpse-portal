@@ -1,6 +1,6 @@
 import logging
 
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -23,7 +23,8 @@ def _parse_int(value, default=1, min_val=None, max_val=None):
 
 
 class CachedListView(APIView):
-    permission_classes = [AllowAny]
+    # Require DRF token auth for reads as well as writes.
+    permission_classes = [IsAuthenticated]
     cache = None
     serializer_class = None
     model = None

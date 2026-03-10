@@ -1,6 +1,6 @@
 import logging
 
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -56,6 +56,42 @@ def _video_serializer(obj):
 news_cache = SortedSetCache(prefix="news", model=News, serialize_fn=_news_serializer)
 video_cache = SortedSetCache(prefix="video", model=Videos, serialize_fn=_video_serializer)
 metadata_cache = MetadataCache()
+
+
+def _using(model, using=None):
+    return model.objects.using(using) if using else model.objects
+
+
+def build_metadata_payload(using=None):
+    return {
+        "categories": CategorySerializer(
+            _using(Categories, using).filter(enabled=True).order_by("order"),
+            many=True,
+        ).data,
+        "topics": TopicSerializer(
+            _using(Topics, using).filter(enabled=True).order_by("order"),
+            many=True,
+        ).data,
+        "divisions": DivisionSerializer(
+            _using(Divisions, using).all().order_by("order"),
+            many=True,
+        ).data,
+        "publishers": VideoPublisherSerializer(
+            _using(Videopublishers, using).all(),
+            many=True,
+        ).data,
+        "source_aliases": SourceAliasSerializer(
+            _using(Sourcealias, using).all(),
+            many=True,
+        ).data,
+    }
+
+
+def rebuild_metadata_cache(using=None):
+    data = build_metadata_payload(using=using)
+    metadata_cache.set(data)
+    logger.info("Metadata cache rebuild completed (using=%s)", using or "default-router")
+    return data
 
 
 class NewsListView(CachedListView):
@@ -116,7 +152,7 @@ class VideoCacheFlushView(CacheFlushView):
 
 class MetadataListView(APIView):
     """Returns categories, topics, divisions, and video publishers in one call."""
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         try:
@@ -132,31 +168,11 @@ class MetadataListView(APIView):
 
     def _from_db(self):
         try:
-            data = {
-                "categories": CategorySerializer(
-                    Categories.objects.filter(enabled=True).order_by("order"),
-                    many=True,
-                ).data,
-                "topics": TopicSerializer(
-                    Topics.objects.filter(enabled=True).order_by("order"),
-                    many=True,
-                ).data,
-                "divisions": DivisionSerializer(
-                    Divisions.objects.all().order_by("order"),
-                    many=True,
-                ).data,
-                "publishers": VideoPublisherSerializer(
-                    Videopublishers.objects.all(),
-                    many=True,
-                ).data,
-                "source_aliases": SourceAliasSerializer(
-                    Sourcealias.objects.all(),
-                    many=True,
-                ).data,
-            }
+            data = build_metadata_payload()
 
             try:
                 metadata_cache.set(data)
+                logger.info("Metadata API served from DB and cached")
             except Exception:
                 logger.warning("Failed to write metadata to Redis cache")
 
