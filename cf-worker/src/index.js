@@ -332,8 +332,21 @@ async function handleLiveFeedSocket(request, env) {
     return corsJSON({ error: "WebSocket upgrade required" }, 426, env);
   }
 
-  const jwtError = await requireBearerJWT(request, env);
-  if (jwtError) return jwtError;
+  const authHeader = request.headers.get("Authorization") || "";
+  let token = "";
+  if (authHeader.startsWith("Bearer ")) {
+    token = authHeader.slice(7);
+  } else {
+    const url = new URL(request.url);
+    token = (url.searchParams.get("token") || "").trim();
+  }
+  if (!token) {
+    return corsJSON({ error: "Authorization token is required" }, 401, env);
+  }
+  const authResult = await verifyToken(token, env);
+  if (!authResult.valid) {
+    return corsJSON({ error: authResult.error }, 401, env);
+  }
 
   try {
     const stub = getLiveFeedStub(env);
@@ -389,6 +402,85 @@ async function handleLiveFeedPurgeCategory(request, env) {
   }
 }
 
+async function handleLiveFeedCategoryList(request, env) {
+  if (request.method !== "GET") {
+    return corsJSON({ error: "GET required" }, 405, env);
+  }
+  const jwtError = await requireBearerJWT(request, env);
+  if (jwtError) return jwtError;
+
+  try {
+    const stub = getLiveFeedStub(env);
+    const response = await stub.fetch("https://live-feed/admin/categories/list", {
+      method: "GET",
+    });
+    return addCORS(response, env);
+  } catch (error) {
+    return corsJSON({ error: `Live feed unavailable: ${error.message}` }, 503, env);
+  }
+}
+
+async function handleLiveFeedCategoryUpsert(request, env) {
+  if (request.method !== "POST") {
+    return corsJSON({ error: "POST required" }, 405, env);
+  }
+  const jwtError = await requireBearerJWT(request, env);
+  if (jwtError) return jwtError;
+
+  const rawBody = await request.text();
+  try {
+    const stub = getLiveFeedStub(env);
+    const response = await stub.fetch("https://live-feed/admin/categories/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: rawBody,
+    });
+    return addCORS(response, env);
+  } catch (error) {
+    return corsJSON({ error: `Live feed unavailable: ${error.message}` }, 503, env);
+  }
+}
+
+async function handleLiveFeedCategoryDelete(request, env) {
+  if (request.method !== "POST") {
+    return corsJSON({ error: "POST required" }, 405, env);
+  }
+  const jwtError = await requireBearerJWT(request, env);
+  if (jwtError) return jwtError;
+
+  const rawBody = await request.text();
+  try {
+    const stub = getLiveFeedStub(env);
+    const response = await stub.fetch("https://live-feed/admin/categories/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: rawBody,
+    });
+    return addCORS(response, env);
+  } catch (error) {
+    return corsJSON({ error: `Live feed unavailable: ${error.message}` }, 503, env);
+  }
+}
+
+async function handleLiveFeedItemsList(request, env) {
+  if (request.method !== "GET") {
+    return corsJSON({ error: "GET required" }, 405, env);
+  }
+  const jwtError = await requireBearerJWT(request, env);
+  if (jwtError) return jwtError;
+
+  const url = new URL(request.url);
+  try {
+    const stub = getLiveFeedStub(env);
+    const response = await stub.fetch(`https://live-feed/admin/items/list${url.search}`, {
+      method: "GET",
+    });
+    return addCORS(response, env);
+  } catch (error) {
+    return corsJSON({ error: `Live feed unavailable: ${error.message}` }, 503, env);
+  }
+}
+
 function doJSON(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -432,6 +524,19 @@ export class LiveFeedHubDO {
       this.sql.exec(`
         CREATE INDEX IF NOT EXISTS idx_items_category_ts_desc
         ON items(category_id, ts DESC)
+      `);
+      this.sql.exec(`
+        CREATE TABLE IF NOT EXISTS categories (
+          category_id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          live_feed_type INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL
+        )
+      `);
+      this.sql.exec(`
+        CREATE INDEX IF NOT EXISTS idx_categories_live_enabled
+        ON categories(live_feed_type, enabled)
       `);
 
       this._initialized = true;
@@ -498,9 +603,103 @@ export class LiveFeedHubDO {
     return beforeSeq;
   }
 
+  normalizeEnabled(value) {
+    if (typeof value === "boolean") return value ? 1 : 0;
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isInteger(parsed)) return parsed === 0 ? 0 : 1;
+    return 1;
+  }
+
+  normalizeLiveFeedType(value) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isInteger(parsed) || parsed < 0) return 0;
+    return parsed;
+  }
+
+  getCategoryState(categoryId) {
+    const row = this.sql
+      .exec(
+        "SELECT category_id, name, enabled, live_feed_type FROM categories WHERE category_id = ?",
+        categoryId
+      )
+      .one();
+    if (!row) return null;
+    return {
+      category_id: Number(row.category_id),
+      name: row.name || "",
+      enabled: Number(row.enabled || 0) === 1,
+      live_feed_type: Number(row.live_feed_type || 0),
+    };
+  }
+
+  upsertCategory(data) {
+    const categoryId = this.parseCategoryId(data?.category_id);
+    if (!categoryId) {
+      return { ok: false, error: "category_id must be a positive integer", status: 400 };
+    }
+
+    const name = typeof data?.name === "string" ? data.name.trim() : "";
+    const enabled = this.normalizeEnabled(data?.enabled);
+    const liveFeedType = this.normalizeLiveFeedType(data?.live_feed_type);
+    const updatedAt = new Date().toISOString();
+
+    this.sql.exec(
+      `INSERT INTO categories (category_id, name, enabled, live_feed_type, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(category_id) DO UPDATE SET
+         name = excluded.name,
+         enabled = excluded.enabled,
+         live_feed_type = excluded.live_feed_type,
+         updated_at = excluded.updated_at`,
+      categoryId,
+      name,
+      enabled,
+      liveFeedType,
+      updatedAt
+    );
+
+    return {
+      ok: true,
+      category: {
+        category_id: categoryId,
+        name,
+        enabled: enabled === 1,
+        live_feed_type: liveFeedType,
+      },
+    };
+  }
+
+  deleteCategory(categoryId) {
+    this.sql.exec("DELETE FROM categories WHERE category_id = ?", categoryId);
+    const catChanges = this.sql.exec("SELECT changes() AS total").one();
+    this.sql.exec("DELETE FROM items WHERE category_id = ?", categoryId);
+    const itemChanges = this.sql.exec("SELECT changes() AS total").one();
+    return {
+      category_deleted: Number(catChanges?.total || 0),
+      items_deleted: Number(itemChanges?.total || 0),
+    };
+  }
+
+  listCategories() {
+    const rows = this.sql
+      .exec(
+        "SELECT category_id, name, enabled, live_feed_type, updated_at FROM categories ORDER BY category_id ASC"
+      )
+      .toArray();
+    return rows.map((row) => ({
+      category_id: Number(row.category_id),
+      name: row.name || "",
+      enabled: Number(row.enabled || 0) === 1,
+      live_feed_type: Number(row.live_feed_type || 0),
+      updated_at: row.updated_at || "",
+    }));
+  }
+
   getLatestItemsByCategory(limit) {
     const categoryRows = this.sql
-      .exec("SELECT DISTINCT category_id FROM items ORDER BY category_id ASC")
+      .exec(
+        "SELECT category_id FROM categories WHERE live_feed_type != 0 AND enabled = 1 ORDER BY category_id ASC"
+      )
       .toArray();
     const categories = [];
 
@@ -536,6 +735,17 @@ export class LiveFeedHubDO {
       .reverse();
   }
 
+  listItems(categoryId, limit) {
+    const rows = this.sql
+      .exec(
+        "SELECT seq, category_id, title, ts, impact, payload_json FROM items WHERE category_id = ? ORDER BY seq DESC LIMIT ?",
+        categoryId,
+        limit
+      )
+      .toArray();
+    return rows.map((row) => this.serializeItemRow(row));
+  }
+
   pruneCategory(categoryId) {
     const maxItems = this.getMaxItemsPerCategory();
     const countRow = this.sql
@@ -556,6 +766,13 @@ export class LiveFeedHubDO {
     const categoryId = this.parseCategoryId(data?.category_id);
     if (!categoryId) {
       return { ok: false, error: "category_id must be a positive integer", status: 400 };
+    }
+    const category = this.getCategoryState(categoryId);
+    if (!category) {
+      return { ok: false, error: "Category not found in live-feed DO state", status: 404 };
+    }
+    if (!category.enabled || category.live_feed_type === 0) {
+      return { ok: false, error: "Category is disabled for live feed", status: 400 };
     }
 
     const title = typeof data?.title === "string" ? data.title.trim() : "";
@@ -698,6 +915,60 @@ export class LiveFeedHubDO {
       return doJSON({ category_id: categoryId, deleted: Number(changed?.total || 0) }, 200);
     }
 
+    if (path === "/admin/categories/list") {
+      if (request.method !== "GET") {
+        return doJSON({ error: "GET required" }, 405);
+      }
+      return doJSON({ categories: this.listCategories() }, 200);
+    }
+
+    if (path === "/admin/categories/upsert") {
+      if (request.method !== "POST") {
+        return doJSON({ error: "POST required" }, 405);
+      }
+      let data = null;
+      try {
+        data = await request.json();
+      } catch {
+        return doJSON({ error: "Invalid JSON body" }, 400);
+      }
+      const result = this.upsertCategory(data);
+      if (!result.ok) {
+        return doJSON({ error: result.error }, result.status);
+      }
+      return doJSON(result.category, 200);
+    }
+
+    if (path === "/admin/categories/delete") {
+      if (request.method !== "POST") {
+        return doJSON({ error: "POST required" }, 405);
+      }
+      let data = null;
+      try {
+        data = await request.json();
+      } catch {
+        return doJSON({ error: "Invalid JSON body" }, 400);
+      }
+      const categoryId = this.parseCategoryId(data?.category_id);
+      if (!categoryId) {
+        return doJSON({ error: "category_id must be a positive integer" }, 400);
+      }
+      const deleted = this.deleteCategory(categoryId);
+      return doJSON({ category_id: categoryId, ...deleted }, 200);
+    }
+
+    if (path === "/admin/items/list") {
+      if (request.method !== "GET") {
+        return doJSON({ error: "GET required" }, 405);
+      }
+      const categoryId = this.parseCategoryId(url.searchParams.get("category_id"));
+      if (!categoryId) {
+        return doJSON({ error: "category_id is required" }, 400);
+      }
+      const limit = parseIntSafe(url.searchParams.get("limit"), this.getInitItems(), 1, this.getMaxItemsPerCategory());
+      return doJSON({ category_id: categoryId, items: this.listItems(categoryId, limit) }, 200);
+    }
+
     return doJSON({ error: "Not found" }, 404);
   }
 
@@ -784,6 +1055,22 @@ export default {
 
     if (path === "/api/v1/live-feed/admin/purge-category") {
       return handleLiveFeedPurgeCategory(request, env);
+    }
+
+    if (path === "/api/v1/live-feed/admin/categories/list") {
+      return handleLiveFeedCategoryList(request, env);
+    }
+
+    if (path === "/api/v1/live-feed/admin/categories/upsert") {
+      return handleLiveFeedCategoryUpsert(request, env);
+    }
+
+    if (path === "/api/v1/live-feed/admin/categories/delete") {
+      return handleLiveFeedCategoryDelete(request, env);
+    }
+
+    if (path === "/api/v1/live-feed/admin/items/list") {
+      return handleLiveFeedItemsList(request, env);
     }
 
     if (path === "/api/v1/get-token") {
