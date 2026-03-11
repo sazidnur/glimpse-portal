@@ -494,6 +494,42 @@ export class LiveFeedHubDO {
     this.env = env;
     this.sql = state.storage.sql;
     this._initialized = false;
+    
+    // Analytics: current stats (flushed every 60s to Analytics Engine)
+    this._stats = { connects: 0, messages: 0, publishes: 0, broadcasts: 0, load_older: 0 };
+    this._statsLastFlush = Date.now();
+  }
+
+  // =====================
+  // Analytics Methods
+  // =====================
+  trackStat(key, count = 1) {
+    this._stats[key] = (this._stats[key] || 0) + count;
+    this.maybeFlushStats();
+  }
+
+  maybeFlushStats() {
+    const now = Date.now();
+    // Flush to Analytics Engine every 60s
+    if (now - this._statsLastFlush < 60_000) return;
+    
+    const total = Object.values(this._stats).reduce((a, b) => a + b, 0);
+    if (total > 0) {
+      this.env.ANALYTICS?.writeDataPoint({
+        doubles: [
+          this._stats.connects,
+          this._stats.messages,
+          this._stats.publishes,
+          this._stats.broadcasts,
+          this._stats.load_older
+        ],
+        indexes: ["do_live_feed"],
+      });
+    }
+    
+    // Reset current stats
+    this._stats = { connects: 0, messages: 0, publishes: 0, broadcasts: 0, load_older: 0 };
+    this._statsLastFlush = now;
   }
 
   async ensureInitialized() {
@@ -696,7 +732,7 @@ export class LiveFeedHubDO {
   }
 
   getLatestItemsByCategory(limit) {
-    // Get enabled live-feed categories with their full info
+    // Get enabled live-feed categories with their full info (for admin)
     const categoryRows = this.sql
       .exec(
         "SELECT category_id, name, enabled, live_feed_type FROM categories WHERE live_feed_type != 0 AND enabled = 1 ORDER BY category_id ASC"
@@ -822,6 +858,7 @@ export class LiveFeedHubDO {
       impact,
       payload,
     };
+    this.trackStat('publishes');
     this.broadcast({ type: "item", item });
     return { ok: true, item };
   }
@@ -845,9 +882,11 @@ export class LiveFeedHubDO {
 
   broadcast(payload) {
     const message = JSON.stringify(payload);
+    let sent = 0;
     for (const socket of this.state.getWebSockets()) {
       try {
         socket.send(message);
+        sent++;
       } catch {
         try {
           socket.close(1011, "Send failed");
@@ -855,6 +894,9 @@ export class LiveFeedHubDO {
           // best effort close.
         }
       }
+    }
+    if (sent > 0) {
+      this.trackStat('broadcasts');
     }
   }
 
@@ -864,6 +906,7 @@ export class LiveFeedHubDO {
     const url = new URL(request.url);
     const path = normalizePath(url.pathname);
 
+    // WebSocket connect
     if (path === "/connect") {
       if (request.method !== "GET") {
         return doJSON({ error: "GET required" }, 405);
@@ -876,6 +919,7 @@ export class LiveFeedHubDO {
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
       this.state.acceptWebSocket(server);
+      this.trackStat('connects');
       this.sendJSON(server, { type: "connected" });
       this.sendBootstrap(server);
       return new Response(null, { status: 101, webSocket: client });
@@ -981,6 +1025,7 @@ export class LiveFeedHubDO {
 
   async webSocketMessage(socket, message) {
     await this.ensureInitialized();
+    this.trackStat('messages');
 
     let text = "";
     if (typeof message === "string") {
@@ -1009,6 +1054,7 @@ export class LiveFeedHubDO {
       return;
     }
 
+    this.trackStat('load_older');
     const categoryId = this.parseCategoryId(payload?.category_id);
     const beforeSeq = this.parseBeforeSeq(payload?.before_seq);
     if (!categoryId || !beforeSeq) {
