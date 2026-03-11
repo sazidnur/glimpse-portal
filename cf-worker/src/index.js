@@ -876,14 +876,16 @@ export class LiveFeedHubDO {
     this.sendJSON(socket, {
       type: "bootstrap",
       categories,
+      live_users: this.state.getWebSockets().length,
       server_time: new Date().toISOString(),
     });
   }
 
   broadcast(payload) {
-    const message = JSON.stringify(payload);
+    const sockets = this.state.getWebSockets();
+    const message = JSON.stringify({ ...payload, live_users: sockets.length });
     let sent = 0;
-    for (const socket of this.state.getWebSockets()) {
+    for (const socket of sockets) {
       try {
         socket.send(message);
         sent++;
