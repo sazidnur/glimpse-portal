@@ -13,12 +13,12 @@ LIVE_FEED_MAX_ITEMS_PER_CATEGORY = "1000"
 LIVE_FEED_MAX_LOAD_OLDER = "100"
 
 [[durable_objects.bindings]]
-name = "LIVE_FEED_HUB"
-class_name = "LiveFeedHubDO"
+name = "GLIMPSE_LIVE_FEED"
+class_name = "LiveFeedHubv2"
 
 [[migrations]]
-tag = "v1_live_feed_hub"
-new_sqlite_classes = ["LiveFeedHubDO"]
+tag = "v2_live_feed_hub"
+new_sqlite_classes = ["LiveFeedHubv2"]
 
 # Secrets (set via wrangler secret put):
 #   TOKEN_SECRET       — HMAC key for Worker JWTs

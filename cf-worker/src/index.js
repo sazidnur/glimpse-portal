@@ -303,9 +303,9 @@ async function handleWarm(request, env) {
 }
 
 function getLiveFeedStub(env) {
-  const namespace = env.LIVE_FEED_HUB;
+  const namespace = env.GLIMPSE_LIVE_FEED;
   if (!namespace) {
-    throw new Error("LIVE_FEED_HUB binding is missing");
+    throw new Error("GLIMPSE_LIVE_FEED binding is missing");
   }
   const id = namespace.idFromName(LIVE_FEED_HUB_NAME);
   return namespace.get(id, { locationHint: LIVE_FEED_LOCATION_HINT });
@@ -491,7 +491,7 @@ function doJSON(data, status = 200) {
   });
 }
 
-export class LiveFeedHubDO {
+export class LiveFeedHubv2 {
   constructor(state, env) {
     this.state = state;
     this.env = env;
