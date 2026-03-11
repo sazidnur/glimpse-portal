@@ -1,7 +1,7 @@
 const WORKER_CACHE_TTL = 120;
 const WORKER_SWR = 15;
 const CDN_CACHE_TTL = 1800;
-const METADATA_CDN_TTL = 86400;
+const METADATA_CDN_TTL = 1800;
 const NEWS_ALL_CDN_TTL = 86400;
 // Dedicated Worker microcache name.
 const MICROCACHE_NAME = "worker-microcache";
@@ -696,9 +696,10 @@ export class LiveFeedHubDO {
   }
 
   getLatestItemsByCategory(limit) {
+    // Get enabled live-feed categories with their full info
     const categoryRows = this.sql
       .exec(
-        "SELECT category_id FROM categories WHERE live_feed_type != 0 AND enabled = 1 ORDER BY category_id ASC"
+        "SELECT category_id, name, enabled, live_feed_type FROM categories WHERE live_feed_type != 0 AND enabled = 1 ORDER BY category_id ASC"
       )
       .toArray();
     const categories = [];
@@ -715,7 +716,13 @@ export class LiveFeedHubDO {
       const items = itemRows
         .map((item) => this.serializeItemRow(item))
         .reverse();
-      categories.push({ category_id: categoryId, items });
+      categories.push({
+        category_id: categoryId,
+        name: row.name || "",
+        enabled: Number(row.enabled || 0) === 1,
+        live_feed_type: Number(row.live_feed_type || 0),
+        items
+      });
     }
 
     return categories;
