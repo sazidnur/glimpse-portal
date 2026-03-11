@@ -8,6 +8,17 @@ routes = [
 
 [vars]
 WORKER_DOMAIN = "glimpseapp.net"
+LIVE_FEED_INIT_ITEMS = "50"
+LIVE_FEED_MAX_ITEMS_PER_CATEGORY = "1000"
+LIVE_FEED_MAX_LOAD_OLDER = "100"
+
+[[durable_objects.bindings]]
+name = "LIVE_FEED_HUB"
+class_name = "LiveFeedHubDO"
+
+[[migrations]]
+tag = "v1_live_feed_hub"
+new_sqlite_classes = ["LiveFeedHubDO"]
 
 # Secrets (set via wrangler secret put):
 #   TOKEN_SECRET       — HMAC key for Worker JWTs
