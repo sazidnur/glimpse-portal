@@ -9,6 +9,8 @@ const TOKEN_EXPIRY = 7200;
 const X_CACHE_WORKER = "0";
 const X_CACHE_CDN = "1";
 const X_CACHE_ORIGIN = "2";
+const LIVE_FEED_HUB_NAME = "hub-apac";
+const LIVE_FEED_LOCATION_HINT = "apac";
 
 const _counts = { WORKER: 0, CDN: 0, ORIGIN: 0 };
 let _lastFlush = Date.now();
@@ -305,7 +307,8 @@ function getLiveFeedStub(env) {
   if (!namespace) {
     throw new Error("LIVE_FEED_HUB binding is missing");
   }
-  return namespace.get(namespace.idFromName("hub"));
+  const id = namespace.idFromName(LIVE_FEED_HUB_NAME);
+  return namespace.get(id, { locationHint: LIVE_FEED_LOCATION_HINT });
 }
 
 async function requireBearerJWT(request, env) {
@@ -494,42 +497,6 @@ export class LiveFeedHubDO {
     this.env = env;
     this.sql = state.storage.sql;
     this._initialized = false;
-    
-    // Analytics: current stats (flushed every 60s to Analytics Engine)
-    this._stats = { connects: 0, messages: 0, publishes: 0, broadcasts: 0, load_older: 0 };
-    this._statsLastFlush = Date.now();
-  }
-
-  // =====================
-  // Analytics Methods
-  // =====================
-  trackStat(key, count = 1) {
-    this._stats[key] = (this._stats[key] || 0) + count;
-    this.maybeFlushStats();
-  }
-
-  maybeFlushStats() {
-    const now = Date.now();
-    // Flush to Analytics Engine every 60s
-    if (now - this._statsLastFlush < 60_000) return;
-    
-    const total = Object.values(this._stats).reduce((a, b) => a + b, 0);
-    if (total > 0) {
-      this.env.ANALYTICS?.writeDataPoint({
-        doubles: [
-          this._stats.connects,
-          this._stats.messages,
-          this._stats.publishes,
-          this._stats.broadcasts,
-          this._stats.load_older
-        ],
-        indexes: ["do_live_feed"],
-      });
-    }
-    
-    // Reset current stats
-    this._stats = { connects: 0, messages: 0, publishes: 0, broadcasts: 0, load_older: 0 };
-    this._statsLastFlush = now;
   }
 
   async ensureInitialized() {
@@ -858,7 +825,6 @@ export class LiveFeedHubDO {
       impact,
       payload,
     };
-    this.trackStat('publishes');
     this.broadcast({ type: "item", item });
     return { ok: true, item };
   }
@@ -897,9 +863,6 @@ export class LiveFeedHubDO {
         }
       }
     }
-    if (sent > 0) {
-      this.trackStat('broadcasts');
-    }
   }
 
   async fetch(request) {
@@ -921,7 +884,6 @@ export class LiveFeedHubDO {
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
       this.state.acceptWebSocket(server);
-      this.trackStat('connects');
       this.sendJSON(server, { type: "connected" });
       this.sendBootstrap(server);
       return new Response(null, { status: 101, webSocket: client });
@@ -1027,7 +989,6 @@ export class LiveFeedHubDO {
 
   async webSocketMessage(socket, message) {
     await this.ensureInitialized();
-    this.trackStat('messages');
 
     let text = "";
     if (typeof message === "string") {
@@ -1056,7 +1017,6 @@ export class LiveFeedHubDO {
       return;
     }
 
-    this.trackStat('load_older');
     const categoryId = this.parseCategoryId(payload?.category_id);
     const beforeSeq = this.parseBeforeSeq(payload?.before_seq);
     if (!categoryId || !beforeSeq) {
