@@ -17,7 +17,12 @@ name = "GLIMPSE_LIVE_FEED"
 class_name = "LiveFeedHubv2"
 
 [[migrations]]
+tag = "v1_live_feed_hub"
+new_sqlite_classes = ["LiveFeedHubDO"]
+
+[[migrations]]
 tag = "v2_live_feed_hub"
+deleted_classes = ["LiveFeedHubDO"]
 new_sqlite_classes = ["LiveFeedHubv2"]
 
 # Secrets (set via wrangler secret put):
