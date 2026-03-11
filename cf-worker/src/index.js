@@ -202,6 +202,10 @@ async function handleGetToken(request, env) {
   return corsJSON({ token, token_type: "Bearer", expires_in: TOKEN_EXPIRY }, 200, env);
 }
 
+function nowIso() {
+  return new Date().toISOString();
+}
+
 const WARM_ENDPOINTS = [
   "/api/v1/news/?page=1&limit=50",
   "/api/v1/news/?page=2&limit=50",
@@ -212,10 +216,13 @@ const WARM_ENDPOINTS = [
   "/api/v1/news/?all=true",
 ];
 
-async function warmCache(env) {
+async function warmCache(env, source = "unknown") {
   const microcache = await caches.open(MICROCACHE_NAME);
   const workerDomain = env.WORKER_DOMAIN || "glimpseapp.net";
   const results = [];
+  console.log(
+    `[warm:start] ts=${nowIso()} source=${source} endpoints=${WARM_ENDPOINTS.length} worker_domain=${workerDomain}`
+  );
 
   await Promise.allSettled(
     WARM_ENDPOINTS.map(async (endpoint) => {
@@ -226,21 +233,34 @@ async function warmCache(env) {
         const originResp = await fetchOriginGET(endpointUrl, env, cdnTtl);
 
         if (originResp.ok) {
+          const cfStatus = originResp.headers.get("CF-Cache-Status") || "NONE";
           const microEntry = new Response(originResp.body, originResp);
           microEntry.headers.set("Cache-Control", `s-maxage=${WORKER_CACHE_TTL}, stale-while-revalidate=${WORKER_SWR}`);
           microEntry.headers.set("X-Cache", X_CACHE_WORKER);
 
           await microcache.put(new Request(publicUrl), microEntry);
 
+          console.log(
+            `[warm:item] ts=${nowIso()} source=${source} endpoint="${endpoint}" status=ok code=${originResp.status} cf_cache_status=${cfStatus}`
+          );
           results.push({ endpoint, status: "ok" });
         } else {
+          const cfStatus = originResp.headers.get("CF-Cache-Status") || "NONE";
+          console.warn(
+            `[warm:item] ts=${nowIso()} source=${source} endpoint="${endpoint}" status=error code=${originResp.status} cf_cache_status=${cfStatus}`
+          );
           results.push({ endpoint, status: "error", code: originResp.status });
         }
       } catch (e) {
-        console.error(`Warm failed for ${endpoint}:`, e.message);
+        console.error(`[warm:item] ts=${nowIso()} source=${source} endpoint="${endpoint}" status=error error="${e.message}"`);
         results.push({ endpoint, status: "error", error: e.message });
       }
     })
+  );
+
+  const warmed = results.filter((r) => r.status === "ok").length;
+  console.log(
+    `[warm:end] ts=${nowIso()} source=${source} warmed=${warmed}/${WARM_ENDPOINTS.length}`
   );
 
   return results;
@@ -256,7 +276,7 @@ async function handleWarm(request, env) {
     return corsJSON({ error: "Forbidden" }, 403, env);
   }
 
-  const results = await warmCache(env);
+  const results = await warmCache(env, "manual");
   const ok = results.filter((r) => r.status === "ok").length;
   return corsJSON({ warmed: ok, total: WARM_ENDPOINTS.length, results }, 200, env);
 }
@@ -331,6 +351,6 @@ export default {
     return toClient;
   },
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(warmCache(env));
+    ctx.waitUntil(warmCache(env, "cron"));
   },
 };
