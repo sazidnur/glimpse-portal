@@ -424,6 +424,7 @@ def live_feed_dashboard_view(request):
         "token_url": reverse("api_live_feed_token"),
         "categories_url": reverse("api_live_feed_categories"),
         "items_url": reverse("api_live_feed_items"),
+        "stats_url": reverse("api_live_feed_stats"),
         "category_update_url_template": reverse("api_live_feed_category_update", args=[0]).replace("/0/update/", "/__ID__/update/"),
         "category_delete_url_template": reverse("api_live_feed_category_delete", args=[0]).replace("/0/delete/", "/__ID__/delete/"),
         "worker_ws_url": worker_ws_url,

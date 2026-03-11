@@ -105,6 +105,31 @@ html[data-theme="dark"] {
   gap: 20px;
 }
 
+/* Feed manager disabled state */
+.lf-feed-manager {
+  display: grid;
+  gap: 20px;
+  transition: opacity 0.3s, filter 0.3s;
+}
+.lf-feed-manager.disabled {
+  opacity: 0.5;
+  filter: grayscale(0.3);
+  pointer-events: none;
+  user-select: none;
+}
+.lf-feed-manager.disabled::before {
+  content: 'Connect WebSocket to manage feed';
+  display: block;
+  background: var(--lf-warning);
+  color: #1a1a1a;
+  text-align: center;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--lf-radius);
+  margin-bottom: 16px;
+}
+
 .lf-card {
   background: var(--lf-surface);
   border: 1px solid var(--lf-border);
@@ -219,6 +244,19 @@ html[data-theme="dark"] {
   height: 32px;
   padding: 0 12px;
   font-size: 12px;
+}
+
+/* Stat window buttons */
+.lf-stat-btn {
+  background: var(--lf-bg);
+  color: var(--lf-text-muted);
+  border: 1px solid var(--lf-border);
+}
+.lf-stat-btn:hover { background: var(--lf-border); }
+.lf-stat-btn.active {
+  background: var(--lf-primary);
+  color: #fff;
+  border-color: var(--lf-primary);
 }
 
 .lf-btn-icon {
@@ -481,35 +519,90 @@ html[data-theme="dark"] {
     </div>
     <div class="lf-conn" id="ws-status">
       <span class="lf-conn-dot" id="ws-dot"></span>
-      <span id="ws-label">Connecting...</span>
+      <span id="ws-label">Disconnected</span>
+      <span id="live-users" style="margin-left:12px;padding:2px 8px;background:var(--lf-primary);color:#fff;border-radius:12px;font-size:11px;font-weight:600;display:none;">👥 0 live</span>
+      <button class="lf-btn lf-btn-sm lf-btn-primary" id="btn-ws-connect" style="margin-left:8px;">Connect</button>
+      <button class="lf-btn lf-btn-sm lf-btn-ghost" id="btn-ws-disconnect" style="margin-left:4px;display:none;">Disconnect</button>
     </div>
   </div>
 
   <div class="lf-grid">
-    <!-- Request Cost Estimation -->
+    {% comment %} DO Analytics card temporarily disabled
+    <!-- DO Analytics (via CF Analytics Engine) -->
     <div class="lf-card">
       <div class="lf-card-head">
-        <h2>📊 Request Cost Estimation (This Session)</h2>
+        <h2>📊 DO Analytics</h2>
+        <button class="lf-btn lf-btn-ghost lf-btn-sm" id="btn-refresh-stats">Refresh</button>
+      </div>
+      <div class="lf-card-body">
+        <!-- Time Window Buttons -->
+        <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+          <button class="lf-btn lf-btn-sm lf-stat-btn active" data-window="10m">10m</button>
+          <button class="lf-btn lf-btn-sm lf-stat-btn" data-window="30m">30m</button>
+          <button class="lf-btn lf-btn-sm lf-stat-btn" data-window="1h">1h</button>
+          <button class="lf-btn lf-btn-sm lf-stat-btn" data-window="6h">6h</button>
+          <button class="lf-btn lf-btn-sm lf-stat-btn" data-window="24h">24h</button>
+          <button class="lf-btn lf-btn-sm lf-stat-btn" data-window="7d">7d</button>
+          <button class="lf-btn lf-btn-sm lf-stat-btn" data-window="30d">30d</button>
+        </div>
+
+        <!-- Time Window Stats -->
+        <div style="font-size:13px;font-weight:600;color:var(--lf-text);margin-bottom:8px;">Activity (<span id="stats-window-label">10 min</span>)</div>
+        <div class="lf-stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;">
+          <div class="lf-stat-item" style="background:var(--lf-bg);border:1px solid var(--lf-border);border-radius:6px;padding:10px;">
+            <div style="font-size:18px;font-weight:600;color:var(--lf-text);" id="stat-connects">-</div>
+            <div style="font-size:11px;color:var(--lf-text-muted);">WS Connects</div>
+          </div>
+          <div class="lf-stat-item" style="background:var(--lf-bg);border:1px solid var(--lf-border);border-radius:6px;padding:10px;">
+            <div style="font-size:18px;font-weight:600;color:var(--lf-text);" id="stat-messages">-</div>
+            <div style="font-size:11px;color:var(--lf-text-muted);">WS Messages</div>
+          </div>
+          <div class="lf-stat-item" style="background:var(--lf-bg);border:1px solid var(--lf-border);border-radius:6px;padding:10px;">
+            <div style="font-size:18px;font-weight:600;color:var(--lf-text);" id="stat-publishes">-</div>
+            <div style="font-size:11px;color:var(--lf-text-muted);">Publishes</div>
+          </div>
+          <div class="lf-stat-item" style="background:var(--lf-bg);border:1px solid var(--lf-border);border-radius:6px;padding:10px;">
+            <div style="font-size:18px;font-weight:600;color:var(--lf-text);" id="stat-broadcasts">-</div>
+            <div style="font-size:11px;color:var(--lf-text-muted);">Broadcasts</div>
+          </div>
+          <div class="lf-stat-item" style="background:var(--lf-bg);border:1px solid var(--lf-border);border-radius:6px;padding:10px;">
+            <div style="font-size:18px;font-weight:600;color:var(--lf-text);" id="stat-load-older">-</div>
+            <div style="font-size:11px;color:var(--lf-text-muted);">Load Older</div>
+          </div>
+        </div>
+
+        <div style="margin-top:12px;font-size:11px;color:var(--lf-text-muted);text-align:right;">
+          Last updated: <span id="stats-updated">-</span>
+        </div>
+      </div>
+    </div>
+
+    {% endcomment %}
+    <!-- Feed Manager (requires WS connection) -->
+    <div class="lf-feed-manager disabled" id="feed-manager">
+
+    <!-- Session Cost (depends on WS activity) -->
+    <div class="lf-card">
+      <div class="lf-card-head">
+        <h2>💰 Session Cost</h2>
       </div>
       <div class="lf-card-body">
         <div class="lf-costs">
           <div class="lf-cost-item">
             <div class="value" id="cost-worker">0</div>
-            <div class="label">Worker Requests</div>
+            <div class="label">Worker</div>
           </div>
           <div class="lf-cost-item">
             <div class="value" id="cost-do">0</div>
-            <div class="label">DO Requests</div>
+            <div class="label">DO</div>
           </div>
           <div class="lf-cost-item">
             <div class="value" id="cost-ws">0</div>
-            <div class="label">WS Messages</div>
+            <div class="label">WS Msgs</div>
           </div>
         </div>
-        <p style="margin:16px 0 0;font-size:12px;color:var(--lf-text-muted);">
-          <strong>Cost breakdown:</strong> Page load = 1 Worker + 1 DO. 
-          Each publish = 1 Worker + 1 DO. Category CRUD = 1 Worker + 1 DO each. 
-          WS messages (load_older, item broadcasts) are DO duration, not billed as requests.
+        <p style="margin:12px 0 0;font-size:11px;color:var(--lf-text-muted);">
+          Connect = 1W + 1DO. Publish/CRUD = 1W + 1DO each. Stats = free (CF API).
         </p>
       </div>
     </div>
@@ -616,6 +709,8 @@ html[data-theme="dark"] {
         </div>
       </div>
     </div>
+
+    </div><!-- /feed-manager -->
   </div>
 </div>
 
@@ -702,6 +797,7 @@ html[data-theme="dark"] {
     publish: "{{ publish_url|escapejs }}",
     token: "{{ token_url|escapejs }}",
     items: "{{ items_url|escapejs }}",
+    stats: "{{ stats_url|escapejs }}",
     update: id => "{{ category_update_url_template|escapejs }}".replace("__ID__", id),
     del: id => "{{ category_delete_url_template|escapejs }}".replace("__ID__", id)
   };
@@ -721,7 +817,9 @@ html[data-theme="dark"] {
     costs: { worker: 0, do: 0, ws: 0 },
     reconnectAttempts: 0,
     reconnectTimer: null,
-    isPageVisible: true
+    isPageVisible: true,
+    statsWindow: '10m',
+    statsData: null
   };
 
   // ===================
@@ -773,20 +871,44 @@ html[data-theme="dark"] {
   // ===================
   // WebSocket
   // ===================
+  function updateLiveUsers(count) {
+    const el = $('live-users');
+    if (count !== undefined && count !== null) {
+      el.textContent = `👥 ${count} live`;
+      el.style.display = '';
+    } else {
+      el.style.display = 'none';
+    }
+  }
+
   function setWsStatus(status) {
     const dot = $('ws-dot');
     const label = $('ws-label');
+    const btnConnect = $('btn-ws-connect');
+    const btnDisconnect = $('btn-ws-disconnect');
+    const feedManager = $('feed-manager');
     dot.className = 'lf-conn-dot';
     
     if (status === 'on') {
       dot.classList.add('on');
       label.textContent = 'Connected';
+      btnConnect.style.display = 'none';
+      btnDisconnect.style.display = '';
+      feedManager.classList.remove('disabled');
     } else if (status === 'connecting') {
       dot.classList.add('wait');
       label.textContent = 'Connecting...';
+      btnConnect.style.display = 'none';
+      btnDisconnect.style.display = '';
+      feedManager.classList.add('disabled');
+      updateLiveUsers(null); // Hide when connecting
     } else {
       dot.classList.add('off');
       label.textContent = 'Disconnected';
+      btnConnect.style.display = '';
+      btnDisconnect.style.display = 'none';
+      feedManager.classList.add('disabled');
+      updateLiveUsers(null); // Hide when disconnected
     }
   }
 
@@ -899,6 +1021,9 @@ html[data-theme="dark"] {
       trackCost('do'); // Bootstrap = 1 DO read
       log(`Received bootstrap: ${(msg.categories || []).length} categories`, 'ws');
       
+      // Update live users count
+      updateLiveUsers(msg.live_users);
+      
       // Update categories from bootstrap (includes name, enabled, live_feed_type)
       const bootstrapCats = msg.categories || [];
       state.categories = bootstrapCats.map(cat => ({
@@ -927,6 +1052,9 @@ html[data-theme="dark"] {
 
     if (msg.type === 'item' && msg.item) {
       log(`New item received: "${msg.item.title.substring(0, 30)}..."`, 'ws');
+      
+      // Update live users if included
+      if (msg.live_users !== undefined) updateLiveUsers(msg.live_users);
       
       // Add to beginning of items array
       state.items.unshift(msg.item);
@@ -1178,6 +1306,46 @@ html[data-theme="dark"] {
     }
   }
 
+  // ===================
+  // DO Stats (via CF Analytics Engine - no costs tracked)
+  // ===================
+  async function loadStats() {
+    try {
+      const url = API.stats + (API.stats.includes('?') ? '&' : '?') + `range=${state.statsWindow}`;
+      const res = await fetch(url, { credentials: 'same-origin' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) renderStats(data);
+    } catch {
+      // Silently fail - stats are informational only
+    }
+  }
+
+  function renderStats(data) {
+    if (data) state.statsData = data;
+    const d = state.statsData;
+    if (!d) return;
+
+    // Window labels
+    const windowLabels = {
+      '10m': '10 min', '30m': '30 min', '1h': '1 hour',
+      '6h': '6 hours', '24h': '24 hours', '7d': '7 days', '30d': '30 days'
+    };
+    $('stats-window-label').textContent = windowLabels[d.range || state.statsWindow] || '10 min';
+
+    // Totals for selected range
+    const t = d.totals || {};
+    $('stat-connects').textContent = t.connects ?? '-';
+    $('stat-messages').textContent = t.messages ?? '-';
+    $('stat-publishes').textContent = t.publishes ?? '-';
+    $('stat-broadcasts').textContent = t.broadcasts ?? '-';
+    $('stat-load-older').textContent = t.load_older ?? '-';
+
+    // Timestamp
+    $('stats-updated').textContent = d.to 
+      ? new Date(d.to).toLocaleTimeString() 
+      : new Date().toLocaleTimeString();
+  }
+
   function loadOlder() {
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
       log('WebSocket not connected', 'error');
@@ -1256,6 +1424,17 @@ html[data-theme="dark"] {
 
     // Clear log
     $('btn-clear-log').onclick = () => { $('log').textContent = ''; };
+
+    // Stats controls are temporarily disabled with the DO Analytics card.
+
+    // WebSocket connect/disconnect buttons
+    $('btn-ws-connect').onclick = () => {
+      state.reconnectAttempts = 0;
+      connectWs();
+    };
+    $('btn-ws-disconnect').onclick = () => {
+      disconnectWs();
+    };
   }
 
   // ===================
@@ -1265,17 +1444,14 @@ html[data-theme="dark"] {
     initEventHandlers();
     log('Live Feed Manager initializing...', 'info');
     
-    // Handle page visibility changes
+    // Initialize connection status (start disconnected)
+    setWsStatus('off');
+    
+    // Handle page visibility - pause reconnects when hidden
     document.addEventListener('visibilitychange', () => {
       state.isPageVisible = !document.hidden;
       
-      if (state.isPageVisible) {
-        log('Page visible, checking connection...', 'info');
-        if (state.ws?.readyState !== WebSocket.OPEN) {
-          state.reconnectAttempts = 0; // Reset backoff
-          connectWs();
-        }
-      } else {
+      if (!state.isPageVisible) {
         log('Page hidden, will pause reconnects', 'info');
         // Clear any pending reconnect
         if (state.reconnectTimer) {
@@ -1290,9 +1466,9 @@ html[data-theme="dark"] {
       disconnectWs();
     });
 
-    await connectWs();
+    // DO Analytics section is disabled, so stats preload is disabled too.
     
-    log('Ready!', 'success');
+    log('Ready! Click Connect to start WebSocket.', 'success');
   }
 
   init();

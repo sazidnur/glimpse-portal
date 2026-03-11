@@ -11,6 +11,7 @@ from .api_views import (
     live_feed_category_update,
     live_feed_category_delete,
     live_feed_items,
+    live_feed_stats,
 )
 
 urlpatterns = [
@@ -23,4 +24,5 @@ urlpatterns = [
     path('live-feed/categories/<int:category_id>/update/', live_feed_category_update, name='api_live_feed_category_update'),
     path('live-feed/categories/<int:category_id>/delete/', live_feed_category_delete, name='api_live_feed_category_delete'),
     path('live-feed/items/', live_feed_items, name='api_live_feed_items'),
+    path('live-feed/stats/', live_feed_stats, name='api_live_feed_stats'),
 ]

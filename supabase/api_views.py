@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone as dt_tz
 import urllib.request
 import urllib.error
 
@@ -636,6 +636,118 @@ def live_feed_items(request):
     except Exception as exc:
         return JsonResponse({'error': str(exc)}, status=500)
     return JsonResponse(data, status=status)
+
+
+@staff_member_required
+@require_http_methods(['GET'])
+def live_feed_stats(request):
+    """Fetch live feed DO analytics from Cloudflare Analytics Engine."""
+    import urllib.request
+    import urllib.error
+    
+    account_id = getattr(settings, 'CF_ACCOUNT_ID', '')
+    token = getattr(settings, 'CF_ANALYTICS_TOKEN', '')
+    if not account_id or not token:
+        return JsonResponse({'error': 'CF_ACCOUNT_ID and CF_ANALYTICS_TOKEN not configured'}, status=503)
+
+    # Supported ranges
+    RANGES = {
+        '10m': ("'10' MINUTE", "'1' MINUTE", "minute"),
+        '30m': ("'30' MINUTE", "'1' MINUTE", "minute"),
+        '1h':  ("'1' HOUR",    "'1' MINUTE", "minute"),
+        '6h':  ("'6' HOUR",    "'5' MINUTE", "minute"),
+        '24h': ("'24' HOUR",   "'1' HOUR",   "hour"),
+        '7d':  ("'7' DAY",     "'1' HOUR",   "hour"),
+        '30d': ("'30' DAY",    "'1' DAY",    "day"),
+    }
+    range_key = request.GET.get('range', '10m')
+    if range_key not in RANGES:
+        range_key = '10m'
+    where_interval, bucket_interval, unit = RANGES[range_key]
+
+    # Query DO stats (index1 = 'do_live_feed')
+    # doubles: [connects, messages, publishes, broadcasts, load_older]
+    sql = (
+        "SELECT"
+        f" toStartOfInterval(timestamp, INTERVAL {bucket_interval}) AS ts,"
+        " SUM(double1) AS connects,"
+        " SUM(double2) AS messages,"
+        " SUM(double3) AS publishes,"
+        " SUM(double4) AS broadcasts,"
+        " SUM(double5) AS load_older"
+        " FROM cache_analytics"
+        f" WHERE timestamp >= NOW() - INTERVAL {where_interval}"
+        " AND index1 = 'do_live_feed'"
+        " GROUP BY ts ORDER BY ts ASC"
+    )
+
+    sql_endpoint = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/analytics_engine/sql"
+
+    try:
+        req = urllib.request.Request(
+            sql_endpoint,
+            data=sql.encode(),
+            headers={
+                'Authorization': f'Bearer {token}',
+                'Content-Type': 'text/plain',
+            },
+            method='POST',
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = ''
+        try:
+            body = e.read().decode()[:500]
+        except Exception:
+            pass
+        return JsonResponse({'error': f'CF API HTTP {e.code}: {e.reason}', 'detail': body}, status=502)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+    rows = data.get('data', [])
+    if not rows:
+        now = datetime.now(dt_tz.utc)
+        return JsonResponse({
+            'series': [],
+            'totals': {'connects': 0, 'messages': 0, 'publishes': 0, 'broadcasts': 0, 'load_older': 0},
+            'unit': unit,
+            'range': range_key,
+            'from': '',
+            'to': now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'message': 'No DO analytics data yet.',
+        })
+
+    series = []
+    for row in rows:
+        ts_raw = row.get('ts', '')
+        ts_iso = ts_raw.replace(' ', 'T') + 'Z' if ts_raw and 'T' not in ts_raw else ts_raw
+        series.append({
+            'ts': ts_iso,
+            'connects': int(float(row.get('connects') or 0)),
+            'messages': int(float(row.get('messages') or 0)),
+            'publishes': int(float(row.get('publishes') or 0)),
+            'broadcasts': int(float(row.get('broadcasts') or 0)),
+            'load_older': int(float(row.get('load_older') or 0)),
+        })
+
+    totals = {
+        'connects': sum(s['connects'] for s in series),
+        'messages': sum(s['messages'] for s in series),
+        'publishes': sum(s['publishes'] for s in series),
+        'broadcasts': sum(s['broadcasts'] for s in series),
+        'load_older': sum(s['load_older'] for s in series),
+    }
+
+    now = datetime.now(dt_tz.utc)
+    return JsonResponse({
+        'series': series,
+        'totals': totals,
+        'unit': unit,
+        'range': range_key,
+        'from': series[0]['ts'] if series else '',
+        'to': now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+    })
 
 
 def _get_or_create_publisher(channel_title, channel_id):
