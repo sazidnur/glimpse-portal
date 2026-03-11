@@ -218,6 +218,10 @@ ALLOWED_API_IPS = config('ALLOWED_API_IPS', default='', cast=Csv())
 # CF Worker origin path secret — protects /origin/ from direct access
 ORIGIN_PATH_SECRET = config('ORIGIN_PATH_SECRET', default='')
 
+# Live feed control-plane settings (Django -> Worker publish)
+WORKER_BASE_URL = config('WORKER_BASE_URL', default='https://glimpseapp.net')
+APP_SECRET = config('APP_SECRET', default='')
+
 # ===========================================
 # Caching Configuration (Redis)
 # ===========================================

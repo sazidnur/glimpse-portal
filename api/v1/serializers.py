@@ -53,10 +53,18 @@ class VideoDetailSerializer(serializers.ModelSerializer):
 
 
 class CategorySerializer(serializers.ModelSerializer):
+    live_feed_type = serializers.SerializerMethodField()
+    is_live_feed = serializers.SerializerMethodField()
 
     class Meta:
         model = Categories
-        fields = ['id', 'name', 'enabled', 'order']
+        fields = ['id', 'name', 'enabled', 'order', 'live_feed_type', 'is_live_feed']
+
+    def get_live_feed_type(self, obj):
+        return int(getattr(obj, 'live_feed_type', 0) or 0)
+
+    def get_is_live_feed(self, obj):
+        return self.get_live_feed_type(obj) != 0
 
 
 class TopicSerializer(serializers.ModelSerializer):

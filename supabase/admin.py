@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.apps import apps
-from django.urls import path
+from django.urls import path, reverse
 from django.http import JsonResponse
 from django.utils.html import format_html
 from django.template.response import TemplateResponse
@@ -262,6 +262,29 @@ class NewsAdmin(admin.ModelAdmin):
 admin.site.register(_get_model('News'), NewsAdmin)
 
 
+class CategoriesAdmin(admin.ModelAdmin):
+    list_display = ['id', 'name', 'enabled', 'order', 'live_feed_type', 'live_feed_badge']
+    list_editable = ['enabled', 'order', 'live_feed_type']
+    list_per_page = 50
+    search_fields = ['name']
+    list_filter = ['enabled', 'live_feed_type']
+    ordering = ['order', 'id']
+
+    def live_feed_badge(self, obj):
+        lft = getattr(obj, 'live_feed_type', 0) or 0
+        if lft > 0:
+            return format_html(
+                '<span style="background:#28a745;color:#fff;padding:2px 8px;'
+                'border-radius:4px;font-size:11px;">LIVE {}</span>',
+                lft
+            )
+        return '-'
+    live_feed_badge.short_description = 'Live'
+
+
+admin.site.register(_get_model('Categories'), CategoriesAdmin)
+
+
 _original_get_urls = admin.AdminSite.get_urls
 
 # --- Cloudflare Cache Analytics ---
@@ -384,6 +407,30 @@ def cf_analytics_data_json(request):
     })
 
 
+def live_feed_dashboard_view(request):
+    # Build WebSocket URL from WORKER_BASE_URL
+    worker_base = (settings.WORKER_BASE_URL or '').rstrip('/')
+    if worker_base.startswith('https://'):
+        worker_ws_url = 'wss://' + worker_base[8:] + '/api/v1/live-feed'
+    elif worker_base.startswith('http://'):
+        worker_ws_url = 'ws://' + worker_base[7:] + '/api/v1/live-feed'
+    else:
+        worker_ws_url = 'wss://' + worker_base + '/api/v1/live-feed'
+
+    context = {
+        **admin.site.each_context(request),
+        "title": "Live Feed Manager",
+        "publish_url": reverse("api_live_feed_publish"),
+        "token_url": reverse("api_live_feed_token"),
+        "categories_url": reverse("api_live_feed_categories"),
+        "items_url": reverse("api_live_feed_items"),
+        "category_update_url_template": reverse("api_live_feed_category_update", args=[0]).replace("/0/update/", "/__ID__/update/"),
+        "category_delete_url_template": reverse("api_live_feed_category_delete", args=[0]).replace("/0/delete/", "/__ID__/delete/"),
+        "worker_ws_url": worker_ws_url,
+    }
+    return TemplateResponse(request, "admin/live_feed_dashboard.html", context)
+
+
 
 
 def _patched_get_urls(self):
@@ -397,13 +444,14 @@ def _patched_get_urls(self):
         path('cache-dashboard/metadata/rebuild/', self.admin_view(metadata_rebuild_json), name='cache_dashboard_metadata_rebuild'),
         path('cf-analytics/', self.admin_view(cf_analytics_view), name='cf_analytics'),
         path('cf-analytics/data/', self.admin_view(cf_analytics_data_json), name='cf_analytics_data'),
+        path('live-feed/', self.admin_view(live_feed_dashboard_view), name='live_feed_dashboard'),
     ]
     return custom + _original_get_urls(self)
 
 admin.AdminSite.get_urls = _patched_get_urls
 
 
-CUSTOM_MODELS = {'Videos', 'Videopublishers', 'News'}
+CUSTOM_MODELS = {'Videos', 'Videopublishers', 'News', 'Categories'}
 supabase_models = apps.get_app_config('supabase').get_models()
 for model in supabase_models:
     if model.__name__ in CUSTOM_MODELS:

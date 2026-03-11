@@ -13,6 +13,10 @@ class Categories(models.Model):
     name = models.CharField()
     enabled = models.BooleanField(db_comment='should be visible to user as separate catory tab')
     order = models.IntegerField(db_comment='app order')
+    live_feed_type = models.IntegerField(
+        default=0,
+        db_comment='0=not live feed, 1+=live feed type ID'
+    )
 
     class Meta:
         managed = False
