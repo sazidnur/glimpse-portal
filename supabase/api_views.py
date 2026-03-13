@@ -19,7 +19,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
 from api.v1.cache import worker_token_handler
-from .youtube import fetch_video_data, fetch_channel_icon
+from .youtube import fetch_video_data, fetch_channel_icon, validate_youtube_shorts_url
 
 logger = logging.getLogger(__name__)
 
@@ -786,39 +786,143 @@ def _parse_timestamp(published_at):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def youtube_fetch_api(request):
-    url = request.data.get('url', '').strip()
-    if not url:
-        return Response({'error': 'URL is required'}, status=400)
+    max_batch_size = 50
 
-    try:
-        data = fetch_video_data(url)
-        publisher = _get_or_create_publisher(data['channel_title'], data.get('channel_id', ''))
+    # Backward-compatible single mode: POST {"url": "..."}
+    url = request.data.get('url', '')
+    url = url.strip() if isinstance(url, str) else ''
 
-        Videos = apps.get_model('supabase', 'Videos')
-        if Videos.objects.using('supabase').filter(videourl=data['video_url']).exists():
-            return Response({'error': 'Video already exists'}, status=409)
+    # New batch mode: POST {"urls": ["...", "..."]}
+    urls_payload = request.data.get('urls', None)
+    if urls_payload is None:
+        if not url:
+            return Response({'error': 'URL is required'}, status=400)
+        urls = [url]
+        batch_mode = False
+    else:
+        if not isinstance(urls_payload, list):
+            return Response({'error': '"urls" must be an array of YouTube URLs'}, status=400)
+        cleaned = []
+        for item in urls_payload:
+            if isinstance(item, str):
+                candidate = item.strip()
+            elif item is None:
+                candidate = ''
+            else:
+                candidate = str(item).strip()
+            if candidate:
+                cleaned.append(candidate)
+        if not cleaned:
+            return Response({'error': '"urls" must contain at least one non-empty URL'}, status=400)
+        if len(cleaned) > max_batch_size:
+            return Response({'error': f'"urls" supports up to {max_batch_size} URLs per request'}, status=400)
+        urls = cleaned
+        batch_mode = True
 
-        video = Videos.objects.using('supabase').create(
-            title=data['title'],
-            videourl=data['video_url'],
-            source='YouTube',
-            publisher=publisher,
-            timestamp=_parse_timestamp(data.get('published_at', '')),
-            score=data.get('score', 0),
-            thumbnailurl=data['thumbnail_url'],
-        )
+    Videos = apps.get_model('supabase', 'Videos')
 
-        return Response({
-            'id': video.id,
-            'title': video.title,
-            'videourl': video.videourl,
-            'thumbnailurl': video.thumbnailurl,
-            'publisher': publisher.title if publisher else None,
-            'timestamp': video.timestamp.isoformat(),
-        }, status=201)
+    # Keep legacy behavior exactly for single-item requests.
+    if not batch_mode:
+        try:
+            validate_youtube_shorts_url(urls[0])
+            data = fetch_video_data(urls[0])
+            publisher = _get_or_create_publisher(data['channel_title'], data.get('channel_id', ''))
 
-    except ValueError as e:
-        return Response({'error': str(e)}, status=400)
-    except Exception as e:
-        logger.exception('YouTube fetch API failed')
-        return Response({'error': str(e)}, status=500)
+            if Videos.objects.using('supabase').filter(videourl=data['video_url']).exists():
+                return Response({'error': 'Video already exists'}, status=409)
+
+            video = Videos.objects.using('supabase').create(
+                title=data['title'],
+                videourl=data['video_url'],
+                source='YouTube',
+                publisher=publisher,
+                timestamp=_parse_timestamp(data.get('published_at', '')),
+                score=data.get('score', 0),
+                thumbnailurl=data['thumbnail_url'],
+            )
+
+            return Response({
+                'id': video.id,
+                'title': video.title,
+                'videourl': video.videourl,
+                'thumbnailurl': video.thumbnailurl,
+                'publisher': publisher.title if publisher else None,
+                'timestamp': video.timestamp.isoformat(),
+            }, status=201)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=400)
+        except Exception as e:
+            logger.exception('YouTube fetch API failed')
+            return Response({'error': str(e)}, status=500)
+
+    # Batch mode returns per-item outcomes and continues on errors.
+    seen = set()
+    unique_urls = []
+    for item_url in urls:
+        if item_url in seen:
+            continue
+        seen.add(item_url)
+        unique_urls.append(item_url)
+
+    results = []
+    created = 0
+    duplicate = 0
+    failed = 0
+
+    for item_url in unique_urls:
+        try:
+            validate_youtube_shorts_url(item_url)
+            data = fetch_video_data(item_url)
+            publisher = _get_or_create_publisher(data['channel_title'], data.get('channel_id', ''))
+
+            if Videos.objects.using('supabase').filter(videourl=data['video_url']).exists():
+                duplicate += 1
+                results.append({
+                    'url': data['video_url'],
+                    'status': 'duplicate',
+                    'error': 'Video already exists',
+                })
+                continue
+
+            video = Videos.objects.using('supabase').create(
+                title=data['title'],
+                videourl=data['video_url'],
+                source='YouTube',
+                publisher=publisher,
+                timestamp=_parse_timestamp(data.get('published_at', '')),
+                score=data.get('score', 0),
+                thumbnailurl=data['thumbnail_url'],
+            )
+            created += 1
+            results.append({
+                'url': video.videourl,
+                'status': 'created',
+                'id': video.id,
+                'title': video.title,
+            })
+        except ValueError as e:
+            failed += 1
+            results.append({
+                'url': item_url,
+                'status': 'invalid',
+                'error': str(e),
+            })
+        except Exception as e:
+            failed += 1
+            logger.exception('YouTube batch add failed for URL: %s', item_url)
+            results.append({
+                'url': item_url,
+                'status': 'failed',
+                'error': str(e),
+            })
+
+    total = len(unique_urls)
+    response_status = 201 if created == total else 207
+    return Response({
+        'mode': 'batch',
+        'total': total,
+        'created': created,
+        'duplicate': duplicate,
+        'failed': failed,
+        'results': results,
+    }, status=response_status)

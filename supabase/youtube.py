@@ -1,8 +1,15 @@
 import re
 import logging
 import math
-from urllib.request import urlopen, Request
+from urllib.request import (
+    urlopen,
+    Request,
+    build_opener,
+    HTTPRedirectHandler,
+)
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
+from urllib.parse import urlparse
 import json
 
 from django.conf import settings
@@ -15,6 +22,99 @@ YOUTUBE_SHORT_PATTERNS = [
     re.compile(r'youtube\.com/watch\?v=(?P<id>[a-zA-Z0-9_-]{11})'),
     re.compile(r'youtube\.com/embed/(?P<id>[a-zA-Z0-9_-]{11})'),
 ]
+
+YOUTUBE_ALLOWED_HOSTS = {
+    'youtube.com',
+    'www.youtube.com',
+    'm.youtube.com',
+    'music.youtube.com',
+    'youtu.be',
+    'www.youtu.be',
+}
+
+REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+NO_REDIRECT_OPENER = build_opener(_NoRedirectHandler)
+
+
+def is_youtube_url(url):
+    if not isinstance(url, str) or not url.strip():
+        return False
+
+    try:
+        parsed = urlparse(url.strip())
+    except Exception:
+        return False
+
+    if parsed.scheme not in {'http', 'https'}:
+        return False
+
+    host = (parsed.hostname or '').lower()
+    return host in YOUTUBE_ALLOWED_HOSTS
+
+
+def is_shorts_video_id(video_id):
+    if not video_id:
+        return False
+
+    shorts_url = f'https://www.youtube.com/shorts/{video_id}'
+    req = Request(
+        shorts_url,
+        headers={
+            'User-Agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/124.0.0.0 Safari/537.36'
+            )
+        },
+    )
+
+    try:
+        with NO_REDIRECT_OPENER.open(req, timeout=10) as resp:
+            status_code = int(getattr(resp, 'status', 200))
+            return 200 <= status_code < 300
+    except HTTPError as exc:
+        if int(exc.code) in REDIRECT_STATUS_CODES:
+            return False
+        if int(exc.code) == 404:
+            return False
+        raise ValueError('Could not validate YouTube Shorts URL right now')
+    except URLError:
+        raise ValueError('Could not validate YouTube Shorts URL right now')
+
+
+def validate_youtube_shorts_url(url):
+    if not is_youtube_url(url):
+        raise ValueError('Only YouTube URLs are allowed')
+
+    normalized_url = url.strip()
+    parsed = urlparse(normalized_url)
+    video_id = extract_video_id(normalized_url)
+    if not video_id:
+        raise ValueError('Invalid YouTube video URL')
+
+    # Prefer strict URL-shape validation for reliability:
+    # direct /shorts/{id} URL is always accepted.
+    if (parsed.path or '').startswith('/shorts/'):
+        return video_id
+
+    # Fallback for watch/youtu.be URLs: verify it resolves as a Short.
+    try:
+        if is_shorts_video_id(video_id):
+            return video_id
+    except ValueError:
+        raise ValueError(
+            'Could not verify Shorts for non-shorts URL format. '
+            'Please send https://www.youtube.com/shorts/{video_id}'
+        )
+
+    raise ValueError('Only YouTube Shorts URLs are allowed')
 
 
 def extract_video_id(url):
