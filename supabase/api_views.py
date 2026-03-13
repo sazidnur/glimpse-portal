@@ -51,6 +51,7 @@ def youtube_fetch(request):
         if not url:
             return JsonResponse({'error': 'URL is required'}, status=400)
 
+        validate_youtube_shorts_url(url)
         data = fetch_video_data(url)
         publisher = _get_or_create_publisher(data['channel_title'], data.get('channel_id', ''))
 

@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django import forms
 from django.apps import apps
 from django.urls import path, reverse
 from django.http import JsonResponse
@@ -7,6 +8,7 @@ from django.template.response import TemplateResponse
 from django.conf import settings
 
 from api.v1.resources import news_cache, video_cache, metadata_cache, rebuild_metadata_cache
+from .youtube import validate_youtube_shorts_url
 
 import json
 import urllib.request
@@ -113,6 +115,20 @@ def metadata_rebuild_json(request):
 
 
 class VideosAdmin(admin.ModelAdmin):
+    class VideoAdminForm(forms.ModelForm):
+        class Meta:
+            model = _get_model('Videos')
+            fields = '__all__'
+
+        def clean_videourl(self):
+            url = (self.cleaned_data.get('videourl') or '').strip()
+            if not url:
+                return url
+            validate_youtube_shorts_url(url)
+            return url
+
+    form = VideoAdminForm
+
     list_display = ['id', 'title', 'publisher_name', 'timestamp', 'score', 'thumbnail_preview_small']
     list_per_page = 25
     list_select_related = ['publisher']
@@ -186,7 +202,7 @@ class VideosAdmin(admin.ModelAdmin):
     def youtube_url_input(self, obj):
         return format_html(
             '<input type="text" id="youtube-url-input" '
-            'placeholder="Paste YouTube URL (e.g. https://youtu.be/abc123)" '
+            'placeholder="Paste Shorts URL (e.g. https://www.youtube.com/shorts/abc123def45)" '
             'style="width:100%;max-width:600px;padding:10px;font-size:14px;'
             'border:2px solid #ccc;border-radius:6px;" />'
             '<button type="button" id="fetch-youtube-btn" '
