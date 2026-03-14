@@ -1,6 +1,8 @@
 import re
 import logging
 import math
+import shutil
+import subprocess
 from urllib.request import (
     urlopen,
     Request,
@@ -63,6 +65,51 @@ def is_shorts_video_id(video_id):
     if not video_id:
         return False
 
+    # Preferred path: use curl header check (matches runtime behavior seen in container).
+    # A real short returns 2xx on /shorts/{id}; non-short redirects to /watch?v={id}.
+    curl_bin = shutil.which('curl')
+    if curl_bin:
+        shorts_url = f'https://www.youtube.com/shorts/{video_id}'
+        cmd = [
+            curl_bin,
+            '-sS',
+            '-I',
+            '--max-redirs',
+            '0',
+            shorts_url,
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            raw = (proc.stdout or '') + '\n' + (proc.stderr or '')
+            statuses = re.findall(r'(?im)^HTTP/\S+\s+(\d{3})\b', raw)
+            locations = re.findall(r'(?im)^location:\s*(.+)$', raw)
+
+            status_code = int(statuses[-1]) if statuses else 0
+            location = (locations[-1].strip() if locations else '')
+
+            if 200 <= status_code < 300:
+                return True
+
+            if status_code in REDIRECT_STATUS_CODES:
+                if '/watch?v=' in location:
+                    return False
+                if '/shorts/' in location:
+                    return True
+                if 'consent.youtube.com' in location:
+                    raise ValueError('Could not validate YouTube Shorts URL right now')
+                return False
+        except ValueError:
+            raise
+        except Exception:
+            # Fall through to urllib fallback
+            pass
+
+    # Fallback path when curl is unavailable
     shorts_url = f'https://www.youtube.com/shorts/{video_id}'
     req = Request(
         shorts_url,
@@ -80,7 +127,15 @@ def is_shorts_video_id(video_id):
             status_code = int(getattr(resp, 'status', 200))
             return 200 <= status_code < 300
     except HTTPError as exc:
-        if int(exc.code) in REDIRECT_STATUS_CODES:
+        status_code = int(exc.code)
+        location = str((exc.headers or {}).get('Location', ''))
+        if status_code in REDIRECT_STATUS_CODES:
+            if '/watch?v=' in location:
+                return False
+            if '/shorts/' in location:
+                return True
+            if 'consent.youtube.com' in location:
+                raise ValueError('Could not validate YouTube Shorts URL right now')
             return False
         if int(exc.code) == 404:
             return False
@@ -94,25 +149,16 @@ def validate_youtube_shorts_url(url):
         raise ValueError('Only YouTube URLs are allowed')
 
     normalized_url = url.strip()
-    parsed = urlparse(normalized_url)
     video_id = extract_video_id(normalized_url)
     if not video_id:
         raise ValueError('Invalid YouTube video URL')
 
-    # Prefer strict URL-shape validation for reliability:
-    # direct /shorts/{id} URL is always accepted.
-    if (parsed.path or '').startswith('/shorts/'):
-        return video_id
-
-    # Fallback for watch/youtu.be URLs: verify it resolves as a Short.
+    # Strict mode: always verify by video ID redirect behavior, regardless of URL shape.
     try:
         if is_shorts_video_id(video_id):
             return video_id
     except ValueError:
-        raise ValueError(
-            'Could not verify Shorts for non-shorts URL format. '
-            'Please send https://www.youtube.com/shorts/{video_id}'
-        )
+        raise ValueError('Could not validate YouTube Shorts URL right now')
 
     raise ValueError('Only YouTube Shorts URLs are allowed')
 
