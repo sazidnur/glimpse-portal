@@ -1,8 +1,8 @@
 const WORKER_CACHE_TTL = 120;
 const WORKER_SWR = 15;
-const CDN_CACHE_TTL = 1800;
-const METADATA_CDN_TTL = 1800;
-const NEWS_ALL_CDN_TTL = 86400;
+const CDN_CACHE_TTL = 1800-60;
+const METADATA_CDN_TTL = 1800-60;
+const NEWS_ALL_CDN_TTL = 86400-60;
 // Dedicated Worker microcache name.
 const MICROCACHE_NAME = "worker-microcache";
 const TOKEN_EXPIRY = 7200;
