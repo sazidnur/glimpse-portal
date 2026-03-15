@@ -20,7 +20,7 @@ This is a living document. It covers how things are built, why certain decisions
 
 ### Why Redis?
 
-The business data lives in an external Supabase PostgreSQL database. Every API call was hitting that remote DB directly, which adds latency and isn't great if the DB goes down. Redis sits in front of it as a fast local cache.
+The business data lives in PostgreSQL. Redis sits in front of it as a fast local cache.
 
 ### How It Works (Sorted Set + Hash)
 
@@ -371,7 +371,7 @@ The `docker-compose.yml` Redis service:
 
 ### Database Routing
 
-Two databases: local PostgreSQL for Django internals (auth, sessions), Supabase PostgreSQL for business data (News, Videos, etc.). `config/routers.py` handles the routing -- `supabase` app models go to the `supabase` database.
+Database access follows the normal Django database configuration in `config/settings.py`, and business models are managed directly through Django ORM.
 
 ### Traefik
 

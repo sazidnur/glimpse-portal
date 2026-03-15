@@ -1,15 +1,14 @@
 # Glimpse Portal
 
-Django admin portal for Glimpse App, connected to Supabase PostgreSQL database.
+Django admin portal for Glimpse App, backed by PostgreSQL and Redis.
 
 ## Architecture
 
-- **Main Site**: `glimpseapp.net` → WordPress (separate container via Traefik)
-- **Admin Portal**: `glimpseapp.net/portal` → Django Admin (this project)
-- **Routing**: Traefik (central reverse proxy)
-- **Databases**:
-  - Local PostgreSQL → Django internals (auth, sessions)
-  - Supabase → Business models
+- Main site: `glimpseapp.net` (WordPress, separate service)
+- Admin portal: `glimpseapp.net/portal` (this Django project)
+- Routing: Traefik in production
+- Database: PostgreSQL for Django internals and business models
+- Cache: Redis for API/cache acceleration
 
 ## Quick Start
 
@@ -17,7 +16,7 @@ Django admin portal for Glimpse App, connected to Supabase PostgreSQL database.
 
 ```bash
 cp .env.example .env
-# Edit .env with your Supabase credentials and secret key
+# Edit .env with your database credentials and secret key
 ```
 
 ### 2. Local Development
@@ -27,15 +26,15 @@ cp .env.example .env
 poetry install
 
 # Start local PostgreSQL
-docker-compose up db -d
+docker compose up db -d
 
-# Run migrations (Django tables)
+# Run migrations
 poetry run python manage.py migrate
 
 # Create superuser
 poetry run python manage.py createsuperuser
 
-# Generate models from Supabase
+# Generate/sync models from current schema (optional)
 poetry run python manage.py generate_models --write
 
 # Run development server
@@ -44,45 +43,45 @@ poetry run python manage.py runserver
 
 Visit: http://localhost:8000/portal/
 
-### 3. Docker Deployment (with Traefik)
+### 3. Docker Deployment (Production)
 
 Make sure Traefik network exists:
+
 ```bash
 docker network create traefik_proxy
 ```
 
 Deploy:
+
 ```bash
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
-## Generate Models from Supabase
+## Generate Models from Database Schema
 
 ```bash
 # Preview models
 poetry run python manage.py generate_models
 
-# Write to portal/models.py
+# Write models
 poetry run python manage.py generate_models --write
 
-# With managed=True (Django manages migrations)
-poetry run python manage.py generate_models --write --managed
+# Force sync/update models
+poetry run python manage.py generate_models --write --force
 ```
 
 ## Project Structure
 
-```
+```text
 glimpse-portal/
-├── config/
-│   ├── settings.py      # Django settings
-│   ├── urls.py          # URL routing
-│   └── routers.py       # Database router
-├── portal/              # Main app
-│   ├── models.py        # Generated from Supabase
-│   ├── admin.py         # Admin registrations
+├── config/                  # Django project settings/urls
+├── supabase/                # Main app (legacy app label)
+│   ├── models.py
+│   ├── admin.py
 │   └── management/commands/
-│       └── generate_models.py
-├── docker-compose.yml   # Django + PostgreSQL + Traefik labels
+├── api/                     # API views, serializers, cache layer
+├── docker-compose.yml       # Production compose
+├── docker-compose.dev.yml   # Standalone local dev compose
 ├── Dockerfile
 └── pyproject.toml
 ```
@@ -92,22 +91,15 @@ glimpse-portal/
 | Variable | Description |
 |----------|-------------|
 | `SECRET_KEY` | Django secret key |
-| `DEBUG` | Debug mode (True/False) |
+| `DEBUG` | Debug mode (`True`/`False`) |
 | `SITE_DOMAIN` | Domain for Traefik routing |
-| `DJANGO_DB_*` | Local PostgreSQL for Django |
-| `SUPABASE_DATABASE_URL` | Supabase connection string |
+| `DJANGO_DB_*` | PostgreSQL connection settings |
 
-## Database Routing
-
-- `portal` app → Supabase database
-- Everything else → Local PostgreSQL
-
-## Commands
+## Common Commands
 
 ```bash
-poetry run python manage.py migrate                    # Migrate Django tables
-poetry run python manage.py migrate --database=supabase  # Migrate Supabase (if managed)
-poetry run python manage.py createsuperuser            # Create admin user
-poetry run python manage.py generate_models --write    # Generate models from Supabase
-poetry run python manage.py collectstatic              # Collect static files
+poetry run python manage.py migrate
+poetry run python manage.py createsuperuser
+poetry run python manage.py generate_models --write
+poetry run python manage.py collectstatic
 ```

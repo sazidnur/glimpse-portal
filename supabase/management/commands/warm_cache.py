@@ -31,7 +31,7 @@ class Command(BaseCommand):
 
         try:
             start = time.time()
-            data = rebuild_metadata_cache(using="supabase")
+            data = rebuild_metadata_cache()
             elapsed = time.time() - start
             self.stdout.write(self.style.SUCCESS(
                 "  Metadata: categories=%d topics=%d divisions=%d publishers=%d source_aliases=%d warmed in %.2fs" % (

@@ -1,15 +1,16 @@
-"""Generate/sync Django models from Supabase. Preserves verbose_name_plural & db_table_comment."""
+"""Generate/sync Django models from database schema. Preserves verbose_name_plural & db_table_comment."""
 
 import re
 from io import StringIO
 from pathlib import Path
 
+from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import BaseCommand
 
 
 class Command(BaseCommand):
-    help = 'Generate/sync Django models from Supabase database schema'
+    help = 'Generate/sync Django models from database schema'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -159,7 +160,7 @@ class Command(BaseCommand):
         return '\n'.join(result_lines)
 
     def handle(self, *args, **options):
-        self.stdout.write(self.style.NOTICE('🔍 Inspecting Supabase database schema...\n'))
+        self.stdout.write(self.style.NOTICE('🔍 Inspecting database schema...\n'))
 
         models_path = Path(__file__).resolve().parent.parent.parent / 'models.py'
         existing_meta = self._parse_existing_meta(models_path)
@@ -170,8 +171,8 @@ class Command(BaseCommand):
             ))
 
         output = StringIO()
-        
-        inspectdb_args = ['--database', 'supabase']
+        db_alias = 'supabase' if 'supabase' in settings.DATABASES else 'default'
+        inspectdb_args = ['--database', db_alias]
         if options['table']:
             inspectdb_args.append(options['table'])
         if options['include_views']:
@@ -181,13 +182,15 @@ class Command(BaseCommand):
             call_command('inspectdb', *inspectdb_args, stdout=output)
         except Exception as e:
             self.stderr.write(self.style.ERROR(f'❌ Error inspecting database: {e}'))
-            self.stderr.write(self.style.WARNING('Make sure SUPABASE_DATABASE_URL is set correctly in .env'))
+            self.stderr.write(
+                self.style.WARNING(f'Check your database settings (active alias: {db_alias})')
+            )
             return
 
         models_content = output.getvalue()
 
         if not models_content.strip() or 'from django.db import models' not in models_content:
-            self.stdout.write(self.style.WARNING('⚠️ No tables found in Supabase database'))
+            self.stdout.write(self.style.WARNING('No tables found in configured database'))
             return
 
         models_content = self._apply_meta_preservations(models_content, existing_meta)
@@ -204,14 +207,14 @@ class Command(BaseCommand):
             
             self.stdout.write(self.style.NOTICE('\n📝 Info:'))
             self.stdout.write('  • Models are auto-registered in admin (supabase/admin.py)')
-            self.stdout.write('  • managed=False: Django won\'t touch Supabase schema')
+            self.stdout.write('  • Generated models follow standard Django migration behavior')
             self.stdout.write('  • verbose_name_plural values are preserved across regenerations')
             self.stdout.write('  • Use admin portal to add/edit/delete data')
-            self.stdout.write(self.style.NOTICE('\n🔄 To sync after Supabase schema changes:'))
+            self.stdout.write(self.style.NOTICE('\n🔄 To sync after database schema changes:'))
             self.stdout.write('   python manage.py generate_models --write --force')
         else:
             # Preview mode
-            self.stdout.write(self.style.NOTICE('📋 Preview of models from Supabase:\n'))
+            self.stdout.write(self.style.NOTICE('📋 Preview of models from database:\n'))
             self.stdout.write('=' * 60)
             self.stdout.write(models_content)
             self.stdout.write('=' * 60)

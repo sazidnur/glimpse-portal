@@ -2,12 +2,10 @@
 Django settings for Glimpse Portal.
 
 This portal runs at glimpseapp.net/portal and serves as the admin interface.
-Connected to Supabase PostgreSQL database.
 """
 
 from pathlib import Path
 from decouple import config, Csv
-import dj_database_url
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -84,14 +82,8 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 
 # ===========================================
-# Database Configuration (Two Databases)
+# Database Configuration
 # ===========================================
-# default  - Local PostgreSQL for Django internals (auth, sessions, admin)
-# supabase - Supabase PostgreSQL for business models
-
-SUPABASE_DATABASE_URL = config('SUPABASE_DATABASE_URL', default=None)
-
-# Default database - Django internals (local PostgreSQL in Docker)
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
@@ -102,29 +94,6 @@ DATABASES = {
         'PORT': config('DJANGO_DB_PORT', default='5432'),
     }
 }
-
-# Supabase database - Business models
-if SUPABASE_DATABASE_URL:
-    DATABASES['supabase'] = dj_database_url.parse(
-        SUPABASE_DATABASE_URL,
-        conn_max_age=600,
-        conn_health_checks=True,
-    )
-else:
-    DATABASES['supabase'] = {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('SUPABASE_DB_NAME', default='postgres'),
-        'USER': config('SUPABASE_DB_USER', default='postgres'),
-        'PASSWORD': config('SUPABASE_DB_PASSWORD', default=''),
-        'HOST': config('SUPABASE_DB_HOST', default='localhost'),
-        'PORT': config('SUPABASE_DB_PORT', default='5432'),
-        'OPTIONS': {
-            'connect_timeout': 10,
-        },
-    }
-
-# Database Router - routes models to correct database
-DATABASE_ROUTERS = ['config.routers.DatabaseRouter']
 
 
 # Password validation

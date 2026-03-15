@@ -58,39 +58,35 @@ video_cache = SortedSetCache(prefix="video", model=Videos, serialize_fn=_video_s
 metadata_cache = MetadataCache()
 
 
-def _using(model, using=None):
-    return model.objects.using(using) if using else model.objects
-
-
-def build_metadata_payload(using=None):
+def build_metadata_payload():
     return {
         "categories": CategorySerializer(
-            _using(Categories, using).filter(enabled=True).order_by("order"),
+            Categories.objects.filter(enabled=True).order_by("order"),
             many=True,
         ).data,
         "topics": TopicSerializer(
-            _using(Topics, using).filter(enabled=True).order_by("order"),
+            Topics.objects.filter(enabled=True).order_by("order"),
             many=True,
         ).data,
         "divisions": DivisionSerializer(
-            _using(Divisions, using).all().order_by("order"),
+            Divisions.objects.all().order_by("order"),
             many=True,
         ).data,
         "publishers": VideoPublisherSerializer(
-            _using(Videopublishers, using).all(),
+            Videopublishers.objects.all(),
             many=True,
         ).data,
         "source_aliases": SourceAliasSerializer(
-            _using(Sourcealias, using).all(),
+            Sourcealias.objects.all(),
             many=True,
         ).data,
     }
 
 
-def rebuild_metadata_cache(using=None):
-    data = build_metadata_payload(using=using)
+def rebuild_metadata_cache():
+    data = build_metadata_payload()
     metadata_cache.set(data)
-    logger.info("Metadata cache rebuild completed (using=%s)", using or "default-router")
+    logger.info("Metadata cache rebuild completed")
     return data
 
 
@@ -182,3 +178,5 @@ class MetadataListView(APIView):
         except Exception:
             logger.exception("Metadata DB query failed")
             return Response({"error": "Service unavailable"}, status=503)
+
+

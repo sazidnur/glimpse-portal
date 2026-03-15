@@ -9,16 +9,17 @@ import urllib.error
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_POST, require_http_methods
-from django.apps import apps
+from django.core.exceptions import FieldDoesNotExist
 from django.contrib.admin.views.decorators import staff_member_required
 from django.conf import settings
-from django.db import connections, transaction
+from django.db import transaction
 from django.db.utils import DatabaseError, IntegrityError
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
 from api.v1.cache import worker_token_handler
+from .models import Categories, Videopublishers, Videos
 from .youtube import fetch_video_data, fetch_channel_icon, validate_youtube_shorts_url
 
 logger = logging.getLogger(__name__)
@@ -55,11 +56,10 @@ def youtube_fetch(request):
         data = fetch_video_data(url)
         publisher = _get_or_create_publisher(data['channel_title'], data.get('channel_id', ''))
 
-        Videos = apps.get_model('supabase', 'Videos')
-        if Videos.objects.using('supabase').filter(videourl=data['video_url']).exists():
+        if Videos.objects.filter(videourl=data['video_url']).exists():
             return JsonResponse({'error': 'Video already exists'}, status=409)
 
-        video = Videos.objects.using('supabase').create(
+        video = Videos.objects.create(
             title=data['title'],
             videourl=data['video_url'],
             source='YouTube',
@@ -168,85 +168,59 @@ def _category_to_live_payload(category):
         'live_feed_type': int(getattr(category, 'live_feed_type', 0) or 0),
     }
 
-
-def _supabase_conn():
-    return connections['supabase']
+def _category_row_from_obj(category):
+    return {
+        'id': int(category.id),
+        'name': str(category.name or ''),
+        'enabled': bool(category.enabled),
+        'order': int(getattr(category, 'order', 0) or 0),
+        'live_feed_type': int(getattr(category, 'live_feed_type', 0) or 0),
+    }
 
 
 def _live_feed_schema_error():
     return (
-        "Supabase column categories.live_feed_type is missing. "
+        "Database column categories.live_feed_type is missing. "
         "Run: ALTER TABLE categories ADD COLUMN live_feed_type integer NOT NULL DEFAULT 0;"
     )
 
 
 def _live_feed_sequence_error():
     return (
-        "Supabase categories id sequence is out of sync. Run once: "
+        "Categories id sequence is out of sync. Run once: "
         "SELECT setval(pg_get_serial_sequence('categories','id'), "
         "COALESCE((SELECT MAX(id) FROM categories), 1), true);"
     )
 
 
 def _categories_has_live_feed_type():
-    with _supabase_conn().cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name = 'categories'
-              AND column_name = 'live_feed_type'
-            LIMIT 1
-            """
-        )
-        return cursor.fetchone() is not None
-
-
-def _dictfetchall(cursor):
-    columns = [col[0] for col in cursor.description]
-    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    try:
+        Categories._meta.get_field('live_feed_type')
+        return True
+    except FieldDoesNotExist:
+        return False
 
 
 def _fetch_live_categories_rows():
-    with _supabase_conn().cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT id, name, enabled, "order", COALESCE(live_feed_type, 0) AS live_feed_type
-            FROM categories
-            WHERE COALESCE(live_feed_type, 0) > 0
-            ORDER BY "order" ASC, id ASC
-            """
-        )
-        rows = _dictfetchall(cursor)
-    for row in rows:
-        row['id'] = int(row['id'])
-        row['enabled'] = bool(row['enabled'])
-        row['order'] = int(row.get('order') or 0)
-        row['live_feed_type'] = int(row.get('live_feed_type') or 0)
-    return rows
+    qs = (
+        Categories.objects
+        .filter(live_feed_type__gt=0)
+        .only('id', 'name', 'enabled', 'order', 'live_feed_type')
+        .order_by('order', 'id')
+    )
+    return [_category_row_from_obj(category) for category in qs]
 
 
 def _fetch_category_row(category_id):
-    with _supabase_conn().cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT id, name, enabled, "order", COALESCE(live_feed_type, 0) AS live_feed_type
-            FROM categories
-            WHERE id = %s
-            LIMIT 1
-            """,
-            [int(category_id)],
-        )
-        rows = _dictfetchall(cursor)
-    if not rows:
+    category = (
+        Categories.objects
+        .filter(id=int(category_id))
+        .only('id', 'name', 'enabled', 'order', 'live_feed_type')
+        .first()
+    )
+    if not category:
         return None
-    row = rows[0]
-    row['id'] = int(row['id'])
-    row['enabled'] = bool(row['enabled'])
-    row['order'] = int(row.get('order') or 0)
-    row['live_feed_type'] = int(row.get('live_feed_type') or 0)
-    return row
+    return _category_row_from_obj(category)
 
 
 @staff_member_required
@@ -396,18 +370,14 @@ def live_feed_categories(request):
         order = 0
 
     try:
-        with transaction.atomic(using='supabase'):
-            with _supabase_conn().cursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO categories (name, enabled, "order", live_feed_type)
-                    VALUES (%s, %s, %s, %s)
-                    RETURNING id
-                    """,
-                    [name, enabled, order, live_feed_type],
-                )
-                next_id = int(cursor.fetchone()[0])
-        category_row = _fetch_category_row(next_id)
+        with transaction.atomic():
+            category_obj = Categories.objects.create(
+                name=name,
+                enabled=enabled,
+                order=order,
+                live_feed_type=live_feed_type,
+            )
+        category_row = _category_row_from_obj(category_obj)
     except IntegrityError as exc:
         message = str(exc)
         if 'duplicate key value violates unique constraint "category_pkey"' in message:
@@ -426,29 +396,27 @@ def live_feed_categories(request):
             payload=payload,
         )
     except Exception as exc:
-        # DO sync failed - rollback Supabase insert
+        # DO sync failed - rollback DB insert
         try:
-            with _supabase_conn().cursor() as cursor:
-                cursor.execute("DELETE FROM categories WHERE id = %s", [int(category_row['id'])])
+            Categories.objects.filter(id=int(category_row['id'])).delete()
         except Exception:
             pass
         return JsonResponse({
             'error': f'DO sync failed: {exc}',
             'failed_at': 'worker_do',
-            'supabase_rolled_back': True,
+            'db_rolled_back': True,
         }, status=500)
 
     if status >= 400:
-        # DO rejected - rollback Supabase insert
+        # DO rejected - rollback DB insert
         try:
-            with _supabase_conn().cursor() as cursor:
-                cursor.execute("DELETE FROM categories WHERE id = %s", [int(category_row['id'])])
+            Categories.objects.filter(id=int(category_row['id'])).delete()
         except Exception:
             pass
         return JsonResponse({
             'error': data.get('error', 'DO rejected category'),
             'failed_at': 'worker_do',
-            'supabase_rolled_back': True,
+            'db_rolled_back': True,
             'do_status': status,
             'do_response': data,
         }, status=status)
@@ -459,7 +427,7 @@ def live_feed_categories(request):
         'enabled': bool(category_row['enabled']),
         'order': int(category_row['order']),
         'live_feed_type': int(category_row['live_feed_type']),
-        'synced': {'supabase': True, 'do': True},
+        'synced': {'db': True, 'do': True},
     }, status=201)
 
 
@@ -469,12 +437,18 @@ def live_feed_category_update(request, category_id):
     try:
         if not _categories_has_live_feed_type():
             return JsonResponse({'error': _live_feed_schema_error()}, status=503)
-        category_row = _fetch_category_row(category_id)
+        category_obj = (
+            Categories.objects
+            .filter(id=int(category_id))
+            .only('id', 'name', 'enabled', 'order', 'live_feed_type')
+            .first()
+        )
     except DatabaseError as exc:
         return JsonResponse({'error': str(exc)}, status=500)
 
-    if not category_row:
+    if not category_obj:
         return JsonResponse({'error': 'Category not found'}, status=404)
+    category_row = _category_row_from_obj(category_obj)
 
     try:
         body = _parse_json_or_form(request)
@@ -503,30 +477,20 @@ def live_feed_category_update(request, category_id):
     except (TypeError, ValueError):
         return JsonResponse({'error': 'live_feed_type must be an integer'}, status=400)
 
-    # Step 1: Update Supabase
+    # Step 1: Update database
     try:
-        with _supabase_conn().cursor() as cursor:
-            cursor.execute(
-                """
-                UPDATE categories
-                SET name = %s, enabled = %s, "order" = %s, live_feed_type = %s
-                WHERE id = %s
-                """,
-                [new_name, new_enabled, new_order, new_live_feed_type, int(category_id)],
-            )
+        category_obj.name = new_name
+        category_obj.enabled = new_enabled
+        category_obj.order = new_order
+        category_obj.live_feed_type = new_live_feed_type
+        category_obj.save(update_fields=['name', 'enabled', 'order', 'live_feed_type'])
     except DatabaseError as exc:
         return JsonResponse({
-            'error': f'Supabase update failed: {exc}',
-            'failed_at': 'supabase',
+            'error': f'Database update failed: {exc}',
+            'failed_at': 'db',
         }, status=500)
 
-    updated_row = {
-        'id': int(category_id),
-        'name': new_name,
-        'enabled': bool(new_enabled),
-        'order': int(new_order),
-        'live_feed_type': int(new_live_feed_type),
-    }
+    updated_row = _category_row_from_obj(category_obj)
 
     # Step 2: Sync to DO
     payload = _category_to_live_payload(updated_row)
@@ -553,11 +517,11 @@ def live_feed_category_update(request, category_id):
         'enabled': bool(updated_row['enabled']),
         'order': int(updated_row['order']),
         'live_feed_type': int(updated_row['live_feed_type']),
-        'synced': {'supabase': True, 'do': do_synced},
+        'synced': {'db': True, 'do': do_synced},
     }
     if do_error:
         result['do_error'] = do_error
-        result['warning'] = 'Supabase updated but DO sync failed'
+        result['warning'] = 'Database updated but DO sync failed'
     return JsonResponse(result, status=200)
 
 
@@ -570,8 +534,8 @@ def live_feed_category_delete(request, category_id):
         category = _fetch_category_row(category_id)
     except DatabaseError as exc:
         return JsonResponse({
-            'error': f'Supabase query failed: {exc}',
-            'failed_at': 'supabase',
+            'error': f'Database query failed: {exc}',
+            'failed_at': 'db',
         }, status=500)
 
     if not category:
@@ -598,24 +562,23 @@ def live_feed_category_delete(request, category_id):
         return JsonResponse({
             'error': f'DO delete failed: {do_error}',
             'failed_at': 'worker_do',
-            'supabase_unchanged': True,
+            'db_unchanged': True,
         }, status=500)
 
-    # Step 2: Delete from Supabase
+    # Step 2: Delete from database
     try:
-        with _supabase_conn().cursor() as cursor:
-            cursor.execute("DELETE FROM categories WHERE id = %s", [int(category_id)])
+        Categories.objects.filter(id=int(category_id)).delete()
     except DatabaseError as exc:
         return JsonResponse({
-            'error': f'Supabase delete failed: {exc}',
-            'failed_at': 'supabase',
+            'error': f'Database delete failed: {exc}',
+            'failed_at': 'db',
             'do_deleted': True,
-            'warning': 'DO deleted but Supabase failed - data inconsistent!',
+            'warning': 'DO deleted but database delete failed - data inconsistent!',
         }, status=500)
 
     return JsonResponse({
         'deleted': int(category_id),
-        'synced': {'supabase': True, 'do': True},
+        'synced': {'db': True, 'do': True},
     }, status=200)
 
 
@@ -755,7 +718,6 @@ def _get_or_create_publisher(channel_title, channel_id):
     if not channel_title:
         return None
 
-    Videopublishers = apps.get_model('supabase', 'Videopublishers')
     channel_url = (
         f'https://www.youtube.com/channel/{channel_id}'
         if channel_id
@@ -763,10 +725,10 @@ def _get_or_create_publisher(channel_title, channel_id):
     )
 
     try:
-        return Videopublishers.objects.using('supabase').get(title=channel_title)
+        return Videopublishers.objects.get(title=channel_title)
     except Videopublishers.DoesNotExist:
         icon_url = fetch_channel_icon(channel_url) or ''
-        return Videopublishers.objects.using('supabase').create(
+        return Videopublishers.objects.create(
             title=channel_title,
             url=channel_url,
             profileiconurl=icon_url,
@@ -820,8 +782,6 @@ def youtube_fetch_api(request):
         urls = cleaned
         batch_mode = True
 
-    Videos = apps.get_model('supabase', 'Videos')
-
     # Keep legacy behavior exactly for single-item requests.
     if not batch_mode:
         try:
@@ -829,10 +789,10 @@ def youtube_fetch_api(request):
             data = fetch_video_data(urls[0])
             publisher = _get_or_create_publisher(data['channel_title'], data.get('channel_id', ''))
 
-            if Videos.objects.using('supabase').filter(videourl=data['video_url']).exists():
+            if Videos.objects.filter(videourl=data['video_url']).exists():
                 return Response({'error': 'Video already exists'}, status=409)
 
-            video = Videos.objects.using('supabase').create(
+            video = Videos.objects.create(
                 title=data['title'],
                 videourl=data['video_url'],
                 source='YouTube',
@@ -876,7 +836,7 @@ def youtube_fetch_api(request):
             data = fetch_video_data(item_url)
             publisher = _get_or_create_publisher(data['channel_title'], data.get('channel_id', ''))
 
-            if Videos.objects.using('supabase').filter(videourl=data['video_url']).exists():
+            if Videos.objects.filter(videourl=data['video_url']).exists():
                 duplicate += 1
                 results.append({
                     'url': data['video_url'],
@@ -885,7 +845,7 @@ def youtube_fetch_api(request):
                 })
                 continue
 
-            video = Videos.objects.using('supabase').create(
+            video = Videos.objects.create(
                 title=data['title'],
                 videourl=data['video_url'],
                 source='YouTube',

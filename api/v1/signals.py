@@ -43,19 +43,20 @@ def _on_delete(sender, instance, **kwargs):
         logger.warning("Signal: failed to remove %s:%d from Redis: %s", cache.member_prefix, instance.id, e)
 
 
-def _on_invalidate(sender, using=None, **kwargs):
+def _on_invalidate(sender, **kwargs):
     callbacks = _invalidators.get(sender, [])
     if not callbacks:
         return
 
-    def _run_callback(cb, db_alias):
+    def _run_callback(cb):
         try:
-            cb(using=db_alias)
+            cb()
         except Exception as e:
             logger.warning("Signal: metadata invalidator failed for %s: %s", sender.__name__, e)
 
     for callback in callbacks:
         try:
-            transaction.on_commit(lambda cb=callback, db_alias=using: _run_callback(cb, db_alias), using=using)
+            transaction.on_commit(lambda cb=callback: _run_callback(cb))
         except Exception as e:
             logger.warning("Signal: failed to run metadata invalidator for %s: %s", sender.__name__, e)
+

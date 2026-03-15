@@ -1,19 +1,63 @@
 services:
   db:
+    image: postgres:17.6-alpine
+    container_name: glimpse-portal-dev-db
+    environment:
+      POSTGRES_DB: ${DJANGO_DB_NAME}
+      POSTGRES_USER: ${DJANGO_DB_USER}
+      POSTGRES_PASSWORD: ${DJANGO_DB_PASSWORD}
     ports:
       - "5432:5432"
+    volumes:
+      - dev_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DJANGO_DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: glimpse-portal-dev-redis
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - dev_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   django:
     build:
       context: .
+      dockerfile: Dockerfile
       args:
         INSTALL_DEV: "true"
+    container_name: glimpse-portal-dev-django
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file: .env
-    volumes:
-      - .:/app
     environment:
-      - DEBUG=True
-      - ALLOWED_HOSTS=*
-      - CSRF_TRUSTED_ORIGINS=*
+      DEBUG: "True"
+      ALLOWED_HOSTS: "*"
+      CSRF_TRUSTED_ORIGINS: "*"
+      DJANGO_DB_HOST: db
+      DJANGO_DB_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
     ports:
       - "8000:8000"
+    volumes:
+      - .:/app
+      - dev_static_data:/app/staticfiles
+      - dev_media_data:/app/media
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+
+volumes:
+  dev_db_data:
+  dev_redis_data:
+  dev_static_data:
+  dev_media_data:

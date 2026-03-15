@@ -8,6 +8,15 @@ from django.template.response import TemplateResponse
 from django.conf import settings
 
 from api.v1.resources import news_cache, video_cache, metadata_cache, rebuild_metadata_cache
+from .models import (
+    Categories,
+    Divisions,
+    News,
+    Sourcealias,
+    Topics,
+    Videopublishers,
+    Videos,
+)
 from .youtube import validate_youtube_shorts_url
 
 import json
@@ -17,13 +26,9 @@ from datetime import datetime, timezone
 
 
 CACHE_REGISTRY = [
-    {"key": "news", "label": "News", "cache": news_cache, "model": "News"},
-    {"key": "video", "label": "Videos", "cache": video_cache, "model": "Videos"},
+    {"key": "news", "label": "News", "cache": news_cache, "model": News},
+    {"key": "video", "label": "Videos", "cache": video_cache, "model": Videos},
 ]
-
-
-def _get_model(name):
-    return apps.get_model('supabase', name)
 
 
 def _cache_by_key(key):
@@ -50,7 +55,7 @@ def cache_stats_json(request, key):
         return JsonResponse({'error': 'Unknown cache key'}, status=404)
     try:
         stats = entry["cache"].stats()
-        stats['db_total'] = _get_model(entry["model"]).objects.count()
+        stats['db_total'] = entry["model"].objects.count()
         return JsonResponse(stats)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
@@ -91,11 +96,11 @@ def metadata_stats_json(request):
     try:
         stats = metadata_cache.stats()
         db_counts = {
-            "categories": _get_model("Categories").objects.count(),
-            "topics": _get_model("Topics").objects.count(),
-            "divisions": _get_model("Divisions").objects.count(),
-            "publishers": _get_model("Videopublishers").objects.count(),
-            "source_aliases": _get_model("Sourcealias").objects.count(),
+            "categories": Categories.objects.count(),
+            "topics": Topics.objects.count(),
+            "divisions": Divisions.objects.count(),
+            "publishers": Videopublishers.objects.count(),
+            "source_aliases": Sourcealias.objects.count(),
         }
         stats["db_counts"] = db_counts
         stats["db_total"] = sum(db_counts.values())
@@ -108,7 +113,7 @@ def metadata_rebuild_json(request):
     """Flush metadata cache then immediately rebuild it from DB."""
     try:
         metadata_cache.flush()
-        rebuild_metadata_cache(using="supabase")
+        rebuild_metadata_cache()
         return JsonResponse({'rebuilt': True, 'message': 'Metadata cache purged and rebuilt from DB.'})
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
@@ -117,7 +122,7 @@ def metadata_rebuild_json(request):
 class VideosAdmin(admin.ModelAdmin):
     class VideoAdminForm(forms.ModelForm):
         class Meta:
-            model = _get_model('Videos')
+            model = Videos
             fields = '__all__'
 
         def clean_videourl(self):
@@ -248,24 +253,25 @@ class VideopublishersAdmin(admin.ModelAdmin):
             icon_url = fetch_channel_icon(publisher.url)
             if icon_url:
                 publisher.profileiconurl = icon_url
-                publisher.save(using='supabase')
+                publisher.save()
                 updated += 1
         return updated
 
     def fetch_missing_icons(self, request):
-        Vp = _get_model('Videopublishers')
-        missing = Vp.objects.using('supabase').filter(profileiconurl__isnull=True) | Vp.objects.using('supabase').filter(profileiconurl='')
+        missing = (
+            Videopublishers.objects.filter(profileiconurl__isnull=True)
+            | Videopublishers.objects.filter(profileiconurl='')
+        )
         updated = self._update_icons(missing)
         return JsonResponse({'updated': updated})
 
     def refresh_all_icons(self, request):
-        Vp = _get_model('Videopublishers')
-        updated = self._update_icons(Vp.objects.using('supabase').all())
+        updated = self._update_icons(Videopublishers.objects.all())
         return JsonResponse({'updated': updated})
 
 
-admin.site.register(_get_model('Videos'), VideosAdmin)
-admin.site.register(_get_model('Videopublishers'), VideopublishersAdmin)
+admin.site.register(Videos, VideosAdmin)
+admin.site.register(Videopublishers, VideopublishersAdmin)
 
 
 class NewsAdmin(admin.ModelAdmin):
@@ -275,7 +281,7 @@ class NewsAdmin(admin.ModelAdmin):
     list_filter = ['timestamp']
 
 
-admin.site.register(_get_model('News'), NewsAdmin)
+admin.site.register(News, NewsAdmin)
 
 
 class CategoriesAdmin(admin.ModelAdmin):
@@ -298,7 +304,7 @@ class CategoriesAdmin(admin.ModelAdmin):
     live_feed_badge.short_description = 'Live'
 
 
-admin.site.register(_get_model('Categories'), CategoriesAdmin)
+admin.site.register(Categories, CategoriesAdmin)
 
 
 _original_get_urls = admin.AdminSite.get_urls

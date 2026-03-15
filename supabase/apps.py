@@ -38,8 +38,8 @@ class SupabaseConfig(AppConfig):
 
         # Ensure metadata Redis cache is synchronized from DB on every Django start.
         try:
-            logger.info("Metadata startup sync: rebuilding cache from Supabase")
-            rebuild_metadata_cache(using="supabase")
+            logger.info("Metadata startup sync: rebuilding cache from database")
+            rebuild_metadata_cache()
             logger.info("Metadata startup sync: done")
         except Exception as exc:
             logger.warning("Metadata startup sync skipped: %s", exc)
