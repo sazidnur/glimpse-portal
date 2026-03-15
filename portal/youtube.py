@@ -263,39 +263,91 @@ def _fetch_via_oembed(video_id, original_url):
 
 
 def fetch_channel_icon(channel_url):
-    api_key = getattr(settings, 'YOUTUBE_API_KEY', None)
-    if not api_key:
+    def _from_html_fallback(url):
+        candidates = [url]
+        normalized = (url or '').rstrip('/')
+        if normalized and not normalized.endswith('/about'):
+            candidates.append(f'{normalized}/about')
+
+        for candidate in candidates:
+            req = Request(
+                candidate,
+                headers={
+                    'User-Agent': (
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                        'AppleWebKit/537.36 (KHTML, like Gecko) '
+                        'Chrome/124.0.0.0 Safari/537.36'
+                    ),
+                    'Accept': 'text/html',
+                },
+            )
+            try:
+                with urlopen(req, timeout=10) as resp:
+                    html = resp.read().decode(errors='ignore')
+                match = re.search(
+                    r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+                    html,
+                    re.IGNORECASE,
+                )
+                if match:
+                    return match.group(1).replace('&amp;', '&')
+            except HTTPError as exc:
+                if int(exc.code) in (404, 410):
+                    logger.info('Channel page not found for icon lookup: %s', candidate)
+                    continue
+                logger.warning(
+                    'Channel icon HTML fallback HTTP error for %s: %s',
+                    candidate,
+                    exc,
+                )
+            except URLError as exc:
+                logger.warning(
+                    'Channel icon HTML fallback URL error for %s: %s',
+                    candidate,
+                    exc,
+                )
+            except Exception:
+                logger.exception('Failed to fetch channel icon from HTML fallback: %s', candidate)
         return None
 
+    channel_url = (channel_url or '').strip()
+    if not channel_url:
+        return None
+
+    api_key = getattr(settings, 'YOUTUBE_API_KEY', None)
+
+    parsed = urlparse(channel_url)
+    path = (parsed.path or '').strip('/')
+    parts = [p for p in path.split('/') if p]
     channel_id = None
     handle = None
-    if '/channel/' in channel_url:
-        channel_id = channel_url.split('/channel/')[-1].split('/')[0]
-    elif '/@' in channel_url:
-        handle = channel_url.split('/@')[-1].split('/')[0]
+    if len(parts) >= 2 and parts[0].lower() == 'channel':
+        channel_id = parts[1]
+    elif parts and parts[0].startswith('@'):
+        handle = parts[0][1:]
 
-    if channel_id:
-        params = urlencode({'part': 'snippet', 'id': channel_id, 'key': api_key})
-    elif handle:
-        params = urlencode({'part': 'snippet', 'forHandle': handle, 'key': api_key})
-    else:
-        return None
+    if api_key and (channel_id or handle):
+        if channel_id:
+            params = urlencode({'part': 'snippet', 'id': channel_id, 'key': api_key})
+        else:
+            params = urlencode({'part': 'snippet', 'forHandle': handle, 'key': api_key})
 
-    api_url = f'https://www.googleapis.com/youtube/v3/channels?{params}'
-    req = Request(api_url, headers={'Accept': 'application/json'})
+        api_url = f'https://www.googleapis.com/youtube/v3/channels?{params}'
+        req = Request(api_url, headers={'Accept': 'application/json'})
+        try:
+            with urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+            items = data.get('items', [])
+            if items:
+                thumbnails = items[0].get('snippet', {}).get('thumbnails', {})
+                icon = (
+                    thumbnails.get('high', {}).get('url')
+                    or thumbnails.get('medium', {}).get('url')
+                    or thumbnails.get('default', {}).get('url')
+                )
+                if icon:
+                    return icon
+        except Exception:
+            logger.exception('Failed to fetch channel icon from YouTube API')
 
-    try:
-        with urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-        items = data.get('items', [])
-        if not items:
-            return None
-        thumbnails = items[0]['snippet'].get('thumbnails', {})
-        return (
-            thumbnails.get('high', {}).get('url')
-            or thumbnails.get('medium', {}).get('url')
-            or thumbnails.get('default', {}).get('url')
-        )
-    except Exception:
-        logger.exception('Failed to fetch channel icon')
-        return None
+    return _from_html_fallback(channel_url)

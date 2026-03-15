@@ -5,6 +5,7 @@ from django.http import JsonResponse
 from django.utils.html import format_html
 from django.template.response import TemplateResponse
 from django.conf import settings
+from django.db.models import Q
 
 from api.v1.resources import news_cache, video_cache, metadata_cache, rebuild_metadata_cache
 from .models import (
@@ -24,6 +25,10 @@ import json
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 CACHE_REGISTRY = [
@@ -249,26 +254,55 @@ class VideopublishersAdmin(admin.ModelAdmin):
 
     def _update_icons(self, queryset):
         from .youtube import fetch_channel_icon
+
         updated = 0
-        for publisher in queryset:
-            icon_url = fetch_channel_icon(publisher.url)
-            if icon_url:
-                publisher.profileiconurl = icon_url
-                publisher.save()
-                updated += 1
-        return updated
+        attempted = 0
+        no_icon = 0
+        failed = 0
+
+        for publisher in queryset.iterator():
+            attempted += 1
+            try:
+                icon_url = fetch_channel_icon(publisher.url)
+                if icon_url:
+                    if publisher.profileiconurl != icon_url:
+                        publisher.profileiconurl = icon_url
+                        publisher.save(update_fields=['profileiconurl'])
+                        updated += 1
+                else:
+                    no_icon += 1
+            except Exception:
+                failed += 1
+                logger.exception(
+                    'Publisher icon refresh failed for id=%s url=%s',
+                    publisher.id,
+                    publisher.url,
+                )
+
+        logger.info(
+            'Publisher icon refresh summary: attempted=%s updated=%s no_icon=%s failed=%s',
+            attempted,
+            updated,
+            no_icon,
+            failed,
+        )
+        return {
+            'attempted': attempted,
+            'updated': updated,
+            'no_icon': no_icon,
+            'failed': failed,
+        }
 
     def fetch_missing_icons(self, request):
-        missing = (
-            Videopublishers.objects.filter(profileiconurl__isnull=True)
-            | Videopublishers.objects.filter(profileiconurl='')
+        missing = Videopublishers.objects.filter(
+            Q(profileiconurl__isnull=True) | Q(profileiconurl='')
         )
-        updated = self._update_icons(missing)
-        return JsonResponse({'updated': updated})
+        stats = self._update_icons(missing)
+        return JsonResponse(stats)
 
     def refresh_all_icons(self, request):
-        updated = self._update_icons(Videopublishers.objects.all())
-        return JsonResponse({'updated': updated})
+        stats = self._update_icons(Videopublishers.objects.all())
+        return JsonResponse(stats)
 
 
 admin.site.register(Videos, VideosAdmin)

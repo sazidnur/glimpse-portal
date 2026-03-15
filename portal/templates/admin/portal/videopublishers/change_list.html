@@ -34,7 +34,11 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .then(r => r.json())
         .then(data => {
-            btn.textContent = 'Updated ' + data.updated + ' icon(s)';
+            const updated = Number(data.updated || 0);
+            const attempted = Number(data.attempted || 0);
+            const noIcon = Number(data.no_icon || 0);
+            const failed = Number(data.failed || 0);
+            btn.textContent = `Updated ${updated}/${attempted} (no icon: ${noIcon}, failed: ${failed})`;
             setTimeout(() => location.reload(), 1500);
         })
         .catch(() => {
