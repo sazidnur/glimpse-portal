@@ -36,7 +36,7 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     
     # Local apps
-    'supabase',
+    'portal.apps.PortalConfig',
 ]
 
 # Add debug toolbar in development

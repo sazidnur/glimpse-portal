@@ -42,7 +42,12 @@
                 );
                 input.value = '';
                 setTimeout(function() {
-                    window.location.href = '/portal/supabase/videos/' + d.id + '/change/';
+                    var currentPath = window.location.pathname || '';
+                    var targetPath = currentPath.replace(/\/add\/?$/, '/' + d.id + '/change/');
+                    if (targetPath === currentPath) {
+                        targetPath = currentPath.replace(/\/?$/, '/') + d.id + '/change/';
+                    }
+                    window.location.href = targetPath;
                 }, 1500);
             })
             .catch(function(err) {

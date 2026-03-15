@@ -75,7 +75,7 @@ poetry run python manage.py generate_models --write --force
 ```text
 glimpse-portal/
 ├── config/                  # Django project settings/urls
-├── supabase/                # Main app (legacy app label)
+├── portal/                  # Main app
 │   ├── models.py
 │   ├── admin.py
 │   └── management/commands/

@@ -8,7 +8,7 @@ portal_prefix = settings.PORTAL_URL_PREFIX
 
 urlpatterns = [
     path(f'{portal_prefix}', RedirectView.as_view(url=f'/{portal_prefix}/', permanent=True)),
-    path(f'{portal_prefix}/api/', include('supabase.urls')),
+    path(f'{portal_prefix}/api/', include('portal.urls')),
     path('origin/api/v1/', include('api.v1.urls')),  # CF Worker origin path
     path(f'{portal_prefix}/', admin.site.urls),
 ]

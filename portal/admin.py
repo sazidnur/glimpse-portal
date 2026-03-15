@@ -1,6 +1,5 @@
 from django.contrib import admin
 from django import forms
-from django.apps import apps
 from django.urls import path, reverse
 from django.http import JsonResponse
 from django.utils.html import format_html
@@ -11,8 +10,10 @@ from api.v1.resources import news_cache, video_cache, metadata_cache, rebuild_me
 from .models import (
     Categories,
     Divisions,
+    Extradetails,
     News,
     Sourcealias,
+    Timelines,
     Topics,
     Videopublishers,
     Videos,
@@ -228,7 +229,7 @@ class VideopublishersAdmin(admin.ModelAdmin):
     list_display = ['id', 'title', 'url', 'platform', 'icon_preview']
     list_per_page = 25
     search_fields = ['title', 'url']
-    change_list_template = 'admin/supabase/videopublishers/change_list.html'
+    change_list_template = 'admin/portal/videopublishers/change_list.html'
 
     def icon_preview(self, obj):
         if obj.profileiconurl:
@@ -474,11 +475,14 @@ def _patched_get_urls(self):
 admin.AdminSite.get_urls = _patched_get_urls
 
 
-CUSTOM_MODELS = {'Videos', 'Videopublishers', 'News', 'Categories'}
-supabase_models = apps.get_app_config('supabase').get_models()
-for model in supabase_models:
-    if model.__name__ in CUSTOM_MODELS:
-        continue
+AUTOREGISTER_MODELS = (
+    Divisions,
+    Sourcealias,
+    Topics,
+    Extradetails,
+    Timelines,
+)
+for model in AUTOREGISTER_MODELS:
     try:
         admin_class = type(
             f'{model.__name__}Admin',

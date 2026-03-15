@@ -1,7 +1,7 @@
 from django.utils import timezone
 from rest_framework import serializers
 
-from supabase.models import (
+from portal.models import (
     News, Videos, Categories, Topics, Divisions, Videopublishers, Sourcealias,
 )
 

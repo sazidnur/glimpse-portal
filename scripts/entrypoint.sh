@@ -7,8 +7,7 @@ set -e
 
 echo "🚀 Starting Glimpse Portal..."
 
-# Run migrations on default database only (not supabase)
-echo "📦 Running migrations (default database)..."
+echo "📦 Running migrations..."
 python manage.py migrate --database=default --noinput
 
 # Collect static files

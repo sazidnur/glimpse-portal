@@ -50,7 +50,7 @@ The cache is fully generic. To add a new model:
 2. Create a `SortedSetCache` instance with the model and serializer
 3. Create concrete view subclasses (one-liners extending the base classes)
 4. Add URL routes in `api/v1/urls.py`
-5. Add an entry to `CACHE_REGISTRY` in `supabase/admin.py` for the admin dashboard
+5. Add an entry to `CACHE_REGISTRY` in `portal/admin.py` for the admin dashboard
 
 That's it. No new cache logic, no new view logic.
 
@@ -271,11 +271,11 @@ The dashboard is a single HTML template (`templates/admin/cache_dashboard.html`)
 | `cache-dashboard/warm/{key}/` | POST | Warms that cache from DB |
 | `cache-dashboard/flush/{key}/` | POST | Flushes that cache |
 
-These are registered via `AdminSite.get_urls` monkey-patch in `supabase/admin.py`.
+These are registered via `AdminSite.get_urls` monkey-patch in `portal/admin.py`.
 
 ### Adding a New Model
 
-Add one entry to `CACHE_REGISTRY` in `supabase/admin.py`:
+Add one entry to `CACHE_REGISTRY` in `portal/admin.py`:
 
 ```python
 CACHE_REGISTRY = [
@@ -310,7 +310,7 @@ The dashboard auto-renders the new card. No template changes needed.
 | `api/v1/resources.py` | Cache instances (`news_cache`, `video_cache`), serializer functions, concrete view subclasses |
 | `api/v1/serializers.py` | `NewsDetailSerializer`, `VideoDetailSerializer` (DRF ModelSerializers) |
 | `api/v1/urls.py` | URL routes for all `/api/v1/` endpoints |
-| `supabase/admin.py` | `CACHE_REGISTRY`, unified dashboard views, model admin classes, `AdminSite.get_urls` patch |
+| `portal/admin.py` | `CACHE_REGISTRY`, unified dashboard views, model admin classes, `AdminSite.get_urls` patch |
 | `config/urls.py` | Root URL config, admin site setup |
 | `config/settings.py` | Redis cache backend config (django-redis) |
 | `config/middleware.py` | `APIIPWhitelistMiddleware` for `/api/` paths |
@@ -667,3 +667,4 @@ npx wrangler deploy
 ```
 
 For local dev: `npx wrangler dev` starts a server at `http://localhost:8787`.
+

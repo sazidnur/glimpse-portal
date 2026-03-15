@@ -10,7 +10,7 @@ class Command(BaseCommand):
     help = "Warm all Redis sorted-set caches from the database"
 
     def handle(self, *args, **options):
-        from supabase.admin import CACHE_REGISTRY
+        from portal.admin import CACHE_REGISTRY
         from api.v1.resources import rebuild_metadata_cache
 
         for entry in CACHE_REGISTRY:

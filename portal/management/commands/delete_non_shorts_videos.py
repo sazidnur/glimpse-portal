@@ -3,8 +3,8 @@ import os
 
 from django.core.management.base import BaseCommand, CommandError
 
-from supabase.models import Videos
-from supabase.youtube import validate_youtube_shorts_url
+from portal.models import Videos
+from portal.youtube import validate_youtube_shorts_url
 
 logger = logging.getLogger(__name__)
 

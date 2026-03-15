@@ -4,7 +4,6 @@ import re
 from io import StringIO
 from pathlib import Path
 
-from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import BaseCommand
 
@@ -171,7 +170,7 @@ class Command(BaseCommand):
             ))
 
         output = StringIO()
-        db_alias = 'supabase' if 'supabase' in settings.DATABASES else 'default'
+        db_alias = 'default'
         inspectdb_args = ['--database', db_alias]
         if options['table']:
             inspectdb_args.append(options['table'])
@@ -203,10 +202,10 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS(f'📁 Backed up existing models to {backup_path.name}'))
 
             models_path.write_text(models_content, encoding='utf-8')
-            self.stdout.write(self.style.SUCCESS(f'✅ Models written to supabase/models.py'))
+            self.stdout.write(self.style.SUCCESS(f'✅ Models written to portal/models.py'))
             
             self.stdout.write(self.style.NOTICE('\n📝 Info:'))
-            self.stdout.write('  • Models are auto-registered in admin (supabase/admin.py)')
+            self.stdout.write('  • Models are auto-registered in admin (portal/admin.py)')
             self.stdout.write('  • Generated models follow standard Django migration behavior')
             self.stdout.write('  • verbose_name_plural values are preserved across regenerations')
             self.stdout.write('  • Use admin portal to add/edit/delete data')
@@ -221,3 +220,4 @@ class Command(BaseCommand):
             self.stdout.write(self.style.NOTICE('\n💡 Commands:'))
             self.stdout.write('   python manage.py generate_models --write         # Save models')
             self.stdout.write('   python manage.py generate_models --write --force # Sync/update models')
+

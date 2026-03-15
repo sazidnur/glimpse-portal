@@ -104,9 +104,9 @@ class Migration(migrations.Migration):
                 ('imageurl', models.TextField(blank=True, db_column='imageUrl', null=True)),
                 ('timestamp', models.DateTimeField()),
                 ('score', models.FloatField(blank=True, null=True)),
-                ('categoryid', models.ForeignKey(blank=True, db_column='categoryId', null=True, on_delete=django.db.models.deletion.DO_NOTHING, to='supabase.categories')),
-                ('divisionid', models.ForeignKey(blank=True, db_column='divisionId', null=True, on_delete=django.db.models.deletion.DO_NOTHING, to='supabase.divisions')),
-                ('topic', models.ForeignKey(blank=True, db_column='topic', null=True, on_delete=django.db.models.deletion.DO_NOTHING, to='supabase.topics')),
+                ('categoryid', models.ForeignKey(blank=True, db_column='categoryId', null=True, on_delete=django.db.models.deletion.DO_NOTHING, to='data.categories')),
+                ('divisionid', models.ForeignKey(blank=True, db_column='divisionId', null=True, on_delete=django.db.models.deletion.DO_NOTHING, to='data.divisions')),
+                ('topic', models.ForeignKey(blank=True, db_column='topic', null=True, on_delete=django.db.models.deletion.DO_NOTHING, to='data.topics')),
             ],
             options={
                 'verbose_name_plural': 'News',
@@ -119,7 +119,7 @@ class Migration(migrations.Migration):
                 ('id', models.BigAutoField(primary_key=True, serialize=False)),
                 ('original_news', models.TextField()),
                 ('card', models.TextField(blank=True, null=True, unique=True)),
-                ('news', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.DO_NOTHING, to='supabase.news')),
+                ('news', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.DO_NOTHING, to='data.news')),
             ],
             options={
                 'verbose_name_plural': 'Extra Details',
@@ -136,7 +136,7 @@ class Migration(migrations.Migration):
                 ('timestamp', models.DateTimeField()),
                 ('score', models.FloatField(blank=True, null=True)),
                 ('thumbnailurl', models.TextField(blank=True, db_column='thumbnailUrl', db_comment='thumbnailUrl', null=True)),
-                ('publisher', models.ForeignKey(blank=True, db_column='publisher', null=True, on_delete=django.db.models.deletion.DO_NOTHING, to='supabase.videopublishers')),
+                ('publisher', models.ForeignKey(blank=True, db_column='publisher', null=True, on_delete=django.db.models.deletion.DO_NOTHING, to='data.videopublishers')),
             ],
             options={
                 'verbose_name_plural': 'Videos',
