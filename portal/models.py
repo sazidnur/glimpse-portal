@@ -128,7 +128,7 @@ class Videos(models.Model):
     title = models.TextField(blank=True, null=True)
     videourl = models.TextField(db_column='videoUrl', blank=True, null=True)  # Field name made lowercase.
     source = models.TextField(blank=True, null=True)
-    publisher = models.ForeignKey(Videopublishers, models.DO_NOTHING, db_column='publisher', blank=True, null=True)
+    publisher = models.ForeignKey(Videopublishers, models.SET_NULL, db_column='publisher', blank=True, null=True)
     timestamp = models.DateTimeField()
     score = models.FloatField(blank=True, null=True)
     thumbnailurl = models.TextField(db_column='thumbnailUrl', blank=True, null=True, db_comment='thumbnailUrl')  # Field name made lowercase.
@@ -139,3 +139,4 @@ class Videos(models.Model):
 
     def __str__(self):
         return self.title or self.videourl or f"Video {self.id}"
+
