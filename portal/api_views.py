@@ -19,7 +19,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
 from api.v1.cache import worker_token_handler
-from .models import Categories, Videopublishers, Videos
+from .models import Categories, News, Topics, Videopublishers, Videos
 from .youtube import fetch_video_data, fetch_channel_icon, validate_youtube_shorts_url
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,111 @@ def health_check(request):
         'service': 'glimpse-api',
         'version': '1.0.0',
     })
+
+
+def _query_flag(request, key='all'):
+    raw = request.GET.get(key)
+    if raw is None:
+        return False
+    return str(raw).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _split_csv(raw_value):
+    if not raw_value:
+        return []
+    return [item.strip() for item in str(raw_value).split(',') if item.strip()]
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def news_data(request):
+    # Default remains empty unless explicitly requested by query flag.
+    if not _query_flag(request):
+        return Response({'items': [], 'count': 0})
+
+    items = list(
+        News.objects
+        .exclude(source__isnull=True)
+        .exclude(source='')
+        .values_list('source', flat=True)
+    )
+    return Response({'items': items, 'count': len(items)})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def videos_data(request):
+    # Default remains empty unless explicitly requested by query flag.
+    if not _query_flag(request):
+        return Response({'items': [], 'count': 0})
+
+    items = list(
+        Videos.objects
+        .exclude(videourl__isnull=True)
+        .exclude(videourl='')
+        .values_list('videourl', flat=True)
+    )
+    return Response({'items': items, 'count': len(items)})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def categories_data(request):
+    qs = (
+        Categories.objects
+        .filter(enabled=True)
+        .only('id', 'name', 'enabled', 'order', 'live_feed_type')
+        .order_by('order', 'id')
+    )
+
+    live_feed_type_raw = request.GET.get('live_feed_type', '').strip()
+    if live_feed_type_raw:
+        try:
+            qs = qs.filter(live_feed_type=int(live_feed_type_raw))
+        except ValueError:
+            return Response({'error': 'live_feed_type must be an integer'}, status=400)
+
+    skip_names = _split_csv(request.GET.get('skip_names') or request.GET.get('exclude_names'))
+    if skip_names:
+        qs = qs.exclude(name__in=skip_names)
+
+    skip_contains = _split_csv(request.GET.get('skip_contains'))
+    for term in skip_contains:
+        qs = qs.exclude(name__icontains=term)
+
+    items = [
+        {
+            'id': int(category.id),
+            'name': str(category.name or ''),
+            'enabled': bool(category.enabled),
+            'order': int(category.order or 0),
+            'live_feed_type': int(getattr(category, 'live_feed_type', 0) or 0),
+        }
+        for category in qs
+    ]
+    return Response({'items': items, 'count': len(items)})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def topics_data(request):
+    qs = (
+        Topics.objects
+        .filter(enabled=True)
+        .only('id', 'name', 'order', 'enabled', 'image')
+        .order_by('order', 'id')
+    )
+    items = [
+        {
+            'id': int(topic.id),
+            'name': str(topic.name or ''),
+            'order': int(topic.order or 0),
+            'enabled': bool(topic.enabled),
+            'image': topic.image,
+        }
+        for topic in qs
+    ]
+    return Response({'items': items, 'count': len(items)})
 
 
 @staff_member_required
