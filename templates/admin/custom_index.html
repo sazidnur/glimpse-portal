@@ -1,26 +1,314 @@
-{% extends "admin/index.html" %}
-{% load i18n %}
+{% extends 'admin/base.html' %}
+{% load i18n unfold %}
+
+{% block breadcrumbs %}{% endblock %}
+
+{% block title %}{% trans 'Dashboard' %} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block branding %}
+    {% include "unfold/helpers/site_branding.html" %}
+{% endblock %}
 
 {% block content %}
-<div style="display:flex;gap:12px;margin-bottom:24px;flex-wrap:wrap;">
-    <a href="{% url 'admin:cache_dashboard' %}"
-       style="display:inline-flex;align-items:center;gap:8px;padding:10px 22px;
-              background:#417690;color:#fff;border-radius:6px;text-decoration:none;
-              font-size:14px;font-weight:600;box-shadow:0 1px 4px rgba(0,0,0,.12);">
-        &#9881; Redis Cache Dashboard
-    </a>
-    <a href="{% url 'admin:cf_analytics' %}"
-       style="display:inline-flex;align-items:center;gap:8px;padding:10px 22px;
-              background:#2c3e50;color:#fff;border-radius:6px;text-decoration:none;
-              font-size:14px;font-weight:600;box-shadow:0 1px 4px rgba(0,0,0,.12);">
-        &#128202; CF Cache Analytics
-    </a>
-    <a href="{% url 'admin:live_feed_dashboard' %}"
-       style="display:inline-flex;align-items:center;gap:8px;padding:10px 22px;
-              background:#0b7285;color:#fff;border-radius:6px;text-decoration:none;
-              font-size:14px;font-weight:600;box-shadow:0 1px 4px rgba(0,0,0,.12);">
-        Live Feed Manager
-    </a>
+{% include "unfold/helpers/messages.html" %}
+
+<div class="flex flex-col gap-8 mb-8">
+    <!-- Header with Time Filter -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+            <h1 class="font-semibold text-2xl text-font-important-light dark:text-font-important-dark">Dashboard</h1>
+            <p class="mt-1 text-sm text-font-subtle-light dark:text-font-subtle-dark">Overview of your content and system status</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            {% for tf in time_filters %}
+            <a href="?period={{ tf.key }}" 
+               class="px-3 py-1.5 text-sm font-medium rounded-md transition-colors
+                      {% if time_filter == tf.key %}
+                      bg-primary-600 text-white
+                      {% else %}
+                      bg-white border border-base-200 text-font-default-light hover:bg-base-50 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark dark:hover:bg-base-700
+                      {% endif %}">
+                {{ tf.label }}
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Content Stats Cards -->
+    <div>
+        <h2 class="font-medium text-sm text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wider mb-3">Content Statistics</h2>
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">News</p>
+                <p class="mt-1 text-2xl font-semibold text-font-important-light dark:text-font-important-dark">{{ content_stats.news|default:"0" }}</p>
+            </div>
+            <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Videos</p>
+                <p class="mt-1 text-2xl font-semibold text-font-important-light dark:text-font-important-dark">{{ content_stats.videos|default:"0" }}</p>
+            </div>
+            <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Publishers</p>
+                <p class="mt-1 text-2xl font-semibold text-font-important-light dark:text-font-important-dark">{{ content_stats.publishers|default:"0" }}</p>
+            </div>
+            <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Categories</p>
+                <p class="mt-1 text-2xl font-semibold text-font-important-light dark:text-font-important-dark">{{ content_stats.categories|default:"0" }}</p>
+            </div>
+            <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Divisions</p>
+                <p class="mt-1 text-2xl font-semibold text-font-important-light dark:text-font-important-dark">{{ content_stats.divisions|default:"0" }}</p>
+            </div>
+            <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Topics</p>
+                <p class="mt-1 text-2xl font-semibold text-font-important-light dark:text-font-important-dark">{{ content_stats.topics|default:"0" }}</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Grid: Cache + CF Analytics -->
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <!-- Cache Management -->
+        <div class="xl:col-span-2 bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+            <div class="px-5 py-4 border-b border-base-200 dark:border-base-800 flex items-center justify-between">
+                <h2 class="font-semibold text-font-important-light dark:text-font-important-dark">Redis Cache</h2>
+                <div class="flex gap-2">
+                    <button type="button" id="btn-warm-all" class="px-3 py-1.5 text-xs font-medium bg-primary-600 text-white rounded-md hover:bg-primary-700 transition-colors">Warm All</button>
+                    <button type="button" id="btn-flush-all" class="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors">Flush All</button>
+                </div>
+            </div>
+            <div class="p-5">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-xs uppercase tracking-wider text-font-subtle-light dark:text-font-subtle-dark">
+                                <th class="pb-3 font-medium">Cache</th>
+                                <th class="pb-3 font-medium">Cached</th>
+                                <th class="pb-3 font-medium">DB Total</th>
+                                <th class="pb-3 font-medium">Status</th>
+                                <th class="pb-3 font-medium text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="cache-table-body" class="divide-y divide-base-100 dark:divide-base-800">
+                            {% for cache in cache_status %}
+                            <tr data-key="{{ cache.key }}">
+                                <td class="py-3 font-medium text-font-important-light dark:text-font-important-dark">{{ cache.label }}</td>
+                                <td class="py-3 text-font-default-light dark:text-font-default-dark cache-cached">{{ cache.cached }}</td>
+                                <td class="py-3 text-font-default-light dark:text-font-default-dark cache-db">{{ cache.db_total }}</td>
+                                <td class="py-3">
+                                    {% if cache.synced %}
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 cache-status">Synced</span>
+                                    {% elif cache.cached == 0 %}
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 cache-status">Cold</span>
+                                    {% else %}
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 cache-status">Partial</span>
+                                    {% endif %}
+                                </td>
+                                <td class="py-3 text-right">
+                                    <button type="button" class="btn-warm px-2 py-1 text-xs font-medium text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded transition-colors" data-key="{{ cache.key }}">Warm</button>
+                                    <button type="button" class="btn-flush px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors" data-key="{{ cache.key }}">Flush</button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div id="cache-status-msg" class="mt-4 text-sm text-font-subtle-light dark:text-font-subtle-dark"></div>
+            </div>
+        </div>
+
+        <!-- CF Analytics Mini -->
+        <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+            <div class="px-5 py-4 border-b border-base-200 dark:border-base-800 flex items-center justify-between">
+                <h2 class="font-semibold text-font-important-light dark:text-font-important-dark">CF Analytics</h2>
+                <a href="{% url 'admin:cf_analytics' %}" class="text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400">View Full</a>
+            </div>
+            <div class="p-5">
+                {% if cf_configured %}
+                <div id="cf-mini-stats" class="space-y-4">
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm text-font-subtle-light dark:text-font-subtle-dark">Worker Cache</span>
+                        <span id="cf-worker" class="text-sm font-medium text-font-important-light dark:text-font-important-dark">-</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm text-font-subtle-light dark:text-font-subtle-dark">CDN Cache</span>
+                        <span id="cf-cdn" class="text-sm font-medium text-font-important-light dark:text-font-important-dark">-</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm text-font-subtle-light dark:text-font-subtle-dark">Origin Hits</span>
+                        <span id="cf-origin" class="text-sm font-medium text-font-important-light dark:text-font-important-dark">-</span>
+                    </div>
+                    <div class="pt-4 border-t border-base-100 dark:border-base-800">
+                        <canvas id="cf-mini-chart" height="120"></canvas>
+                    </div>
+                </div>
+                {% else %}
+                <div class="text-center py-6">
+                    <p class="text-sm text-font-subtle-light dark:text-font-subtle-dark">CF credentials not configured</p>
+                    <p class="mt-1 text-xs text-font-subtle-light dark:text-font-subtle-dark">Set CF_ACCOUNT_ID and CF_ANALYTICS_TOKEN in .env</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div>
+        <h2 class="font-medium text-sm text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wider mb-3">Quick Actions</h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {% for link in quick_links %}
+            <a href="{{ link.url }}" class="flex items-center gap-3 bg-white border border-base-200 rounded-lg p-4 hover:bg-base-50 transition-colors dark:bg-base-900 dark:border-base-800 dark:hover:bg-base-800">
+                <span class="material-symbols-outlined text-primary-600 dark:text-primary-400">{{ link.icon }}</span>
+                <span class="font-medium text-font-important-light dark:text-font-important-dark">{{ link.title }}</span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
 </div>
-{{ block.super }}
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+    const CACHE_URLS = {{ cache_urls_json|safe }};
+    const CF_DATA_URL = {% if cf_data_url %}"{{ cf_data_url }}"{% else %}null{% endif %};
+    const csrfToken = document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';
+
+    // Cache management
+    function updateCacheRow(key, data) {
+        const row = document.querySelector(`tr[data-key="${key}"]`);
+        if (!row) return;
+        row.querySelector('.cache-cached').textContent = data.total_items?.toLocaleString() ?? data.cached ?? '-';
+        row.querySelector('.cache-db').textContent = data.db_total?.toLocaleString() ?? '-';
+        const statusEl = row.querySelector('.cache-status');
+        const synced = (data.total_items ?? data.cached) === data.db_total || data.synced;
+        const cold = (data.total_items ?? data.cached) === 0;
+        if (synced) {
+            statusEl.className = 'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 cache-status';
+            statusEl.textContent = 'Synced';
+        } else if (cold) {
+            statusEl.className = 'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 cache-status';
+            statusEl.textContent = 'Cold';
+        } else {
+            statusEl.className = 'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 cache-status';
+            statusEl.textContent = 'Partial';
+        }
+    }
+
+    function setStatus(msg, isError = false) {
+        const el = document.getElementById('cache-status-msg');
+        el.textContent = msg;
+        el.className = isError 
+            ? 'mt-4 text-sm text-red-600 dark:text-red-400' 
+            : 'mt-4 text-sm text-font-subtle-light dark:text-font-subtle-dark';
+    }
+
+    async function fetchJson(url, options = {}) {
+        const res = await fetch(url, { headers: { 'X-CSRFToken': csrfToken }, ...options });
+        return res.json();
+    }
+
+    async function warmCache(key) {
+        setStatus(`Warming ${key} cache...`);
+        try {
+            const url = key === 'metadata' ? CACHE_URLS.metadata_rebuild : CACHE_URLS[`warm_${key}`];
+            await fetchJson(url);
+            const statsUrl = key === 'metadata' ? CACHE_URLS.metadata_stats : CACHE_URLS[`stats_${key}`];
+            const stats = await fetchJson(statsUrl);
+            updateCacheRow(key, stats);
+            setStatus(`${key} cache warmed successfully`);
+        } catch (e) {
+            setStatus(`Failed to warm ${key} cache: ${e.message}`, true);
+        }
+    }
+
+    async function flushCache(key) {
+        setStatus(`Flushing ${key} cache...`);
+        try {
+            const url = key === 'metadata' ? CACHE_URLS.metadata_flush : CACHE_URLS[`flush_${key}`];
+            await fetchJson(url);
+            const statsUrl = key === 'metadata' ? CACHE_URLS.metadata_stats : CACHE_URLS[`stats_${key}`];
+            const stats = await fetchJson(statsUrl);
+            updateCacheRow(key, stats);
+            setStatus(`${key} cache flushed`);
+        } catch (e) {
+            setStatus(`Failed to flush ${key} cache: ${e.message}`, true);
+        }
+    }
+
+    // Bind cache buttons
+    document.querySelectorAll('.btn-warm').forEach(btn => {
+        btn.addEventListener('click', () => warmCache(btn.dataset.key));
+    });
+    document.querySelectorAll('.btn-flush').forEach(btn => {
+        btn.addEventListener('click', () => flushCache(btn.dataset.key));
+    });
+    document.getElementById('btn-warm-all')?.addEventListener('click', async () => {
+        setStatus('Warming all caches...');
+        await warmCache('news');
+        await warmCache('video');
+        await warmCache('metadata');
+        setStatus('All caches warmed');
+    });
+    document.getElementById('btn-flush-all')?.addEventListener('click', async () => {
+        if (!confirm('Flush all caches? This will temporarily slow API responses.')) return;
+        setStatus('Flushing all caches...');
+        await flushCache('news');
+        await flushCache('video');
+        await flushCache('metadata');
+        setStatus('All caches flushed');
+    });
+
+    // CF Analytics mini chart
+    if (CF_DATA_URL) {
+        let miniChart = null;
+        async function loadCFMini() {
+            try {
+                const data = await fetchJson(CF_DATA_URL + '?range=24h');
+                if (data.error) return;
+                
+                const t = data.totals;
+                const total = t.total || 1;
+                document.getElementById('cf-worker').textContent = `${((t.worker / total) * 100).toFixed(1)}%`;
+                document.getElementById('cf-cdn').textContent = `${((t.cdn / total) * 100).toFixed(1)}%`;
+                document.getElementById('cf-origin').textContent = `${((t.origin / total) * 100).toFixed(1)}%`;
+
+                // Mini chart
+                const ctx = document.getElementById('cf-mini-chart');
+                if (!ctx) return;
+                
+                const series = data.series.slice(-12); // Last 12 points
+                const labels = series.map(s => {
+                    const d = new Date(s.ts);
+                    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                });
+                
+                if (miniChart) miniChart.destroy();
+                miniChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels,
+                        datasets: [
+                            { label: 'Worker', data: series.map(s => s.worker), borderColor: '#22c55e', backgroundColor: 'transparent', tension: 0.4, borderWidth: 2, pointRadius: 0 },
+                            { label: 'CDN', data: series.map(s => s.cdn), borderColor: '#3b82f6', backgroundColor: 'transparent', tension: 0.4, borderWidth: 2, pointRadius: 0 },
+                            { label: 'Origin', data: series.map(s => s.origin), borderColor: '#ef4444', backgroundColor: 'transparent', tension: 0.4, borderWidth: 2, pointRadius: 0 },
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            x: { display: false },
+                            y: { display: false, beginAtZero: true }
+                        },
+                        interaction: { mode: 'index', intersect: false }
+                    }
+                });
+            } catch (e) {
+                console.error('CF mini load failed:', e);
+            }
+        }
+        loadCFMini();
+    }
+})();
+</script>
 {% endblock %}

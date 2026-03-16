@@ -18,6 +18,7 @@
 
             btn.disabled = true;
             btn.textContent = 'Fetching...';
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
             showStatus('Fetching video data from YouTube...', 'info');
 
             fetch(window.__YOUTUBE_FETCH_URL || '/portal/api/youtube/fetch/', {
@@ -37,7 +38,7 @@
                 var d = result.data;
                 showStatus(
                     '<strong>Saved!</strong> ' + d.title +
-                    (d.thumbnailurl ? '<br><img src="' + d.thumbnailurl + '" style="max-width:320px;margin-top:8px;border-radius:6px;">' : ''),
+                    (d.thumbnailurl ? '<br><img src="' + d.thumbnailurl + '" class="max-w-xs mt-3 rounded-lg shadow">' : ''),
                     'success'
                 );
                 input.value = '';
@@ -56,6 +57,7 @@
             .finally(function() {
                 btn.disabled = false;
                 btn.textContent = 'Fetch & Save';
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
             });
         });
 
@@ -67,9 +69,12 @@
         });
 
         function showStatus(msg, type) {
-            var colors = { info: '#417690', success: '#28a745', error: '#dc3545' };
-            status.innerHTML = '<div style="padding:10px;border-radius:6px;color:#fff;background:' +
-                (colors[type] || colors.info) + ';">' + msg + '</div>';
+            var classes = {
+                info: 'bg-blue-50 text-blue-800 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800',
+                success: 'bg-green-50 text-green-800 border-green-200 dark:bg-green-900/20 dark:text-green-300 dark:border-green-800',
+                error: 'bg-red-50 text-red-800 border-red-200 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800'
+            };
+            status.innerHTML = '<div class="p-3 rounded-lg border text-sm ' + (classes[type] || classes.info) + '">' + msg + '</div>';
         }
     });
 })();

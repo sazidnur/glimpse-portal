@@ -6,6 +6,9 @@ This portal runs at glimpseapp.net/portal and serves as the admin interface.
 
 from pathlib import Path
 from decouple import config, Csv
+from django.urls import reverse_lazy
+from django.utils.translation import gettext_lazy as _
+from django.templatetags.static import static
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -23,6 +26,7 @@ PORTAL_URL_PREFIX = config('PORTAL_URL_PREFIX', default='portal')
 
 # Application definition
 INSTALLED_APPS = [
+    'unfold',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -38,6 +42,148 @@ INSTALLED_APPS = [
     # Local apps
     'portal.apps.PortalConfig',
 ]
+
+UNFOLD = {
+    "SITE_TITLE": "Glimpse Portal",
+    "SITE_HEADER": "Glimpse Portal",
+    "SITE_SYMBOL": "hub",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": False,
+    "ENVIRONMENT": "portal.dashboard.environment_callback",
+    "DASHBOARD_CALLBACK": "portal.dashboard.dashboard_callback",
+    "COLORS": {
+        "primary": {
+            "50": "oklch(97.5% .01 250)",
+            "100": "oklch(94% .02 250)",
+            "200": "oklch(88% .04 250)",
+            "300": "oklch(80% .08 250)",
+            "400": "oklch(70% .14 250)",
+            "500": "oklch(60% .19 250)",
+            "600": "oklch(52% .2 250)",
+            "700": "oklch(45% .18 250)",
+            "800": "oklch(38% .15 250)",
+            "900": "oklch(30% .12 250)",
+            "950": "oklch(22% .09 250)",
+        },
+        "danger": {
+            "50": "oklch(97% .01 20)",
+            "100": "oklch(94% .03 20)",
+            "200": "oklch(88% .06 20)",
+            "300": "oklch(80% .10 20)",
+            "400": "oklch(70% .14 20)",
+            "500": "oklch(62% .16 20)",
+            "600": "oklch(55% .15 20)",
+            "700": "oklch(48% .13 20)",
+            "800": "oklch(40% .11 20)",
+            "900": "oklch(32% .08 20)",
+            "950": "oklch(24% .06 20)",
+        },
+    },
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": False,
+        "navigation": [
+            {
+                "title": _("Dashboard"),
+                "separator": True,
+                "collapsible": False,
+                "items": [
+                    {
+                        "title": _("Home"),
+                        "icon": "dashboard",
+                        "link": reverse_lazy("admin:index"),
+                    },
+                    {
+                        "title": _("CF Analytics"),
+                        "icon": "insights",
+                        "link": reverse_lazy("admin:cf_analytics"),
+                    },
+                    {
+                        "title": _("Live Feed"),
+                        "icon": "stream",
+                        "link": reverse_lazy("admin:live_feed_dashboard"),
+                    },
+                ],
+            },
+            {
+                "title": _("Content"),
+                "separator": True,
+                "collapsible": False,
+                "items": [
+                    {
+                        "title": _("News"),
+                        "icon": "article",
+                        "link": reverse_lazy("admin:data_news_changelist"),
+                    },
+                    {
+                        "title": _("Videos"),
+                        "icon": "smart_display",
+                        "link": reverse_lazy("admin:data_videos_changelist"),
+                    },
+                    {
+                        "title": _("Publishers"),
+                        "icon": "group_work",
+                        "link": reverse_lazy("admin:data_videopublishers_changelist"),
+                    },
+                    {
+                        "title": _("Categories"),
+                        "icon": "category",
+                        "link": reverse_lazy("admin:data_categories_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": _("Taxonomy"),
+                "separator": True,
+                "collapsible": False,
+                "items": [
+                    {
+                        "title": _("Divisions"),
+                        "icon": "lan",
+                        "link": reverse_lazy("admin:data_divisions_changelist"),
+                    },
+                    {
+                        "title": _("Source Aliases"),
+                        "icon": "link",
+                        "link": reverse_lazy("admin:data_sourcealias_changelist"),
+                    },
+                    {
+                        "title": _("Topics"),
+                        "icon": "label",
+                        "link": reverse_lazy("admin:data_topics_changelist"),
+                    },
+                    {
+                        "title": _("Extra Details"),
+                        "icon": "info",
+                        "link": reverse_lazy("admin:data_extradetails_changelist"),
+                    },
+                    {
+                        "title": _("Timelines"),
+                        "icon": "timeline",
+                        "link": reverse_lazy("admin:data_timelines_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": _("Access"),
+                "separator": True,
+                "collapsible": False,
+                "items": [
+                    {
+                        "title": _("Users"),
+                        "icon": "person",
+                        "link": reverse_lazy("admin:auth_user_changelist"),
+                    },
+                    {
+                        "title": _("Groups"),
+                        "icon": "groups",
+                        "link": reverse_lazy("admin:auth_group_changelist"),
+                    },
+                ],
+            },
+        ],
+    },
+}
 
 # Add debug toolbar in development
 if DEBUG:

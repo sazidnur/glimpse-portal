@@ -1,301 +1,346 @@
-{% extends "admin/base_site.html" %}
-{% load i18n %}
+{% extends 'admin/base.html' %}
+{% load i18n unfold %}
 
-{% block title %}Cloudflare Cache Analytics{% endblock %}
+{% block breadcrumbs %}{% endblock %}
 
-{% block breadcrumbs %}
-<div class="breadcrumbs">
-    <a href="{% url 'admin:index' %}">Home</a>
-    &rsaquo; Cloudflare Cache Analytics
-</div>
+{% block title %}{% trans 'CF Analytics' %} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block branding %}
+    {% include "unfold/helpers/site_branding.html" %}
 {% endblock %}
 
 {% block content %}
-<style>
-  .cfa-wrap { max-width: 1200px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+{% include "unfold/helpers/messages.html" %}
 
-  .cfa-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
-  .cfa-header h2 { margin: 0 0 4px; font-size: 20px; color: #333; }
-  .cfa-header p  { margin: 0; font-size: 13px; color: #777; }
-
-  .cfa-controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-  .cfa-controls label { font-size: 12px; color: #777; font-weight: 600; }
-  .range-btn {
-    padding: 5px 13px; font-size: 12px; font-weight: 600;
-    border: 1px solid #d0d7de; border-radius: 5px;
-    background: #fff; color: #444; cursor: pointer; transition: all .15s;
-  }
-  .range-btn:hover  { background: #f3f4f6; border-color: #aaa; }
-  .range-btn.active { background: #417690; color: #fff; border-color: #417690; }
-
-  .cfa-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 22px; }
-  .stat-card {
-    background: #fff; border: 1px solid #e4e8ec; border-radius: 10px;
-    padding: 18px 20px; display: flex; flex-direction: column; gap: 5px; transition: box-shadow .15s;
-  }
-  .stat-card:hover { box-shadow: 0 2px 14px rgba(0,0,0,.07); }
-  .stat-card.total  { border-left: 4px solid #417690; }
-  .stat-card.worker { border-left: 4px solid #27ae60; }
-  .stat-card.cdn    { border-left: 4px solid #2980b9; }
-  .stat-card.origin { border-left: 4px solid #e74c3c; }
-  .sc-label { font-size: 10px; text-transform: uppercase; letter-spacing: .7px; color: #999; font-weight: 700; }
-  .sc-value { font-size: 30px; font-weight: 700; line-height: 1.1; color: #1a1a1a; }
-  .sc-pct   { font-size: 12px; font-weight: 600; }
-  .sc-sub   { font-size: 11px; color: #aaa; }
-  .pct-green { color: #27ae60; } .pct-blue { color: #2980b9; }
-  .pct-red   { color: #e74c3c; } .pct-grey { color: #888; }
-
-  .cfa-charts { display: grid; grid-template-columns: 1fr 310px; gap: 18px; margin-bottom: 22px; }
-  @media (max-width: 860px) { .cfa-charts { grid-template-columns: 1fr; } }
-  .chart-panel {
-    background: #fff; border: 1px solid #e4e8ec; border-radius: 10px;
-    padding: 22px; transition: box-shadow .15s;
-  }
-  .chart-panel:hover { box-shadow: 0 2px 12px rgba(0,0,0,.06); }
-  .chart-panel h3 { margin: 0 0 18px; font-size: 14px; font-weight: 600; color: #333; }
-  .chart-wrap { position: relative; }
-
-  .cfa-table-wrap {
-    background: #fff; border: 1px solid #e4e8ec; border-radius: 10px;
-    padding: 22px; margin-bottom: 22px; overflow-x: auto;
-  }
-  .cfa-table-wrap h3 { margin: 0 0 14px; font-size: 14px; font-weight: 600; color: #333; }
-  .cfa-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  .cfa-table th { text-align: left; padding: 7px 12px; background: #f6f8fa; color: #555; font-weight: 700; border-bottom: 1px solid #e4e8ec; white-space: nowrap; }
-  .cfa-table td { padding: 7px 12px; border-bottom: 1px solid #f0f2f4; color: #333; }
-  .cfa-table tr:last-child td { border-bottom: none; }
-  .cfa-table tr:hover td { background: #fbfcfd; }
-  .bar-cell { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
-  .mini-bar { height: 5px; border-radius: 3px; }
-
-  .cfa-loading, .cfa-error, .cfa-empty { text-align: center; padding: 56px 24px; color: #999; font-size: 14px; }
-  .cfa-error { color: #c0392b; }
-  .spinner {
-    display: inline-block; width: 18px; height: 18px;
-    border: 2px solid #e0e0e0; border-top-color: #417690;
-    border-radius: 50%; animation: spin .65s linear infinite;
-    vertical-align: middle; margin-right: 8px;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  .cfa-notice {
-    background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;
-    padding: 18px 22px; font-size: 13.5px; color: #555; margin-bottom: 22px; line-height: 1.75;
-  }
-  .cfa-notice code { background: #f5f5f5; padding: 1px 6px; border-radius: 3px; font-size: 12px; color: #b91c1c; }
-  .cfa-meta { font-size: 11px; color: #bbb; text-align: right; margin-bottom: 18px; }
-</style>
-
-<div class="cfa-wrap">
-  <div class="cfa-header">
-    <div>
-      <h2>Cloudflare Cache Analytics</h2>
-      <p>Requests served by Worker microcache, CDN/tiered cache, and origin. Batched every 60 s per isolate.</p>
+<div class="flex flex-col gap-6 mb-8">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+            <h1 class="font-semibold text-2xl text-font-important-light dark:text-font-important-dark">Cloudflare Cache Analytics</h1>
+            <p class="mt-1 text-sm text-font-subtle-light dark:text-font-subtle-dark">Requests served by Worker microcache, CDN/tiered cache, and origin</p>
+        </div>
+        <div class="flex flex-wrap gap-2" id="range-buttons">
+            <button type="button" class="range-btn px-3 py-1.5 text-sm font-medium rounded-md transition-colors bg-white border border-base-200 text-font-default-light hover:bg-base-50 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark dark:hover:bg-base-700" data-range="10m">10m</button>
+            <button type="button" class="range-btn px-3 py-1.5 text-sm font-medium rounded-md transition-colors bg-white border border-base-200 text-font-default-light hover:bg-base-50 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark dark:hover:bg-base-700" data-range="30m">30m</button>
+            <button type="button" class="range-btn px-3 py-1.5 text-sm font-medium rounded-md transition-colors bg-white border border-base-200 text-font-default-light hover:bg-base-50 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark dark:hover:bg-base-700" data-range="1h">1h</button>
+            <button type="button" class="range-btn px-3 py-1.5 text-sm font-medium rounded-md transition-colors bg-white border border-base-200 text-font-default-light hover:bg-base-50 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark dark:hover:bg-base-700" data-range="6h">6h</button>
+            <button type="button" class="range-btn active px-3 py-1.5 text-sm font-medium rounded-md transition-colors bg-primary-600 text-white" data-range="24h">24h</button>
+            <button type="button" class="range-btn px-3 py-1.5 text-sm font-medium rounded-md transition-colors bg-white border border-base-200 text-font-default-light hover:bg-base-50 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark dark:hover:bg-base-700" data-range="7d">7d</button>
+            <button type="button" class="range-btn px-3 py-1.5 text-sm font-medium rounded-md transition-colors bg-white border border-base-200 text-font-default-light hover:bg-base-50 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark dark:hover:bg-base-700" data-range="30d">30d</button>
+        </div>
     </div>
-    <div class="cfa-controls">
-      <label>Range:&nbsp;</label>
-      <button class="range-btn" data-range="10m">10m</button>
-      <button class="range-btn" data-range="30m">30m</button>
-      <button class="range-btn" data-range="1h">1h</button>
-      <button class="range-btn" data-range="6h">6h</button>
-      <button class="range-btn active" data-range="24h">24h</button>
-      <button class="range-btn" data-range="7d">7d</button>
-      <button class="range-btn" data-range="30d">30d</button>
+
+    {% if not has_credentials %}
+    <!-- Credentials Warning -->
+    <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 dark:bg-amber-900/20 dark:border-amber-800">
+        <h2 class="font-semibold text-amber-800 dark:text-amber-200">Credentials Not Configured</h2>
+        <p class="mt-2 text-sm text-amber-700 dark:text-amber-300">Add these environment variables to your <code class="bg-amber-100 dark:bg-amber-800 px-1 rounded">.env</code> file:</p>
+        <ul class="mt-2 text-sm text-amber-700 dark:text-amber-300 list-disc list-inside space-y-1">
+            <li><code class="bg-amber-100 dark:bg-amber-800 px-1 rounded">CF_ACCOUNT_ID</code> — Your Cloudflare Account ID</li>
+            <li><code class="bg-amber-100 dark:bg-amber-800 px-1 rounded">CF_ANALYTICS_TOKEN</code> — API token with Account Analytics: Read</li>
+        </ul>
     </div>
-  </div>
+    {% endif %}
 
-  {% if not has_credentials %}
-  <div class="cfa-notice">
-    <strong>Credentials not configured.</strong> Add these to your <code>.env</code> and restart:
-    <ul style="margin:8px 0 0 18px;">
-      <li><code>CF_ACCOUNT_ID</code> — Cloudflare dashboard → right sidebar → "Account ID" (free, no paid plan needed)</li>
-      <li><code>CF_ANALYTICS_TOKEN</code> — API token with <em>Account Analytics: Read</em> only
-        (<a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank">create here</a>)</li>
-    </ul>
-  </div>
-  {% endif %}
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4" id="stats-cards">
+        <div class="bg-white border border-base-200 rounded-lg p-5 dark:bg-base-900 dark:border-base-800">
+            <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Total Requests</p>
+            <p id="stat-total" class="mt-2 text-3xl font-bold text-font-important-light dark:text-font-important-dark">-</p>
+            <p class="mt-1 text-xs text-font-subtle-light dark:text-font-subtle-dark">across all layers</p>
+        </div>
+        <div class="bg-white border-l-4 border-l-green-500 border border-base-200 rounded-lg p-5 dark:bg-base-900 dark:border-base-800 dark:border-l-green-500">
+            <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Worker Cache</p>
+            <p id="stat-worker" class="mt-2 text-3xl font-bold text-font-important-light dark:text-font-important-dark">-</p>
+            <p id="stat-worker-pct" class="mt-1 text-xs font-medium text-green-600 dark:text-green-400">- % hit rate</p>
+        </div>
+        <div class="bg-white border-l-4 border-l-blue-500 border border-base-200 rounded-lg p-5 dark:bg-base-900 dark:border-base-800 dark:border-l-blue-500">
+            <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">CDN / Tiered</p>
+            <p id="stat-cdn" class="mt-2 text-3xl font-bold text-font-important-light dark:text-font-important-dark">-</p>
+            <p id="stat-cdn-pct" class="mt-1 text-xs font-medium text-blue-600 dark:text-blue-400">- % hit rate</p>
+        </div>
+        <div class="bg-white border-l-4 border-l-red-500 border border-base-200 rounded-lg p-5 dark:bg-base-900 dark:border-base-800 dark:border-l-red-500">
+            <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Origin Hits</p>
+            <p id="stat-origin" class="mt-2 text-3xl font-bold text-font-important-light dark:text-font-important-dark">-</p>
+            <p id="stat-origin-pct" class="mt-1 text-xs font-medium text-red-600 dark:text-red-400">- % (lower is better)</p>
+        </div>
+    </div>
 
-  <div id="cfa-content">
-    <div class="cfa-loading"><span class="spinner"></span> Loading analytics&hellip;</div>
-  </div>
+    <!-- Charts Grid -->
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <!-- Line Chart -->
+        <div class="xl:col-span-2 bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+            <div class="px-5 py-4 border-b border-base-200 dark:border-base-800">
+                <h2 class="font-semibold text-font-important-light dark:text-font-important-dark">Request Volume by Layer</h2>
+            </div>
+            <div class="p-5 relative">
+                <div class="h-72">
+                    <canvas id="line-chart"></canvas>
+                </div>
+                <div id="line-chart-no-data" class="hidden absolute inset-0 flex items-center justify-center bg-white/80 dark:bg-base-900/80">
+                    <span class="text-lg font-medium text-font-subtle-light dark:text-font-subtle-dark">No Data</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Donut Chart -->
+        <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+            <div class="px-5 py-4 border-b border-base-200 dark:border-base-800">
+                <h2 class="font-semibold text-font-important-light dark:text-font-important-dark">Layer Distribution</h2>
+            </div>
+            <div class="p-5 flex items-center justify-center">
+                <div class="h-64 w-64">
+                    <canvas id="donut-chart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Table -->
+    <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+        <div class="px-5 py-4 border-b border-base-200 dark:border-base-800 flex items-center justify-between">
+            <h2 class="font-semibold text-font-important-light dark:text-font-important-dark">Breakdown by Time Bucket</h2>
+            <span id="time-range" class="text-xs text-font-subtle-light dark:text-font-subtle-dark"></span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-left text-xs uppercase tracking-wider text-font-subtle-light dark:text-font-subtle-dark bg-base-50 dark:bg-base-800">
+                        <th class="px-5 py-3 font-medium">Time</th>
+                        <th class="px-5 py-3 font-medium">Worker</th>
+                        <th class="px-5 py-3 font-medium">CDN</th>
+                        <th class="px-5 py-3 font-medium">Origin</th>
+                        <th class="px-5 py-3 font-medium">Total</th>
+                        <th class="px-5 py-3 font-medium">Worker %</th>
+                    </tr>
+                </thead>
+                <tbody id="data-table" class="divide-y divide-base-100 dark:divide-base-800"></tbody>
+            </table>
+        </div>
+        <div id="table-empty" class="hidden p-8 text-center text-font-subtle-light dark:text-font-subtle-dark">
+            No data available for this time range.
+        </div>
+    </div>
+
+    <!-- Status Footer -->
+    <div id="status" class="text-sm text-font-subtle-light dark:text-font-subtle-dark"></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script>
-(function () {
-  const DATA_URL  = "{% url 'admin:cf_analytics_data' %}";
-  const HAS_CREDS = {{ has_credentials|yesno:"true,false" }};
+(function() {
+    const DATA_URL = "{% url 'admin:cf_analytics_data' %}";
+    const HAS_CREDS = {{ has_credentials|yesno:"true,false" }};
+    
+    let lineChart = null, donutChart = null;
+    let activeRange = '24h';
+    
+    const COLORS = {
+        worker: { line: '#22c55e', fill: 'rgba(34, 197, 94, 0.1)' },
+        cdn: { line: '#3b82f6', fill: 'rgba(59, 130, 246, 0.1)' },
+        origin: { line: '#ef4444', fill: 'rgba(239, 68, 68, 0.1)' }
+    };
 
-  let lineChart = null, donutChart = null;
-  let activeRange = "24h";
-
-  const C = {
-    worker: { line: '#27ae60', fill: 'rgba(39,174,96,.1)'  },
-    cdn:    { line: '#2980b9', fill: 'rgba(41,128,185,.1)' },
-    origin: { line: '#e74c3c', fill: 'rgba(231,76,60,.1)'  },
-  };
-
-  function fmtNum(n) {
-    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
-    return n.toString();
-  }
-  function pct(n, t) { return t === 0 ? '—' : (n / t * 100).toFixed(1) + '%'; }
-  function fmtTs(iso, unit) {
-    const d = new Date(iso);
-    if (unit === 'day')  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    if (unit === 'hour') return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  }
-
-  function render(data) {
-    const { series, totals, unit } = data;
-    const t = totals.total;
-
-    document.getElementById('cfa-content').innerHTML = `
-      <div class="cfa-meta">
-        ${data.from.replace('T',' ').slice(0,16)} &rarr; ${data.to.replace('T',' ').slice(0,16)} UTC
-        &nbsp;|&nbsp; Updated: ${new Date().toLocaleTimeString()}
-      </div>
-      <div class="cfa-stats">
-        <div class="stat-card total">
-          <div class="sc-label">Total Requests</div>
-          <div class="sc-value">${fmtNum(t)}</div>
-          <div class="sc-sub">across all layers</div>
-        </div>
-        <div class="stat-card worker">
-          <div class="sc-label">Worker Cache</div>
-          <div class="sc-value">${fmtNum(totals.worker)}</div>
-          <div class="sc-pct pct-green">${pct(totals.worker, t)} hit rate</div>
-          <div class="sc-sub">PoP microcache &mdash; 2 min TTL + 15 s SWR</div>
-        </div>
-        <div class="stat-card cdn">
-          <div class="sc-label">CDN / Tiered</div>
-          <div class="sc-value">${fmtNum(totals.cdn)}</div>
-          <div class="sc-pct pct-blue">${pct(totals.cdn, t)} hit rate</div>
-          <div class="sc-sub">Edge + upper tier &mdash; 30 min TTL + 120 s SWR</div>
-        </div>
-        <div class="stat-card origin">
-          <div class="sc-label">Origin Hits</div>
-          <div class="sc-value">${fmtNum(totals.origin)}</div>
-          <div class="sc-pct pct-red">${pct(totals.origin, t)} of requests</div>
-          <div class="sc-sub">Reached Django &mdash; lower is better</div>
-        </div>
-      </div>
-      <div class="cfa-charts">
-        <div class="chart-panel">
-          <h3>Request volume by layer</h3>
-          <div class="chart-wrap" style="height:260px"><canvas id="lineChart"></canvas></div>
-        </div>
-        <div class="chart-panel">
-          <h3>Layer distribution</h3>
-          <div class="chart-wrap" style="height:260px"><canvas id="donutChart"></canvas></div>
-        </div>
-      </div>
-      <div class="cfa-table-wrap">
-        <h3>Breakdown by time bucket</h3>
-        ${series.length === 0
-          ? '<div class="cfa-empty">No data for this period.</div>'
-          : buildTable(series, unit, t)}
-      </div>`;
-
-    buildCharts(series, totals, unit, t);
-  }
-
-  function buildCharts(series, totals, unit, t) {
-    if (lineChart)  { lineChart.destroy();  lineChart  = null; }
-    if (donutChart) { donutChart.destroy(); donutChart = null; }
-
-    const labels = series.map(s => fmtTs(s.ts, unit));
-    const dense  = series.length > 60;
-
-    lineChart = new Chart(document.getElementById('lineChart'), {
-      type: 'line',
-      data: { labels, datasets: [
-        { label: 'Worker', data: series.map(s => s.worker), borderColor: C.worker.line, backgroundColor: C.worker.fill, fill: true, tension: .35, pointRadius: dense ? 0 : 3, borderWidth: 1.5 },
-        { label: 'CDN',    data: series.map(s => s.cdn),    borderColor: C.cdn.line,    backgroundColor: C.cdn.fill,    fill: true, tension: .35, pointRadius: dense ? 0 : 3, borderWidth: 1.5 },
-        { label: 'Origin', data: series.map(s => s.origin), borderColor: C.origin.line, backgroundColor: C.origin.fill, fill: true, tension: .35, pointRadius: dense ? 0 : 3, borderWidth: 1.5 },
-      ]},
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          legend: { position: 'top', labels: { boxWidth: 10, font: { size: 11 } } },
-          tooltip: { callbacks: { label: c => ` ${c.dataset.label}: ${fmtNum(c.raw)}` } },
-        },
-        scales: {
-          x: { grid: { display: false }, ticks: { font: { size: 10 }, maxTicksLimit: 10, maxRotation: 30 } },
-          y: { beginAtZero: true, ticks: { font: { size: 10 }, callback: v => fmtNum(v) } },
-        },
-      },
-    });
-
-    if (t > 0) {
-      donutChart = new Chart(document.getElementById('donutChart'), {
-        type: 'doughnut',
-        data: {
-          labels: ['Worker', 'CDN', 'Origin'],
-          datasets: [{ data: [totals.worker, totals.cdn, totals.origin], backgroundColor: [C.worker.line, C.cdn.line, C.origin.line], borderWidth: 2, borderColor: '#fff' }],
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false, cutout: '70%',
-          plugins: {
-            legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 }, padding: 14 } },
-            tooltip: { callbacks: { label: c => ` ${c.label}: ${fmtNum(c.raw)} (${pct(c.raw, t)})` } },
-          },
-        },
-      });
+    function fmtNum(n) {
+        if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+        if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+        return n.toLocaleString();
     }
-  }
 
-  function buildTable(series, unit, totalAll) {
-    const maxRow = Math.max(...series.map(s => s.worker + s.cdn + s.origin), 1);
-    const rows = series.slice().reverse().map(s => {
-      const rt  = s.worker + s.cdn + s.origin;
-      const sc  = 120 / maxRow;
-      return `<tr>
-        <td style="white-space:nowrap">${fmtTs(s.ts, unit)}</td>
-        <td><div class="bar-cell"><div class="mini-bar" style="width:${Math.round(s.worker*sc)}px;background:#27ae60"></div>${fmtNum(s.worker)}</div></td>
-        <td><div class="bar-cell"><div class="mini-bar" style="width:${Math.round(s.cdn*sc)}px;background:#2980b9"></div>${fmtNum(s.cdn)}</div></td>
-        <td><div class="bar-cell"><div class="mini-bar" style="width:${Math.round(s.origin*sc)}px;background:#e74c3c"></div>${fmtNum(s.origin)}</div></td>
-        <td>${fmtNum(rt)}</td>
-        <td style="color:#888">${pct(s.worker, rt)}</td>
-      </tr>`;
-    }).join('');
-    return `<table class="cfa-table">
-      <thead><tr><th>Time</th><th>Worker</th><th>CDN</th><th>Origin</th><th>Total</th><th>Worker %</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
-  }
+    function pct(n, t) {
+        return t === 0 ? '—' : ((n / t) * 100).toFixed(1) + '%';
+    }
 
-  function showError(msg) {
-    document.getElementById('cfa-content').innerHTML = `<div class="cfa-error">&#9888; ${msg}</div>`;
-  }
+    function fmtTime(iso, unit) {
+        const d = new Date(iso);
+        if (unit === 'day') return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        if (unit === 'hour') return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    }
 
-  function load(range) {
-    document.getElementById('cfa-content').innerHTML =
-      '<div class="cfa-loading"><span class="spinner"></span> Loading&hellip;</div>';
-    fetch(`${DATA_URL}?range=${range}`)
-      .then(r => r.json())
-      .then(d => { if (d.error) { showError(d.error); return; } render(d); })
-      .catch(e => showError('Fetch failed: ' + e.message));
-  }
+    function setActive(range) {
+        document.querySelectorAll('.range-btn').forEach(btn => {
+            if (btn.dataset.range === range) {
+                btn.className = 'range-btn active px-3 py-1.5 text-sm font-medium rounded-md transition-colors bg-primary-600 text-white';
+            } else {
+                btn.className = 'range-btn px-3 py-1.5 text-sm font-medium rounded-md transition-colors bg-white border border-base-200 text-font-default-light hover:bg-base-50 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark dark:hover:bg-base-700';
+            }
+        });
+    }
 
-  document.querySelectorAll('.range-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      activeRange = btn.dataset.range;
-      load(activeRange);
+    function render(data) {
+        const { series, totals, unit } = data;
+        const t = totals.total || 1;
+
+        // Stats
+        document.getElementById('stat-total').textContent = fmtNum(totals.total);
+        document.getElementById('stat-worker').textContent = fmtNum(totals.worker);
+        document.getElementById('stat-worker-pct').textContent = pct(totals.worker, t) + ' hit rate';
+        document.getElementById('stat-cdn').textContent = fmtNum(totals.cdn);
+        document.getElementById('stat-cdn-pct').textContent = pct(totals.cdn, t) + ' hit rate';
+        document.getElementById('stat-origin').textContent = fmtNum(totals.origin);
+        document.getElementById('stat-origin-pct').textContent = pct(totals.origin, t) + ' (lower is better)';
+
+        // Time range
+        document.getElementById('time-range').textContent = data.from && data.to 
+            ? `${data.from.replace('T', ' ').slice(0, 16)} → ${data.to.replace('T', ' ').slice(0, 16)} UTC`
+            : '';
+
+        // Status
+        document.getElementById('status').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+
+        // Charts
+        buildCharts(series, totals, unit, t);
+
+        // Table
+        buildTable(series, unit, t);
+    }
+
+    function buildCharts(series, totals, unit, t) {
+        if (lineChart) lineChart.destroy();
+        if (donutChart) donutChart.destroy();
+        
+        const noDataEl = document.getElementById('line-chart-no-data');
+        
+        // Handle no data case
+        if (!series.length || t <= 1) {
+            noDataEl?.classList.remove('hidden');
+            return;
+        }
+        noDataEl?.classList.add('hidden');
+
+        const labels = series.map(s => fmtTime(s.ts, unit));
+        const dense = series.length > 40;
+
+        // Line chart
+        const lineCtx = document.getElementById('line-chart');
+        lineChart = new Chart(lineCtx, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    { label: 'Worker', data: series.map(s => s.worker), borderColor: COLORS.worker.line, backgroundColor: COLORS.worker.fill, fill: true, tension: 0.4, pointRadius: dense ? 0 : 2, borderWidth: 2 },
+                    { label: 'CDN', data: series.map(s => s.cdn), borderColor: COLORS.cdn.line, backgroundColor: COLORS.cdn.fill, fill: true, tension: 0.4, pointRadius: dense ? 0 : 2, borderWidth: 2 },
+                    { label: 'Origin', data: series.map(s => s.origin), borderColor: COLORS.origin.line, backgroundColor: COLORS.origin.fill, fill: true, tension: 0.4, pointRadius: dense ? 0 : 2, borderWidth: 2 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { position: 'top', labels: { boxWidth: 12, usePointStyle: true, pointStyle: 'circle' } },
+                    tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmtNum(ctx.raw)}` } }
+                },
+                scales: {
+                    x: { grid: { display: false }, ticks: { maxTicksLimit: 8, maxRotation: 0 } },
+                    y: { beginAtZero: true, ticks: { callback: v => fmtNum(v) } }
+                }
+            }
+        });
+
+        // Donut chart
+        if (t > 0) {
+            const donutCtx = document.getElementById('donut-chart');
+            donutChart = new Chart(donutCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Worker', 'CDN', 'Origin'],
+                    datasets: [{
+                        data: [totals.worker, totals.cdn, totals.origin],
+                        backgroundColor: [COLORS.worker.line, COLORS.cdn.line, COLORS.origin.line],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '65%',
+                    plugins: {
+                        legend: { position: 'bottom', labels: { boxWidth: 12, usePointStyle: true, pointStyle: 'circle', padding: 16 } },
+                        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${fmtNum(ctx.raw)} (${pct(ctx.raw, t)})` } }
+                    }
+                }
+            });
+        }
+    }
+
+    function buildTable(series, unit, t) {
+        const tbody = document.getElementById('data-table');
+        const empty = document.getElementById('table-empty');
+        
+        if (!series.length) {
+            tbody.innerHTML = '';
+            empty.classList.remove('hidden');
+            return;
+        }
+        
+        // Find max value for scaling bars
+        const maxVal = Math.max(...series.flatMap(s => [s.worker, s.cdn, s.origin]));
+        
+        function cellWithBar(val, color, maxWidth = 80) {
+            if (val === 0) return `<span class="text-font-subtle-light dark:text-font-subtle-dark">0</span>`;
+            const barWidth = maxVal > 0 ? Math.max(4, (val / maxVal) * maxWidth) : 0;
+            return `<div class="flex items-center gap-2">
+                <div class="h-1.5 rounded-full ${color}" style="width: ${barWidth}px"></div>
+                <span>${fmtNum(val)}</span>
+            </div>`;
+        }
+        
+        empty.classList.add('hidden');
+        const rows = series.slice().reverse().slice(0, 50).map(s => {
+            const rt = s.worker + s.cdn + s.origin;
+            return `
+                <tr class="hover:bg-base-50 dark:hover:bg-base-800">
+                    <td class="px-5 py-3 text-font-default-light dark:text-font-default-dark whitespace-nowrap">${fmtTime(s.ts, unit)}</td>
+                    <td class="px-5 py-3 text-font-default-light dark:text-font-default-dark">${cellWithBar(s.worker, 'bg-green-500')}</td>
+                    <td class="px-5 py-3 text-font-default-light dark:text-font-default-dark">${cellWithBar(s.cdn, 'bg-blue-500')}</td>
+                    <td class="px-5 py-3 text-font-default-light dark:text-font-default-dark">${cellWithBar(s.origin, 'bg-red-500')}</td>
+                    <td class="px-5 py-3 font-medium text-font-important-light dark:text-font-important-dark">${fmtNum(rt)}</td>
+                    <td class="px-5 py-3 text-green-600 dark:text-green-400 font-medium">${pct(s.worker, rt)}</td>
+                </tr>
+            `;
+        }).join('');
+        tbody.innerHTML = rows;
+    }
+
+    function setStatus(msg, isError = false) {
+        const el = document.getElementById('status');
+        el.textContent = msg;
+        el.classList.toggle('text-red-600', isError);
+        el.classList.toggle('dark:text-red-400', isError);
+    }
+
+    async function load(range) {
+        setStatus('Loading...');
+        try {
+            const res = await fetch(`${DATA_URL}?range=${range}`);
+            const data = await res.json();
+            if (data.error) {
+                setStatus(data.error, true);
+                return;
+            }
+            render(data);
+        } catch (e) {
+            setStatus('Failed to load: ' + e.message, true);
+        }
+    }
+
+    // Event listeners
+    document.querySelectorAll('.range-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            activeRange = btn.dataset.range;
+            setActive(activeRange);
+            load(activeRange);
+        });
     });
-  });
 
-  if (HAS_CREDS) {
-    load(activeRange);
-  } else {
-    document.getElementById('cfa-content').innerHTML =
-      '<div class="cfa-empty">Configure credentials above to view analytics.</div>';
-  }
+    // Initial load
+    if (HAS_CREDS) {
+        load(activeRange);
+    } else {
+        setStatus('Configure credentials to view analytics');
+    }
 })();
 </script>
 {% endblock %}

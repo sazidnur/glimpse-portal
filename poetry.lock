@@ -104,6 +104,21 @@ redis = ">=3,<4.0.0 || >4.0.0,<4.0.1 || >4.0.1"
 hiredis = ["redis[hiredis] (>=3,!=4.0.0,!=4.0.1)"]
 
 [[package]]
+name = "django-unfold"
+version = "0.83.1"
+description = "Modern Django admin theme"
+optional = false
+python-versions = "<4.0,>=3.11"
+groups = ["main"]
+files = [
+    {file = "django_unfold-0.83.1-py3-none-any.whl", hash = "sha256:233cca8f7d9d173518597ce4dbafb0167f3075b556d7fb2b97e44217a1c6ba0f"},
+    {file = "django_unfold-0.83.1.tar.gz", hash = "sha256:af3f9710496d172f0079343d1ba3128528da6d8ef4a57b070efcfc6456d8ed2b"},
+]
+
+[package.dependencies]
+django = ">=4.2"
+
+[[package]]
 name = "djangorestframework"
 version = "3.16.1"
 description = "Web APIs for Django, made easy."
@@ -334,4 +349,4 @@ brotli = ["brotli"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "36564d09d74576bc1eec63fdc62c7daebc4f3fab5b51e2d90f5212d4cb032a25"
+content-hash = "dd6e363422d2aaf164bdff73dae6bd74f475f725174c28d1dfff41fffc6ee34b"

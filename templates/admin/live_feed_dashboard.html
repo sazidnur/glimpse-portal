@@ -1,19 +1,21 @@
-{% extends "admin/base_site.html" %}
-{% load i18n %}
+{% extends 'admin/base.html' %}
+{% load i18n unfold %}
 
-{% block title %}Live Feed Manager{% endblock %}
+{% block title %}{% trans 'Live Feed' %} | {{ site_title|default:_('Django site admin') }}{% endblock %}
 
-{% block breadcrumbs %}
-<div class="breadcrumbs">
-  <a href="{% url 'admin:index' %}">Home</a> &rsaquo; Live Feed Manager
-</div>
+{% block breadcrumbs %}{% endblock %}
+
+{% block branding %}
+    {% include "unfold/helpers/site_branding.html" %}
 {% endblock %}
 
 {% block content %}
+{% include "unfold/helpers/messages.html" %}
+
 <style>
 :root {
-  --lf-primary: #0066cc;
-  --lf-primary-hover: #0052a3;
+  --lf-primary: oklch(52% .2 250);
+  --lf-primary-hover: oklch(45% .18 250);
   --lf-success: #10b981;
   --lf-warning: #f59e0b;
   --lf-danger: #ef4444;
@@ -27,7 +29,8 @@
   --lf-shadow-lg: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);
 }
 
-html[data-theme="dark"] {
+html[data-theme="dark"],
+html.dark {
   --lf-primary: #3b82f6;
   --lf-primary-hover: #60a5fa;
   --lf-success: #22c55e;
@@ -339,8 +342,9 @@ html[data-theme="dark"] {
 .lf-empty svg {
   width: 48px;
   height: 48px;
-  margin-bottom: 12px;
+  margin: 0 auto 12px;
   opacity: 0.4;
+  display: block;
 }
 
 /* Log */

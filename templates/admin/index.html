@@ -1,0 +1,462 @@
+{% extends 'admin/base.html' %}
+{% load i18n unfold %}
+
+{% block breadcrumbs %}{% endblock %}
+
+{% block title %}{% trans 'Dashboard' %} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block branding %}
+    {% include "unfold/helpers/site_branding.html" %}
+{% endblock %}
+
+{% block content %}
+{% include "unfold/helpers/messages.html" %}
+
+<div class="flex flex-col gap-8 mb-8">
+    <!-- Header with Time Filter -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+            <h1 class="font-semibold text-2xl text-font-important-light dark:text-font-important-dark">Dashboard</h1>
+            <p class="mt-1 text-sm text-font-subtle-light dark:text-font-subtle-dark">Overview of your content and system status</p>
+        </div>
+        <div class="flex flex-wrap gap-2" id="time-filters">
+            {% for tf in time_filters %}
+            <button type="button" data-period="{{ tf.key }}"
+               class="time-filter-btn px-3 py-1.5 text-sm font-medium rounded-md transition-colors
+                      {% if time_filter == tf.key %}
+                      bg-primary-600 text-white active
+                      {% else %}
+                      bg-white border border-base-200 text-font-default-light hover:bg-base-50 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark dark:hover:bg-base-700
+                      {% endif %}">
+                {{ tf.label }}
+            </button>
+            {% endfor %}
+            <span id="stats-loader" class="hidden px-2 py-1.5 text-sm text-font-subtle-light dark:text-font-subtle-dark">
+                <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            </span>
+        </div>
+    </div>
+
+    <!-- Content Stats Cards with Mini Charts -->
+    <div>
+        <h2 class="font-medium text-sm text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wider mb-3">Content Statistics</h2>
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">News</p>
+                <p class="mt-1 text-2xl font-semibold text-font-important-light dark:text-font-important-dark"><span id="stat-news">{{ content_stats.news|default:"0" }}</span></p>
+                <div class="mt-2 h-8"><canvas id="news-mini-chart"></canvas></div>
+            </div>
+            <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Videos</p>
+                <p class="mt-1 text-2xl font-semibold text-font-important-light dark:text-font-important-dark"><span id="stat-videos">{{ content_stats.videos|default:"0" }}</span></p>
+                <div class="mt-2 h-8"><canvas id="videos-mini-chart"></canvas></div>
+            </div>
+            <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Categories</p>
+                <p class="mt-1 text-2xl font-semibold text-font-important-light dark:text-font-important-dark"><span id="stat-categories-active">{{ content_stats.categories_active|default:"0" }}</span> <span class="text-sm font-normal text-font-subtle-light dark:text-font-subtle-dark">/ <span id="stat-categories">{{ content_stats.categories|default:"0" }}</span></span></p>
+            </div>
+            <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Live Feed</p>
+                <p class="mt-1 text-2xl font-semibold text-font-important-light dark:text-font-important-dark"><span id="stat-live-feed-active">{{ content_stats.live_feed_active|default:"0" }}</span> <span class="text-sm font-normal text-font-subtle-light dark:text-font-subtle-dark">/ <span id="stat-live-feed">{{ content_stats.live_feed|default:"0" }}</span></span></p>
+            </div>
+            <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Topics</p>
+                <p class="mt-1 text-2xl font-semibold text-font-important-light dark:text-font-important-dark"><span id="stat-topics">{{ content_stats.topics|default:"0" }}</span></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Grid: Cache + CF Analytics -->
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <!-- Cache Management -->
+        <div class="xl:col-span-2 bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+            <div class="px-5 py-4 border-b border-base-200 dark:border-base-800 flex items-center justify-between">
+                <h2 class="font-semibold text-font-important-light dark:text-font-important-dark">Redis Cache</h2>
+                <div class="flex gap-2">
+                    <button type="button" id="btn-warm-all" class="px-3 py-1.5 text-xs font-medium bg-primary-600 text-white rounded-md hover:bg-primary-700 transition-colors">Warm All</button>
+                    <button type="button" id="btn-flush-all" class="px-3 py-1.5 text-xs font-medium bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors">Flush All</button>
+                </div>
+            </div>
+            <div class="p-5">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-xs uppercase tracking-wider text-font-subtle-light dark:text-font-subtle-dark">
+                                <th class="pb-3 font-medium">Cache</th>
+                                <th class="pb-3 font-medium">Cached</th>
+                                <th class="pb-3 font-medium">DB Total</th>
+                                <th class="pb-3 font-medium">Status</th>
+                                <th class="pb-3 font-medium text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="cache-table-body" class="divide-y divide-base-100 dark:divide-base-800">
+                            {% for cache in cache_status %}
+                            <tr data-key="{{ cache.key }}">
+                                <td class="py-3 font-medium text-font-important-light dark:text-font-important-dark">{{ cache.label }}</td>
+                                <td class="py-3 text-font-default-light dark:text-font-default-dark cache-cached">{{ cache.cached }}</td>
+                                <td class="py-3 text-font-default-light dark:text-font-default-dark cache-db">{{ cache.db_total }}</td>
+                                <td class="py-3">
+                                    {% if cache.synced %}
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700 dark:bg-green-500/30 dark:text-green-300 cache-status">Synced</span>
+                                    {% elif cache.cached == 0 %}
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-500/20 text-red-700 dark:bg-red-500/20 dark:text-red-300 cache-status">Cold</span>
+                                    {% else %}
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-500/20 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300 cache-status">Partial</span>
+                                    {% endif %}
+                                </td>
+                                <td class="py-3 text-right">
+                                    <button type="button" class="btn-warm px-2 py-1 text-xs font-medium text-primary-600 hover:bg-primary-100 dark:text-primary-400 dark:hover:bg-primary-900/30 rounded transition-colors" data-key="{{ cache.key }}">Warm</button>
+                                    <button type="button" class="btn-flush px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-900/30 rounded transition-colors" data-key="{{ cache.key }}">Flush</button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div id="cache-status-msg" class="mt-4 text-sm text-font-subtle-light dark:text-font-subtle-dark"></div>
+            </div>
+        </div>
+
+        <!-- CF Analytics Mini -->
+        <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+            <div class="px-5 py-4 border-b border-base-200 dark:border-base-800 flex items-center justify-between">
+                <h2 class="font-semibold text-font-important-light dark:text-font-important-dark">CF Analytics</h2>
+                <a href="{% url 'admin:cf_analytics' %}" class="text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400">View Full</a>
+            </div>
+            <div class="p-5">
+                {% if cf_configured %}
+                <div id="cf-mini-stats" class="space-y-4">
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm text-font-subtle-light dark:text-font-subtle-dark">Worker Cache</span>
+                        <span id="cf-worker" class="text-sm font-medium text-font-important-light dark:text-font-important-dark">-</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm text-font-subtle-light dark:text-font-subtle-dark">CDN Cache</span>
+                        <span id="cf-cdn" class="text-sm font-medium text-font-important-light dark:text-font-important-dark">-</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm text-font-subtle-light dark:text-font-subtle-dark">Origin Hits</span>
+                        <span id="cf-origin" class="text-sm font-medium text-font-important-light dark:text-font-important-dark">-</span>
+                    </div>
+                    <div class="pt-4 border-t border-base-100 dark:border-base-800 relative h-32">
+                        <canvas id="cf-mini-chart"></canvas>
+                        <div id="cf-no-data" class="hidden absolute inset-0 flex items-center justify-center text-xs text-font-subtle-light dark:text-font-subtle-dark">No data</div>
+                    </div>
+                </div>
+                {% else %}
+                <div class="text-center py-6">
+                    <p class="text-sm text-font-subtle-light dark:text-font-subtle-dark">CF credentials not configured</p>
+                    <p class="mt-1 text-xs text-font-subtle-light dark:text-font-subtle-dark">Set CF_ACCOUNT_ID and CF_ANALYTICS_TOKEN in .env</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div>
+        <h2 class="font-medium text-sm text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wider mb-3">Quick Actions</h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {% for link in quick_links %}
+            <a href="{{ link.url }}" class="flex items-center gap-3 bg-white border border-base-200 rounded-lg p-4 hover:bg-base-50 transition-colors dark:bg-base-900 dark:border-base-800 dark:hover:bg-base-800">
+                <span class="material-symbols-outlined text-primary-600 dark:text-primary-400">{{ link.icon }}</span>
+                <span class="font-medium text-font-important-light dark:text-font-important-dark">{{ link.title }}</span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+    const CACHE_URLS = {{ cache_urls_json|safe }};
+    const CF_DATA_URL = {% if cf_data_url %}"{{ cf_data_url }}"{% else %}null{% endif %};
+    const CONTENT_STATS_URL = "{% url 'admin:dashboard_content_stats' %}";
+    const CONTENT_TRENDS = {{ content_trends_json|safe }};
+    const csrfToken = document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';
+
+    // Cache management
+    function updateCacheRow(key, data) {
+        const row = document.querySelector(`tr[data-key="${key}"]`);
+        if (!row) return;
+        
+        // Handle metadata differently - it has `cached` as boolean
+        if (key === 'metadata') {
+            row.querySelector('.cache-cached').textContent = data.cached ? '1' : '0';
+            row.querySelector('.cache-db').textContent = data.db_total?.toLocaleString() ?? '1';
+            const statusEl = row.querySelector('.cache-status');
+            if (data.cached) {
+                statusEl.className = 'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700 dark:bg-green-500/30 dark:text-green-300 cache-status';
+                statusEl.textContent = 'Synced';
+            } else {
+                statusEl.className = 'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700 dark:bg-red-500/30 dark:text-red-300 cache-status';
+                statusEl.textContent = 'Cold';
+            }
+            return;
+        }
+        
+        row.querySelector('.cache-cached').textContent = data.total_items?.toLocaleString() ?? data.cached ?? '-';
+        row.querySelector('.cache-db').textContent = data.db_total?.toLocaleString() ?? '-';
+        const statusEl = row.querySelector('.cache-status');
+        const synced = (data.total_items ?? data.cached) === data.db_total || data.synced;
+        const cold = (data.total_items ?? data.cached) === 0;
+        if (synced) {
+            statusEl.className = 'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700 dark:bg-green-500/30 dark:text-green-300 cache-status';
+            statusEl.textContent = 'Synced';
+        } else if (cold) {
+            statusEl.className = 'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700 dark:bg-red-500/30 dark:text-red-300 cache-status';
+            statusEl.textContent = 'Cold';
+        } else {
+            statusEl.className = 'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/30 dark:text-amber-300 cache-status';
+            statusEl.textContent = 'Partial';
+        }
+    }
+
+    function setStatus(msg, isError = false) {
+        const el = document.getElementById('cache-status-msg');
+        el.textContent = msg;
+        el.className = isError 
+            ? 'mt-4 text-sm text-red-600 dark:text-red-400' 
+            : 'mt-4 text-sm text-font-subtle-light dark:text-font-subtle-dark';
+    }
+
+    async function fetchJson(url, options = {}) {
+        const res = await fetch(url, { headers: { 'X-CSRFToken': csrfToken }, ...options });
+        return res.json();
+    }
+
+    async function warmCache(key) {
+        setStatus(`Warming ${key} cache...`);
+        try {
+            const url = key === 'metadata' ? CACHE_URLS.metadata_rebuild : CACHE_URLS[`warm_${key}`];
+            await fetchJson(url);
+            const statsUrl = key === 'metadata' ? CACHE_URLS.metadata_stats : CACHE_URLS[`stats_${key}`];
+            const stats = await fetchJson(statsUrl);
+            updateCacheRow(key, stats);
+            setStatus(`${key} cache warmed successfully`);
+        } catch (e) {
+            setStatus(`Failed to warm ${key} cache: ${e.message}`, true);
+        }
+    }
+
+    async function flushCache(key) {
+        setStatus(`Flushing ${key} cache...`);
+        try {
+            const url = key === 'metadata' ? CACHE_URLS.metadata_flush : CACHE_URLS[`flush_${key}`];
+            await fetchJson(url);
+            const statsUrl = key === 'metadata' ? CACHE_URLS.metadata_stats : CACHE_URLS[`stats_${key}`];
+            const stats = await fetchJson(statsUrl);
+            updateCacheRow(key, stats);
+            setStatus(`${key} cache flushed`);
+        } catch (e) {
+            setStatus(`Failed to flush ${key} cache: ${e.message}`, true);
+        }
+    }
+
+    // Bind cache buttons
+    document.querySelectorAll('.btn-warm').forEach(btn => {
+        btn.addEventListener('click', () => warmCache(btn.dataset.key));
+    });
+    document.querySelectorAll('.btn-flush').forEach(btn => {
+        btn.addEventListener('click', () => flushCache(btn.dataset.key));
+    });
+    document.getElementById('btn-warm-all')?.addEventListener('click', async () => {
+        setStatus('Warming all caches...');
+        await warmCache('news');
+        await warmCache('video');
+        await warmCache('metadata');
+        setStatus('All caches warmed');
+    });
+    document.getElementById('btn-flush-all')?.addEventListener('click', async () => {
+        if (!confirm('Flush all caches? This will temporarily slow API responses.')) return;
+        setStatus('Flushing all caches...');
+        await flushCache('news');
+        await flushCache('video');
+        await flushCache('metadata');
+        setStatus('All caches flushed');
+    });
+
+    // CF Analytics mini chart - only loads once per session
+    if (CF_DATA_URL) {
+        let miniChart = null;
+        const CF_CACHE_KEY = 'cf_mini_data';
+        const CF_CACHE_TTL = 300000; // 5 minutes
+        
+        async function loadCFMini() {
+            // Check cache to prevent reload on time filter navigation
+            const cached = sessionStorage.getItem(CF_CACHE_KEY);
+            if (cached) {
+                const { data, ts } = JSON.parse(cached);
+                if (Date.now() - ts < CF_CACHE_TTL) {
+                    renderCFMini(data);
+                    return;
+                }
+            }
+            
+            try {
+                const data = await fetchJson(CF_DATA_URL + '?range=24h');
+                if (data.error) return;
+                
+                sessionStorage.setItem(CF_CACHE_KEY, JSON.stringify({ data, ts: Date.now() }));
+                renderCFMini(data);
+            } catch (e) {
+                console.error('CF mini load failed:', e);
+            }
+        }
+        
+        function renderCFMini(data) {
+            const t = data.totals;
+            const total = t.total || 1;
+            document.getElementById('cf-worker').textContent = `${((t.worker / total) * 100).toFixed(1)}%`;
+            document.getElementById('cf-cdn').textContent = `${((t.cdn / total) * 100).toFixed(1)}%`;
+            document.getElementById('cf-origin').textContent = `${((t.origin / total) * 100).toFixed(1)}%`;
+
+            // Mini chart
+            const ctx = document.getElementById('cf-mini-chart');
+            const noDataEl = document.getElementById('cf-no-data');
+            if (!ctx) return;
+            
+            const series = data.series.slice(-12); // Last 12 points
+            
+            // Handle no data case
+            if (!series.length || t.total === 0) {
+                ctx.style.display = 'none';
+                noDataEl?.classList.remove('hidden');
+                return;
+            }
+            
+            const labels = series.map(s => {
+                const d = new Date(s.ts);
+                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            });
+            
+            if (miniChart) miniChart.destroy();
+            miniChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [
+                        { label: 'Worker', data: series.map(s => s.worker), borderColor: '#22c55e', backgroundColor: 'transparent', tension: 0.4, borderWidth: 2, pointRadius: 0 },
+                        { label: 'CDN', data: series.map(s => s.cdn), borderColor: '#3b82f6', backgroundColor: 'transparent', tension: 0.4, borderWidth: 2, pointRadius: 0 },
+                        { label: 'Origin', data: series.map(s => s.origin), borderColor: '#ef4444', backgroundColor: 'transparent', tension: 0.4, borderWidth: 2, pointRadius: 0 },
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { display: false },
+                        y: { display: false, beginAtZero: true }
+                    },
+                    interaction: { mode: 'index', intersect: false }
+                }
+            });
+        }
+        
+        loadCFMini();
+    }
+
+    // Content trend mini charts
+    function renderMiniBar(canvasId, data, color, label) {
+        const ctx = document.getElementById(canvasId);
+        if (!ctx) return;
+        
+        // Check if all values are 0
+        const hasData = data.some(v => v > 0);
+        
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: CONTENT_TRENDS.labels,
+                datasets: [{
+                    data: data,
+                    backgroundColor: hasData ? color : 'rgba(100,100,100,0.2)',
+                    borderRadius: 2,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { 
+                    legend: { display: false }, 
+                    tooltip: { 
+                        enabled: hasData,
+                        displayColors: false,
+                        padding: 6,
+                        titleFont: { size: 0 },
+                        bodyFont: { size: 11 },
+                        callbacks: {
+                            title: () => '',
+                            label: (item) => `${item.label}: ${item.raw}`
+                        }
+                    } 
+                },
+                scales: {
+                    x: { display: false },
+                    y: { display: false, beginAtZero: true }
+                }
+            }
+        });
+    }
+    
+    renderMiniBar('news-mini-chart', CONTENT_TRENDS.news, 'rgba(59, 130, 246, 0.6)', 'News');
+    renderMiniBar('videos-mini-chart', CONTENT_TRENDS.videos, 'rgba(168, 85, 247, 0.6)', 'Videos');
+
+    // Time filter AJAX handling
+    const timeFilterBtns = document.querySelectorAll('.time-filter-btn');
+    const statsLoader = document.getElementById('stats-loader');
+    
+    async function loadContentStats(period) {
+        statsLoader?.classList.remove('hidden');
+        
+        try {
+            const data = await fetchJson(`${CONTENT_STATS_URL}?period=${period}`);
+            
+            // Update all stat cards
+            const updates = {
+                'stat-news': data.news,
+                'stat-videos': data.videos,
+                'stat-categories-active': data.categories_active,
+                'stat-categories': data.categories,
+                'stat-live-feed-active': data.live_feed_active,
+                'stat-live-feed': data.live_feed,
+                'stat-topics': data.topics,
+            };
+            
+            for (const [id, value] of Object.entries(updates)) {
+                const el = document.getElementById(id);
+                if (el) el.textContent = value?.toLocaleString() ?? '0';
+            }
+            
+            // Update URL without reload
+            const url = new URL(window.location);
+            url.searchParams.set('period', period);
+            history.pushState({}, '', url);
+            
+        } catch (e) {
+            console.error('Failed to load content stats:', e);
+        } finally {
+            statsLoader?.classList.add('hidden');
+        }
+    }
+    
+    timeFilterBtns.forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const period = btn.dataset.period;
+            
+            // Update active state
+            timeFilterBtns.forEach(b => {
+                b.classList.remove('bg-primary-600', 'text-white', 'active');
+                b.classList.add('bg-white', 'border', 'border-base-200', 'text-font-default-light', 'dark:bg-base-800', 'dark:border-base-700', 'dark:text-font-default-dark');
+            });
+            btn.classList.remove('bg-white', 'border', 'border-base-200', 'text-font-default-light', 'dark:bg-base-800', 'dark:border-base-700', 'dark:text-font-default-dark');
+            btn.classList.add('bg-primary-600', 'text-white', 'active');
+            
+            await loadContentStats(period);
+        });
+    });
+})();
+</script>
+{% endblock %}

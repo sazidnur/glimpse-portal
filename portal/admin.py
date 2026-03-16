@@ -1,4 +1,7 @@
 from django.contrib import admin
+from django.contrib.auth.admin import GroupAdmin as BaseGroupAdmin
+from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.contrib.auth.models import Group, User
 from django import forms
 from django.urls import path, reverse
 from django.http import JsonResponse
@@ -6,6 +9,8 @@ from django.utils.html import format_html
 from django.template.response import TemplateResponse
 from django.conf import settings
 from django.db.models import Q
+from unfold.admin import ModelAdmin
+from unfold.forms import AdminPasswordChangeForm, UserChangeForm, UserCreationForm
 
 from api.v1.resources import news_cache, video_cache, metadata_cache, rebuild_metadata_cache
 from .models import (
@@ -125,7 +130,40 @@ def metadata_rebuild_json(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
-class VideosAdmin(admin.ModelAdmin):
+def content_stats_json(request):
+    """Return content stats as JSON for AJAX time filter updates."""
+    from datetime import datetime, timedelta, timezone as tz
+    
+    period = request.GET.get('period', 'all')
+    days_map = {
+        'today': 1,
+        '7d': 7,
+        '30d': 30,
+        '365d': 365,
+        'all': None,
+    }
+    days = days_map.get(period)
+    
+    news_qs = News.objects.all()
+    videos_qs = Videos.objects.all()
+    
+    if days:
+        cutoff = datetime.now(tz.utc) - timedelta(days=days)
+        news_qs = news_qs.filter(timestamp__gte=cutoff)
+        videos_qs = videos_qs.filter(timestamp__gte=cutoff)
+    
+    return JsonResponse({
+        'news': news_qs.count(),
+        'videos': videos_qs.count(),
+        'categories': Categories.objects.filter(live_feed_type=0).count(),
+        'categories_active': Categories.objects.filter(enabled=True, live_feed_type=0).count(),
+        'live_feed': Categories.objects.filter(live_feed_type__gt=0).count(),
+        'live_feed_active': Categories.objects.filter(enabled=True, live_feed_type__gt=0).count(),
+        'topics': Topics.objects.count(),
+    })
+
+
+class VideosAdmin(ModelAdmin):
     class VideoAdminForm(forms.ModelForm):
         class Meta:
             model = Videos
@@ -146,6 +184,8 @@ class VideosAdmin(admin.ModelAdmin):
     ordering = ['-id']
     show_full_result_count = False
     search_fields = ['title', 'source']
+    list_filter = ['publisher', 'timestamp']
+    list_filter_submit = True
     readonly_fields = [
         'id', 'title', 'videourl', 'source', 'publisher',
         'timestamp', 'score', 'thumbnailurl',
@@ -154,7 +194,7 @@ class VideosAdmin(admin.ModelAdmin):
     fieldsets = (
         ('Add Video', {
             'fields': ('youtube_url_input',),
-            'description': 'Paste a YouTube URL to auto-fetch video details.',
+            'description': 'Paste a YouTube Shorts URL to auto-fetch video details.',
         }),
         ('Video Details', {
             'fields': ('title', 'videourl', 'source', 'publisher', 'timestamp', 'score'),
@@ -165,7 +205,9 @@ class VideosAdmin(admin.ModelAdmin):
     )
 
     class Media:
-        css = {'all': ('admin/css/videos.css',)}
+        css = {
+            'all': ('admin/css/forms.css', 'admin/css/videos.css')
+        }
         js = ('admin/js/videos.js',)
 
     def get_readonly_fields(self, request, obj=None):
@@ -194,7 +236,7 @@ class VideosAdmin(admin.ModelAdmin):
     def thumbnail_preview_small(self, obj):
         if obj.thumbnailurl:
             return format_html(
-                '<img src="{}" style="height:40px;border-radius:4px;" />',
+                '<img src="{}" class="h-10 rounded object-cover" />',
                 obj.thumbnailurl,
             )
         return '-'
@@ -203,8 +245,7 @@ class VideosAdmin(admin.ModelAdmin):
     def thumbnail_preview(self, obj):
         if obj.thumbnailurl:
             return format_html(
-                '<img src="{}" style="max-width:480px;border-radius:8px;'
-                'box-shadow:0 2px 8px rgba(0,0,0,.15);" />',
+                '<img src="{}" class="max-w-md rounded-lg shadow-lg" />',
                 obj.thumbnailurl,
             )
         return '-'
@@ -212,15 +253,18 @@ class VideosAdmin(admin.ModelAdmin):
 
     def youtube_url_input(self, obj):
         return format_html(
-            '<input type="text" id="youtube-url-input" '
-            'placeholder="Paste Shorts URL (e.g. https://www.youtube.com/shorts/abc123def45)" '
-            'style="width:100%;max-width:600px;padding:10px;font-size:14px;'
-            'border:2px solid #ccc;border-radius:6px;" />'
-            '<button type="button" id="fetch-youtube-btn" '
-            'style="margin-left:10px;padding:10px 24px;font-size:14px;'
-            'background:#417690;color:#fff;border:none;border-radius:6px;'
-            'cursor:pointer;">Fetch & Save</button>'
-            '<div id="youtube-fetch-status" style="margin-top:10px;"></div>'
+            '''<div class="flex flex-col gap-3">
+                <div class="flex flex-col sm:flex-row gap-3">
+                    <input type="text" id="youtube-url-input" 
+                        placeholder="https://www.youtube.com/shorts/abc123def45"
+                        class="flex-1 px-4 py-2.5 text-sm border border-base-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 dark:bg-base-800 dark:border-base-700 dark:text-white" />
+                    <button type="button" id="fetch-youtube-btn" 
+                        class="px-6 py-2.5 text-sm font-medium bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors cursor-pointer">
+                        Fetch &amp; Save
+                    </button>
+                </div>
+                <div id="youtube-fetch-status"></div>
+            </div>'''
         )
     youtube_url_input.short_description = 'YouTube URL'
 
@@ -230,7 +274,7 @@ class VideosAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         return True
 
-class VideopublishersAdmin(admin.ModelAdmin):
+class VideopublishersAdmin(ModelAdmin):
     list_display = ['id', 'title', 'url', 'platform', 'icon_preview']
     list_per_page = 25
     search_fields = ['title', 'url']
@@ -309,30 +353,42 @@ admin.site.register(Videos, VideosAdmin)
 admin.site.register(Videopublishers, VideopublishersAdmin)
 
 
-class NewsAdmin(admin.ModelAdmin):
+class NewsAdmin(ModelAdmin):
     list_display = ['id', 'title', 'source', 'timestamp', 'score']
     list_per_page = 25
     search_fields = ['title', 'source', 'summary']
     list_filter = ['timestamp']
+    list_filter_submit = True
+    ordering = ['-timestamp']
+    readonly_fields = ['id']
+    fieldsets = (
+        (None, {
+            'fields': ('title', 'source', 'summary'),
+        }),
+        ('Metadata', {
+            'fields': ('timestamp', 'score'),
+            'classes': ('collapse',),
+        }),
+    )
 
 
 admin.site.register(News, NewsAdmin)
 
 
-class CategoriesAdmin(admin.ModelAdmin):
+class CategoriesAdmin(ModelAdmin):
     list_display = ['id', 'name', 'enabled', 'order', 'live_feed_type', 'live_feed_badge']
     list_editable = ['enabled', 'order', 'live_feed_type']
     list_per_page = 50
     search_fields = ['name']
     list_filter = ['enabled', 'live_feed_type']
+    list_filter_submit = True
     ordering = ['order', 'id']
 
     def live_feed_badge(self, obj):
         lft = getattr(obj, 'live_feed_type', 0) or 0
         if lft > 0:
             return format_html(
-                '<span style="background:#28a745;color:#fff;padding:2px 8px;'
-                'border-radius:4px;font-size:11px;">LIVE {}</span>',
+                '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">LIVE {}</span>',
                 lft
             )
         return '-'
@@ -340,6 +396,25 @@ class CategoriesAdmin(admin.ModelAdmin):
 
 
 admin.site.register(Categories, CategoriesAdmin)
+
+
+for model in (User, Group):
+    try:
+        admin.site.unregister(model)
+    except admin.sites.NotRegistered:
+        pass
+
+
+@admin.register(User)
+class UserAdmin(BaseUserAdmin, ModelAdmin):
+    form = UserChangeForm
+    add_form = UserCreationForm
+    change_password_form = AdminPasswordChangeForm
+
+
+@admin.register(Group)
+class GroupAdmin(BaseGroupAdmin, ModelAdmin):
+    pass
 
 
 _original_get_urls = admin.AdminSite.get_urls
@@ -500,6 +575,7 @@ def _patched_get_urls(self):
         path('cache-dashboard/metadata/stats/', self.admin_view(metadata_stats_json), name='cache_dashboard_metadata_stats'),
         path('cache-dashboard/metadata/flush/', self.admin_view(metadata_flush_json), name='cache_dashboard_metadata_flush'),
         path('cache-dashboard/metadata/rebuild/', self.admin_view(metadata_rebuild_json), name='cache_dashboard_metadata_rebuild'),
+        path('dashboard/content-stats/', self.admin_view(content_stats_json), name='dashboard_content_stats'),
         path('cf-analytics/', self.admin_view(cf_analytics_view), name='cf_analytics'),
         path('cf-analytics/data/', self.admin_view(cf_analytics_data_json), name='cf_analytics_data'),
         path('live-feed/', self.admin_view(live_feed_dashboard_view), name='live_feed_dashboard'),
@@ -520,7 +596,7 @@ for model in AUTOREGISTER_MODELS:
     try:
         admin_class = type(
             f'{model.__name__}Admin',
-            (admin.ModelAdmin,),
+            (ModelAdmin,),
             {
                 'list_display': [f.name for f in model._meta.fields[:6]],
                 'search_fields': [
