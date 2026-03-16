@@ -9,26 +9,159 @@ const TOKEN_EXPIRY = 7200;
 const X_CACHE_WORKER = "0";
 const X_CACHE_CDN = "1";
 const X_CACHE_ORIGIN = "2";
-const LIVE_FEED_HUB_NAME = "hub-apac";
-const LIVE_FEED_LOCATION_HINT = "apac";
+const LIVE_FEED_DEFAULT_ADMIN_HUB = "europe";
+const LIVE_FEED_HUBS = {
+  apac: { name: "hub-v3-apac", locationHint: "apac" },
+  europe: { name: "hub-v4-europe", locationHint: "weur" },
+  "middle-east": { name: "hub-v3-middle-east", locationHint: "me" },
+  americas: { name: "hub-v3-americas", locationHint: "wnam" },
+};
+
+const LIVE_FEED_HUB_ALIASES = {
+  apac: "apac",
+  asia: "apac",
+  australia: "apac",
+  oceania: "apac",
+  eu: "europe",
+  europe: "europe",
+  weu: "europe",
+  "west-europe": "europe",
+  "eu-west": "europe",
+  "middle-east": "middle-east",
+  middleeast: "middle-east",
+  me: "middle-east",
+  gulf: "middle-east",
+  americas: "americas",
+  america: "americas",
+  "west-america": "americas",
+  "usa-canada": "americas",
+  us: "americas",
+  usa: "americas",
+  canada: "americas",
+  na: "americas",
+  sam: "americas",
+};
+
+const LIVE_FEED_APAC_COUNTRIES = new Set([
+  "AF",
+  "AU",
+  "BD",
+  "BN",
+  "BT",
+  "CN",
+  "FJ",
+  "HK",
+  "ID",
+  "IN",
+  "JP",
+  "KH",
+  "KP",
+  "KR",
+  "KZ",
+  "LA",
+  "LK",
+  "MM",
+  "MN",
+  "MO",
+  "MV",
+  "MY",
+  "NP",
+  "NZ",
+  "PG",
+  "PH",
+  "PK",
+  "SB",
+  "SG",
+  "TH",
+  "TJ",
+  "TL",
+  "TM",
+  "TW",
+  "UZ",
+  "VN",
+  "VU",
+]);
+
+const LIVE_FEED_MIDDLE_EAST_COUNTRIES = new Set([
+  "AE",
+  "BH",
+  "CY",
+  "EG",
+  "IL",
+  "IQ",
+  "IR",
+  "JO",
+  "KW",
+  "LB",
+  "OM",
+  "PS",
+  "QA",
+  "SA",
+  "SY",
+  "TR",
+  "YE",
+]);
+
+const LIVE_FEED_EUROPE_COUNTRIES = new Set([
+  "AD",
+  "AL",
+  "AM",
+  "AT",
+  "AZ",
+  "BA",
+  "BE",
+  "BG",
+  "BY",
+  "CH",
+  "CZ",
+  "DE",
+  "DK",
+  "EE",
+  "ES",
+  "FI",
+  "FO",
+  "FR",
+  "GB",
+  "GE",
+  "GG",
+  "GI",
+  "GR",
+  "HR",
+  "HU",
+  "IE",
+  "IM",
+  "IS",
+  "IT",
+  "JE",
+  "LI",
+  "LT",
+  "LU",
+  "LV",
+  "MC",
+  "MD",
+  "ME",
+  "MK",
+  "MT",
+  "NL",
+  "NO",
+  "PL",
+  "PT",
+  "RO",
+  "RS",
+  "RU",
+  "SE",
+  "SI",
+  "SK",
+  "SM",
+  "UA",
+  "VA",
+  "XK",
+]);
 
 const _counts = { WORKER: 0, CDN: 0, ORIGIN: 0 };
 let _lastFlush = Date.now();
 const ANALYTICS_FLUSH_INTERVAL = 60_000;
 
-function parseIntSafe(value, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(max, Math.max(min, parsed));
-}
-
-function parseRequiredEnvInt(name, envValue, min = 1) {
-  const parsed = Number.parseInt(envValue ?? "", 10);
-  if (!Number.isInteger(parsed) || parsed < min) {
-    throw new Error(`${name} must be configured as an integer >= ${min}`);
-  }
-  return parsed;
-}
 
 function normalizePath(pathname) {
   const normalized = pathname.replace(/\/+$/, "");
@@ -302,22 +435,144 @@ async function handleWarm(request, env) {
   return corsJSON({ warmed: ok, total: WARM_ENDPOINTS.length, results }, 200, env);
 }
 
-function getLiveFeedStub(env) {
+function resolveLiveFeedHubKey(value) {
+  if (!value) return null;
+  const key = String(value).trim().toLowerCase();
+  if (!key) return null;
+  const mapped = LIVE_FEED_HUB_ALIASES[key] || key;
+  return LIVE_FEED_HUBS[mapped] ? mapped : null;
+}
+
+function getCountryCode(request) {
+  const cfCountry = typeof request?.cf?.country === "string" ? request.cf.country : "";
+  const headerCountry = request.headers.get("CF-IPCountry") || "";
+  const code = (cfCountry || headerCountry).trim().toUpperCase();
+  return code.length === 2 ? code : "";
+}
+
+function getAutoUserHubByCountry(countryCode) {
+  if (LIVE_FEED_APAC_COUNTRIES.has(countryCode)) return "apac";
+  if (LIVE_FEED_MIDDLE_EAST_COUNTRIES.has(countryCode)) return "middle-east";
+  if (LIVE_FEED_EUROPE_COUNTRIES.has(countryCode)) return "europe";
+
+  return "americas";
+}
+
+function resolveUserHub(request) {
+  const url = new URL(request.url);
+  const explicitHub =
+    resolveLiveFeedHubKey(url.searchParams.get("hub")) ||
+    resolveLiveFeedHubKey(request.headers.get("X-Live-Feed-Hub"));
+  if (explicitHub) return explicitHub;
+  return getAutoUserHubByCountry(getCountryCode(request));
+}
+
+function resolveAdminHub(request) {
+  return resolveLiveFeedHubKey(request.headers.get("X-Live-Feed-Hub")) || LIVE_FEED_DEFAULT_ADMIN_HUB;
+}
+
+function getLiveFeedStub(env, hubKey) {
   const namespace = env.GLIMPSE_LIVE_FEED;
   if (!namespace) {
     throw new Error("GLIMPSE_LIVE_FEED binding is missing");
   }
-  const id = namespace.idFromName(LIVE_FEED_HUB_NAME);
-  return namespace.get(id, { locationHint: LIVE_FEED_LOCATION_HINT });
+  const hub = LIVE_FEED_HUBS[hubKey];
+  if (!hub) {
+    throw new Error(`Unsupported hub: ${hubKey}`);
+  }
+  const id = namespace.idFromName(hub.name);
+  return namespace.get(id, { locationHint: hub.locationHint });
 }
 
-async function requireBearerJWT(request, env) {
-  const authHeader = request.headers.get("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return corsJSON({ error: "Authorization: Bearer <token> required" }, 401, env);
+function requireWebSocketUpgrade(request, env) {
+  if (request.method !== "GET") {
+    return corsJSON({ error: "GET required" }, 405, env);
+  }
+  const upgrade = request.headers.get("Upgrade") || "";
+  if (upgrade.toLowerCase() !== "websocket") {
+    return corsJSON({ error: "WebSocket upgrade required" }, 426, env);
+  }
+  return null;
+}
+
+function parsePositiveInt(value) {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function validateSnapshotShape(snapshot) {
+  if (!isPlainObject(snapshot)) return "snapshot must be a JSON object";
+  if (snapshot.type !== "snapshot") return "snapshot.type must be 'snapshot'";
+  if (!isPlainObject(snapshot.category)) return "snapshot.category must be an object";
+
+  const entries = Object.entries(snapshot.category);
+  if (entries.length === 0) return "snapshot.category must contain at least one category id";
+
+  for (const [categoryId, rawItems] of entries) {
+    if (!parsePositiveInt(categoryId)) return "snapshot.category keys must be positive integer ids";
+
+    const items = Array.isArray(rawItems) ? rawItems : [rawItems];
+    if (items.length === 0) return `snapshot.category.${categoryId} must contain at least one item`;
+
+    for (const item of items) {
+      if (!isPlainObject(item)) return `snapshot.category.${categoryId} items must be objects`;
+      if (!parsePositiveInt(item.seq_id)) return `snapshot.category.${categoryId} item.seq_id must be a positive integer`;
+      if (typeof item.title !== "string" || !item.title.trim()) {
+        return `snapshot.category.${categoryId} item.title is required`;
+      }
+    }
   }
 
-  const authResult = await verifyToken(authHeader.slice(7), env);
+  return null;
+}
+
+function validatePublishItemShape(item) {
+  if (!isPlainObject(item)) return "item must be a JSON object";
+  if (item.type !== "message") return "item.type must be 'message'";
+  if (!parsePositiveInt(item.category_id)) return "item.category_id must be a positive integer";
+  if (!parsePositiveInt(item.sequence_id)) return "item.sequence_id must be a positive integer";
+  if (typeof item.title !== "string" || !item.title.trim()) return "item.title is required";
+  return null;
+}
+function getUserJWT(request) {
+  const authHeader = request.headers.get("Authorization") || "";
+  if (!authHeader.startsWith("Bearer ")) return "";
+  return authHeader.slice(7).trim();
+}
+
+function secureStringEquals(a, b) {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  const aBytes = new TextEncoder().encode(a);
+  const bBytes = new TextEncoder().encode(b);
+  if (aBytes.length !== bBytes.length) return false;
+  let diff = 0;
+  for (let i = 0; i < aBytes.length; i++) {
+    diff |= aBytes[i] ^ bBytes[i];
+  }
+  return diff === 0;
+}
+
+function getAdminToken(request) {
+  const authHeader = request.headers.get("Authorization") || "";
+  if (!authHeader.startsWith("Token ")) return "";
+  return authHeader.slice(6).trim();
+}
+
+async function requireUserSocketAuth(request, env) {
+  const token = getUserJWT(request);
+  if (!token) {
+    return corsJSON({ error: "Authorization: Bearer <jwt> required" }, 401, env);
+  }
+
+  const authResult = await verifyToken(token, env);
   if (!authResult.valid) {
     return corsJSON({ error: authResult.error }, 401, env);
   }
@@ -325,160 +580,63 @@ async function requireBearerJWT(request, env) {
   return null;
 }
 
+async function requireAdminSocketAuth(request, env) {
+  const required = env.DRF_TOKEN || "";
+  if (!required) {
+    return corsJSON({ error: "DRF_TOKEN is missing" }, 503, env);
+  }
+
+  const incoming = getAdminToken(request);
+  if (!incoming) {
+    return corsJSON({ error: "Authorization: Token <drf_token> required" }, 401, env);
+  }
+  if (!secureStringEquals(incoming, required)) {
+    return corsJSON({ error: "Forbidden" }, 403, env);
+  }
+
+  return null;
+}
+async function proxySocketToHub(request, env, role, hubKey) {
+  const headers = new Headers(request.headers);
+  headers.set("X-Live-Feed-Hub", hubKey);
+  headers.set("X-Live-Feed-Role", role);
+
+  const url = new URL("https://live-feed/connect");
+  url.searchParams.set("hub", hubKey);
+  url.searchParams.set("role", role);
+
+  const stub = getLiveFeedStub(env, hubKey);
+  return stub.fetch(
+    new Request(url.toString(), {
+      method: "GET",
+      headers,
+    })
+  );
+}
+
 async function handleLiveFeedSocket(request, env) {
-  if (request.method !== "GET") {
-    return corsJSON({ error: "GET required" }, 405, env);
-  }
+  const wsError = requireWebSocketUpgrade(request, env);
+  if (wsError) return wsError;
 
-  const upgrade = request.headers.get("Upgrade") || "";
-  if (upgrade.toLowerCase() !== "websocket") {
-    return corsJSON({ error: "WebSocket upgrade required" }, 426, env);
-  }
-
-  const authHeader = request.headers.get("Authorization") || "";
-  let token = "";
-  if (authHeader.startsWith("Bearer ")) {
-    token = authHeader.slice(7);
-  } else {
-    const url = new URL(request.url);
-    token = (url.searchParams.get("token") || "").trim();
-  }
-  if (!token) {
-    return corsJSON({ error: "Authorization token is required" }, 401, env);
-  }
-  const authResult = await verifyToken(token, env);
-  if (!authResult.valid) {
-    return corsJSON({ error: authResult.error }, 401, env);
-  }
+  const authError = await requireUserSocketAuth(request, env);
+  if (authError) return authError;
 
   try {
-    const stub = getLiveFeedStub(env);
-    const doRequest = new Request("https://live-feed/connect", {
-      method: "GET",
-      headers: request.headers,
-    });
-    return stub.fetch(doRequest);
+    return await proxySocketToHub(request, env, "user", resolveUserHub(request));
   } catch (error) {
     return corsJSON({ error: `Live feed unavailable: ${error.message}` }, 503, env);
   }
 }
 
-async function handleLiveFeedPublish(request, env) {
-  if (request.method !== "POST") {
-    return corsJSON({ error: "POST required" }, 405, env);
-  }
-  const jwtError = await requireBearerJWT(request, env);
-  if (jwtError) return jwtError;
+async function handleAdminLiveFeedSocket(request, env) {
+  const wsError = requireWebSocketUpgrade(request, env);
+  if (wsError) return wsError;
 
-  const rawBody = await request.text();
-  try {
-    const stub = getLiveFeedStub(env);
-    const response = await stub.fetch("https://live-feed/admin/publish", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: rawBody,
-    });
-    return addCORS(response, env);
-  } catch (error) {
-    return corsJSON({ error: `Live feed unavailable: ${error.message}` }, 503, env);
-  }
-}
-
-async function handleLiveFeedPurgeCategory(request, env) {
-  if (request.method !== "POST") {
-    return corsJSON({ error: "POST required" }, 405, env);
-  }
-  const jwtError = await requireBearerJWT(request, env);
-  if (jwtError) return jwtError;
-
-  const rawBody = await request.text();
-  try {
-    const stub = getLiveFeedStub(env);
-    const response = await stub.fetch("https://live-feed/admin/purge-category", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: rawBody,
-    });
-    return addCORS(response, env);
-  } catch (error) {
-    return corsJSON({ error: `Live feed unavailable: ${error.message}` }, 503, env);
-  }
-}
-
-async function handleLiveFeedCategoryList(request, env) {
-  if (request.method !== "GET") {
-    return corsJSON({ error: "GET required" }, 405, env);
-  }
-  const jwtError = await requireBearerJWT(request, env);
-  if (jwtError) return jwtError;
+  const authError = await requireAdminSocketAuth(request, env);
+  if (authError) return authError;
 
   try {
-    const stub = getLiveFeedStub(env);
-    const response = await stub.fetch("https://live-feed/admin/categories/list", {
-      method: "GET",
-    });
-    return addCORS(response, env);
-  } catch (error) {
-    return corsJSON({ error: `Live feed unavailable: ${error.message}` }, 503, env);
-  }
-}
-
-async function handleLiveFeedCategoryUpsert(request, env) {
-  if (request.method !== "POST") {
-    return corsJSON({ error: "POST required" }, 405, env);
-  }
-  const jwtError = await requireBearerJWT(request, env);
-  if (jwtError) return jwtError;
-
-  const rawBody = await request.text();
-  try {
-    const stub = getLiveFeedStub(env);
-    const response = await stub.fetch("https://live-feed/admin/categories/upsert", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: rawBody,
-    });
-    return addCORS(response, env);
-  } catch (error) {
-    return corsJSON({ error: `Live feed unavailable: ${error.message}` }, 503, env);
-  }
-}
-
-async function handleLiveFeedCategoryDelete(request, env) {
-  if (request.method !== "POST") {
-    return corsJSON({ error: "POST required" }, 405, env);
-  }
-  const jwtError = await requireBearerJWT(request, env);
-  if (jwtError) return jwtError;
-
-  const rawBody = await request.text();
-  try {
-    const stub = getLiveFeedStub(env);
-    const response = await stub.fetch("https://live-feed/admin/categories/delete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: rawBody,
-    });
-    return addCORS(response, env);
-  } catch (error) {
-    return corsJSON({ error: `Live feed unavailable: ${error.message}` }, 503, env);
-  }
-}
-
-async function handleLiveFeedItemsList(request, env) {
-  if (request.method !== "GET") {
-    return corsJSON({ error: "GET required" }, 405, env);
-  }
-  const jwtError = await requireBearerJWT(request, env);
-  if (jwtError) return jwtError;
-
-  const url = new URL(request.url);
-  try {
-    const stub = getLiveFeedStub(env);
-    const response = await stub.fetch(`https://live-feed/admin/items/list${url.search}`, {
-      method: "GET",
-    });
-    return addCORS(response, env);
+    return await proxySocketToHub(request, env, "admin", resolveAdminHub(request));
   } catch (error) {
     return corsJSON({ error: `Live feed unavailable: ${error.message}` }, 503, env);
   }
@@ -491,558 +649,278 @@ function doJSON(data, status = 200) {
   });
 }
 
-export class LiveFeedHubv2 {
-  constructor(state, env) {
+export class LiveFeedRegionalHubV3 {
+  constructor(state) {
     this.state = state;
-    this.env = env;
     this.sql = state.storage.sql;
     this._initialized = false;
+    this.hub = null;
   }
 
-  async ensureInitialized() {
-    if (this._initialized) return;
+  async ensureInitialized(hubKey = null) {
+    const normalizedHub = resolveLiveFeedHubKey(hubKey) || null;
+
+    if (this._initialized) {
+      if (!this.hub && normalizedHub) this.hub = normalizedHub;
+      if (!this.hub) this.hub = LIVE_FEED_DEFAULT_ADMIN_HUB;
+      if (normalizedHub && this.hub !== normalizedHub) {
+        throw new Error("Hub mismatch");
+      }
+      return;
+    }
 
     await this.state.blockConcurrencyWhile(async () => {
       if (this._initialized) return;
 
       this.sql.exec(`
-        CREATE TABLE IF NOT EXISTS items (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          seq INTEGER NOT NULL,
-          category_id INTEGER NOT NULL,
-          title TEXT NOT NULL,
-          ts TEXT NOT NULL,
-          impact INTEGER NOT NULL DEFAULT 0,
-          payload_json TEXT
-        )
-      `);
-      this.sql.exec(`
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_items_category_seq_unique
-        ON items(category_id, seq)
-      `);
-      this.sql.exec(`
-        CREATE INDEX IF NOT EXISTS idx_items_category_seq_desc
-        ON items(category_id, seq DESC)
-      `);
-      this.sql.exec(`
-        CREATE INDEX IF NOT EXISTS idx_items_category_ts_desc
-        ON items(category_id, ts DESC)
-      `);
-      this.sql.exec(`
-        CREATE TABLE IF NOT EXISTS categories (
-          category_id INTEGER PRIMARY KEY,
-          name TEXT NOT NULL,
-          enabled INTEGER NOT NULL DEFAULT 1,
-          live_feed_type INTEGER NOT NULL DEFAULT 0,
+        CREATE TABLE IF NOT EXISTS fanout_state (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          payload_json TEXT NOT NULL,
           updated_at TEXT NOT NULL
         )
       `);
-      this.sql.exec(`
-        CREATE INDEX IF NOT EXISTS idx_categories_live_enabled
-        ON categories(live_feed_type, enabled)
-      `);
+
+      const storedHubRaw = await this.state.storage.get("hub_key");
+      const storedHub = resolveLiveFeedHubKey(storedHubRaw);
+      const finalHub = storedHub || normalizedHub || LIVE_FEED_DEFAULT_ADMIN_HUB;
+
+      this.hub = finalHub;
+      if (!storedHub) {
+        await this.state.storage.put("hub_key", finalHub);
+      }
 
       this._initialized = true;
     });
-  }
 
-  getInitItems() {
-    return parseRequiredEnvInt("LIVE_FEED_INIT_ITEMS", this.env.LIVE_FEED_INIT_ITEMS, 1);
-  }
-
-  getMaxItemsPerCategory() {
-    return parseRequiredEnvInt(
-      "LIVE_FEED_MAX_ITEMS_PER_CATEGORY",
-      this.env.LIVE_FEED_MAX_ITEMS_PER_CATEGORY,
-      1
-    );
-  }
-
-  getMaxLoadOlder() {
-    return parseRequiredEnvInt("LIVE_FEED_MAX_LOAD_OLDER", this.env.LIVE_FEED_MAX_LOAD_OLDER, 1);
-  }
-
-  serializeItemRow(row) {
-    let payload = null;
-    if (row.payload_json) {
-      try {
-        payload = JSON.parse(row.payload_json);
-      } catch {
-        payload = null;
-      }
+    if (!this.hub) {
+      this.hub = normalizedHub || LIVE_FEED_DEFAULT_ADMIN_HUB;
     }
+
+    if (normalizedHub && this.hub !== normalizedHub) {
+      throw new Error("Hub mismatch");
+    }
+  }
+
+  getSocketRole(socket) {
+    if (this.state.getWebSockets("admin").includes(socket)) return "admin";
+    return "user";
+  }
+
+  getCounts() {
+    const liveUsers = this.state.getWebSockets("user").length;
+    const adminUsers = this.state.getWebSockets("admin").length;
     return {
-      seq: Number(row.seq),
-      category_id: Number(row.category_id),
-      title: row.title,
-      timestamp: row.ts,
-      impact: Number(row.impact || 0),
-      payload,
+      live_users: liveUsers,
+      admin_users: adminUsers,
     };
-  }
-
-  normalizeImpact(value) {
-    const impact = Number.parseInt(value, 10);
-    if (impact === 1 || impact === 2) return impact;
-    return 0;
-  }
-
-  normalizeTimestamp(value) {
-    if (!value) return new Date().toISOString();
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return new Date().toISOString();
-    return parsed.toISOString();
-  }
-
-  parseCategoryId(value) {
-    const categoryId = Number.parseInt(value, 10);
-    if (!Number.isInteger(categoryId) || categoryId <= 0) return null;
-    return categoryId;
-  }
-
-  parseBeforeSeq(value) {
-    const beforeSeq = Number.parseInt(value, 10);
-    if (!Number.isInteger(beforeSeq) || beforeSeq <= 0) return null;
-    return beforeSeq;
-  }
-
-  normalizeEnabled(value) {
-    if (typeof value === "boolean") return value ? 1 : 0;
-    const parsed = Number.parseInt(value, 10);
-    if (Number.isInteger(parsed)) return parsed === 0 ? 0 : 1;
-    return 1;
-  }
-
-  normalizeLiveFeedType(value) {
-    const parsed = Number.parseInt(value, 10);
-    if (!Number.isInteger(parsed) || parsed < 0) return 0;
-    return parsed;
-  }
-
-  getCategoryState(categoryId) {
-    const row = this.sql
-      .exec(
-        "SELECT category_id, name, enabled, live_feed_type FROM categories WHERE category_id = ?",
-        categoryId
-      )
-      .one();
-    if (!row) return null;
-    return {
-      category_id: Number(row.category_id),
-      name: row.name || "",
-      enabled: Number(row.enabled || 0) === 1,
-      live_feed_type: Number(row.live_feed_type || 0),
-    };
-  }
-
-  upsertCategory(data) {
-    const categoryId = this.parseCategoryId(data?.category_id);
-    if (!categoryId) {
-      return { ok: false, error: "category_id must be a positive integer", status: 400 };
-    }
-
-    const name = typeof data?.name === "string" ? data.name.trim() : "";
-    const enabled = this.normalizeEnabled(data?.enabled);
-    const liveFeedType = this.normalizeLiveFeedType(data?.live_feed_type);
-    const updatedAt = new Date().toISOString();
-
-    this.sql.exec(
-      `INSERT INTO categories (category_id, name, enabled, live_feed_type, updated_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(category_id) DO UPDATE SET
-         name = excluded.name,
-         enabled = excluded.enabled,
-         live_feed_type = excluded.live_feed_type,
-         updated_at = excluded.updated_at`,
-      categoryId,
-      name,
-      enabled,
-      liveFeedType,
-      updatedAt
-    );
-
-    return {
-      ok: true,
-      category: {
-        category_id: categoryId,
-        name,
-        enabled: enabled === 1,
-        live_feed_type: liveFeedType,
-      },
-    };
-  }
-
-  deleteCategory(categoryId) {
-    this.sql.exec("DELETE FROM categories WHERE category_id = ?", categoryId);
-    const catChanges = this.sql.exec("SELECT changes() AS total").one();
-    this.sql.exec("DELETE FROM items WHERE category_id = ?", categoryId);
-    const itemChanges = this.sql.exec("SELECT changes() AS total").one();
-    return {
-      category_deleted: Number(catChanges?.total || 0),
-      items_deleted: Number(itemChanges?.total || 0),
-    };
-  }
-
-  listCategories() {
-    const rows = this.sql
-      .exec(
-        "SELECT category_id, name, enabled, live_feed_type, updated_at FROM categories ORDER BY category_id ASC"
-      )
-      .toArray();
-    return rows.map((row) => ({
-      category_id: Number(row.category_id),
-      name: row.name || "",
-      enabled: Number(row.enabled || 0) === 1,
-      live_feed_type: Number(row.live_feed_type || 0),
-      updated_at: row.updated_at || "",
-    }));
-  }
-
-  getLatestItemsByCategory(limit) {
-    // Get enabled live-feed categories with their full info (for admin)
-    const categoryRows = this.sql
-      .exec(
-        "SELECT category_id, name, enabled, live_feed_type FROM categories WHERE live_feed_type != 0 AND enabled = 1 ORDER BY category_id ASC"
-      )
-      .toArray();
-    const categories = [];
-
-    for (const row of categoryRows) {
-      const categoryId = Number(row.category_id);
-      const itemRows = this.sql
-        .exec(
-          "SELECT seq, category_id, title, ts, impact, payload_json FROM items WHERE category_id = ? ORDER BY seq DESC LIMIT ?",
-          categoryId,
-          limit
-        )
-        .toArray();
-      const items = itemRows
-        .map((item) => this.serializeItemRow(item))
-        .reverse();
-      categories.push({
-        category_id: categoryId,
-        name: row.name || "",
-        enabled: Number(row.enabled || 0) === 1,
-        live_feed_type: Number(row.live_feed_type || 0),
-        items
-      });
-    }
-
-    return categories;
-  }
-
-  getOlderItems(categoryId, beforeSeq, limit) {
-    const rows = this.sql
-      .exec(
-        "SELECT seq, category_id, title, ts, impact, payload_json FROM items WHERE category_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?",
-        categoryId,
-        beforeSeq,
-        limit
-      )
-      .toArray();
-    return rows
-      .map((row) => this.serializeItemRow(row))
-      .reverse();
-  }
-
-  listItems(categoryId, limit) {
-    const rows = this.sql
-      .exec(
-        "SELECT seq, category_id, title, ts, impact, payload_json FROM items WHERE category_id = ? ORDER BY seq DESC LIMIT ?",
-        categoryId,
-        limit
-      )
-      .toArray();
-    return rows.map((row) => this.serializeItemRow(row));
-  }
-
-  pruneCategory(categoryId) {
-    const maxItems = this.getMaxItemsPerCategory();
-    const countRow = this.sql
-      .exec("SELECT COUNT(*) AS total FROM items WHERE category_id = ?", categoryId)
-      .one();
-    const total = Number(countRow?.total || 0);
-    const excess = total - maxItems;
-    if (excess <= 0) return;
-
-    this.sql.exec(
-      "DELETE FROM items WHERE id IN (SELECT id FROM items WHERE category_id = ? ORDER BY seq ASC LIMIT ?)",
-      categoryId,
-      excess
-    );
-  }
-
-  publishItem(data) {
-    const categoryId = this.parseCategoryId(data?.category_id);
-    if (!categoryId) {
-      return { ok: false, error: "category_id must be a positive integer", status: 400 };
-    }
-    const category = this.getCategoryState(categoryId);
-    if (!category) {
-      return { ok: false, error: "Category not found in live-feed DO state", status: 404 };
-    }
-    if (!category.enabled || category.live_feed_type === 0) {
-      return { ok: false, error: "Category is disabled for live feed", status: 400 };
-    }
-
-    const title = typeof data?.title === "string" ? data.title.trim() : "";
-    if (!title) {
-      return { ok: false, error: "title is required", status: 400 };
-    }
-
-    const impact = this.normalizeImpact(data?.impact);
-    const timestamp = this.normalizeTimestamp(data?.timestamp);
-    const payload =
-      data?.payload && typeof data.payload === "object" && !Array.isArray(data.payload)
-        ? data.payload
-        : null;
-
-    const seqRow = this.sql
-      .exec(
-        "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM items WHERE category_id = ?",
-        categoryId
-      )
-      .one();
-    const nextSeq = Number(seqRow?.next_seq || 1);
-
-    this.sql.exec(
-      "INSERT INTO items (seq, category_id, title, ts, impact, payload_json) VALUES (?, ?, ?, ?, ?, ?)",
-      nextSeq,
-      categoryId,
-      title,
-      timestamp,
-      impact,
-      payload ? JSON.stringify(payload) : null
-    );
-
-    this.pruneCategory(categoryId);
-
-    const item = {
-      seq: nextSeq,
-      category_id: categoryId,
-      title,
-      timestamp,
-      impact,
-      payload,
-    };
-    this.broadcast({ type: "item", item });
-    return { ok: true, item };
   }
 
   sendJSON(socket, payload) {
     try {
       socket.send(JSON.stringify(payload));
     } catch {
-      // socket might already be closed.
+      return;
     }
   }
 
-  sendBootstrap(socket) {
-    const categories = this.getLatestItemsByCategory(this.getInitItems());
+  readFanout() {
+    const row = this.sql.exec("SELECT payload_json FROM fanout_state WHERE id = 1").one();
+    if (!row || !row.payload_json) return null;
+
+    try {
+      return JSON.parse(row.payload_json);
+    } catch {
+      return null;
+    }
+  }
+
+  writeFanout(data) {
+    const payloadJson = JSON.stringify(data);
+    this.sql.exec(
+      `INSERT INTO fanout_state (id, payload_json, updated_at)
+       VALUES (1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         payload_json = excluded.payload_json,
+         updated_at = excluded.updated_at`,
+      payloadJson,
+      new Date().toISOString()
+    );
+  }
+
+  sendConnected(socket) {
+    const payload = {
+      type: "connected",
+      snapshot: this.readFanout(),
+    };
+    if (this.getSocketRole(socket) === "admin") {
+      Object.assign(payload, {
+        hub: this.hub,
+        ...this.getCounts(),
+      });
+    }
+    this.sendJSON(socket, payload);
+  }
+
+  sendHubUsers(socket) {
     this.sendJSON(socket, {
-      type: "bootstrap",
-      categories,
-      live_users: this.state.getWebSockets().length,
-      server_time: new Date().toISOString(),
+      type: "hub_users",
+      hub: this.hub,
+      ...this.getCounts(),
     });
   }
 
-  broadcast(payload) {
+  broadcastPayload(payload) {
+    const message = JSON.stringify(payload);
     const sockets = this.state.getWebSockets();
-    const message = JSON.stringify({ ...payload, live_users: sockets.length });
-    let sent = 0;
     for (const socket of sockets) {
       try {
         socket.send(message);
-        sent++;
       } catch {
         try {
           socket.close(1011, "Send failed");
         } catch {
-          // best effort close.
+          continue;
         }
       }
     }
   }
 
-  async fetch(request) {
-    await this.ensureInitialized();
+  readTextMessage(message) {
+    if (typeof message === "string") return message;
+    if (message instanceof ArrayBuffer) {
+      return new TextDecoder().decode(message);
+    }
+    if (ArrayBuffer.isView(message)) {
+      const view = new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
+      return new TextDecoder().decode(view);
+    }
+    return String(message ?? "");
+  }
 
+  async fetch(request) {
     const url = new URL(request.url);
     const path = normalizePath(url.pathname);
 
-    // WebSocket connect
-    if (path === "/connect") {
-      if (request.method !== "GET") {
-        return doJSON({ error: "GET required" }, 405);
-      }
-      const upgrade = request.headers.get("Upgrade") || "";
-      if (upgrade.toLowerCase() !== "websocket") {
-        return doJSON({ error: "WebSocket upgrade required" }, 426);
-      }
-
-      const pair = new WebSocketPair();
-      const [client, server] = Object.values(pair);
-      this.state.acceptWebSocket(server);
-      this.sendJSON(server, { type: "connected" });
-      this.sendBootstrap(server);
-      return new Response(null, { status: 101, webSocket: client });
+    if (path !== "/connect") {
+      return doJSON({ error: "Not found" }, 404);
     }
 
-    if (path === "/admin/publish") {
-      if (request.method !== "POST") {
-        return doJSON({ error: "POST required" }, 405);
-      }
-
-      let data = null;
-      try {
-        data = await request.json();
-      } catch {
-        return doJSON({ error: "Invalid JSON body" }, 400);
-      }
-
-      const result = this.publishItem(data);
-      if (!result.ok) {
-        return doJSON({ error: result.error }, result.status);
-      }
-      return doJSON(result.item, 201);
+    if (request.method !== "GET") {
+      return doJSON({ error: "GET required" }, 405);
     }
 
-    if (path === "/admin/purge-category") {
-      if (request.method !== "POST") {
-        return doJSON({ error: "POST required" }, 405);
-      }
-
-      let data = null;
-      try {
-        data = await request.json();
-      } catch {
-        return doJSON({ error: "Invalid JSON body" }, 400);
-      }
-
-      const categoryId = this.parseCategoryId(data?.category_id);
-      if (!categoryId) {
-        return doJSON({ error: "category_id must be a positive integer" }, 400);
-      }
-
-      this.sql.exec("DELETE FROM items WHERE category_id = ?", categoryId);
-      const changed = this.sql.exec("SELECT changes() AS total").one();
-      return doJSON({ category_id: categoryId, deleted: Number(changed?.total || 0) }, 200);
+    const upgrade = request.headers.get("Upgrade") || "";
+    if (upgrade.toLowerCase() !== "websocket") {
+      return doJSON({ error: "WebSocket upgrade required" }, 426);
     }
 
-    if (path === "/admin/categories/list") {
-      if (request.method !== "GET") {
-        return doJSON({ error: "GET required" }, 405);
-      }
-      return doJSON({ categories: this.listCategories() }, 200);
-    }
+    const role = (url.searchParams.get("role") || "user").toLowerCase() === "admin" ? "admin" : "user";
+    const hubKey =
+      resolveLiveFeedHubKey(url.searchParams.get("hub")) ||
+      resolveLiveFeedHubKey(request.headers.get("X-Live-Feed-Hub")) ||
+      LIVE_FEED_DEFAULT_ADMIN_HUB;
 
-    if (path === "/admin/categories/upsert") {
-      if (request.method !== "POST") {
-        return doJSON({ error: "POST required" }, 405);
-      }
-      let data = null;
-      try {
-        data = await request.json();
-      } catch {
-        return doJSON({ error: "Invalid JSON body" }, 400);
-      }
-      const result = this.upsertCategory(data);
-      if (!result.ok) {
-        return doJSON({ error: result.error }, result.status);
-      }
-      return doJSON(result.category, 200);
-    }
+    await this.ensureInitialized(hubKey);
 
-    if (path === "/admin/categories/delete") {
-      if (request.method !== "POST") {
-        return doJSON({ error: "POST required" }, 405);
-      }
-      let data = null;
-      try {
-        data = await request.json();
-      } catch {
-        return doJSON({ error: "Invalid JSON body" }, 400);
-      }
-      const categoryId = this.parseCategoryId(data?.category_id);
-      if (!categoryId) {
-        return doJSON({ error: "category_id must be a positive integer" }, 400);
-      }
-      const deleted = this.deleteCategory(categoryId);
-      return doJSON({ category_id: categoryId, ...deleted }, 200);
-    }
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
 
-    if (path === "/admin/items/list") {
-      if (request.method !== "GET") {
-        return doJSON({ error: "GET required" }, 405);
-      }
-      const categoryId = this.parseCategoryId(url.searchParams.get("category_id"));
-      if (!categoryId) {
-        return doJSON({ error: "category_id is required" }, 400);
-      }
-      const limit = parseIntSafe(url.searchParams.get("limit"), this.getInitItems(), 1, this.getMaxItemsPerCategory());
-      return doJSON({ category_id: categoryId, items: this.listItems(categoryId, limit) }, 200);
-    }
+    this.state.acceptWebSocket(server, [role]);
+    this.sendConnected(server);
 
-    return doJSON({ error: "Not found" }, 404);
+    return new Response(null, { status: 101, webSocket: client });
   }
 
   async webSocketMessage(socket, message) {
-    await this.ensureInitialized();
+    await this.ensureInitialized(this.hub || LIVE_FEED_DEFAULT_ADMIN_HUB);
 
-    let text = "";
-    if (typeof message === "string") {
-      text = message;
-    } else if (message instanceof ArrayBuffer) {
-      text = new TextDecoder().decode(message);
-    } else {
-      text = String(message ?? "");
+    if (this.getSocketRole(socket) !== "admin") {
+      return;
     }
 
     let payload = null;
     try {
-      payload = JSON.parse(text);
+      payload = JSON.parse(this.readTextMessage(message));
     } catch {
       this.sendJSON(socket, { type: "error", error: "Invalid JSON message" });
       return;
     }
 
-    if (payload?.type === "ping") {
-      this.sendJSON(socket, { type: "pong" });
+    const type = String(payload?.type || "").trim();
+
+    if (type === "get_live_users") {
+      this.sendHubUsers(socket);
       return;
     }
 
-    if (payload?.type !== "load_older") {
-      this.sendJSON(socket, { type: "error", error: "Unsupported message type" });
+    if (type === "set_broadcast") {
+      if (!Object.prototype.hasOwnProperty.call(payload, "snapshot")) {
+        this.sendJSON(socket, { type: "error", error: "snapshot is required" });
+        return;
+      }
+
+      const snapshotError = validateSnapshotShape(payload.snapshot);
+      if (snapshotError) {
+        this.sendJSON(socket, { type: "error", error: snapshotError });
+        return;
+      }
+
+      try {
+        this.writeFanout(payload.snapshot);
+      } catch {
+        this.sendJSON(socket, { type: "error", error: "Failed to save snapshot" });
+        return;
+      }
+
+      this.broadcastPayload(payload.snapshot);
+      this.sendJSON(socket, { type: "set_broadcast_ack", hub: this.hub, ...this.getCounts() });
       return;
     }
 
-    const categoryId = this.parseCategoryId(payload?.category_id);
-    const beforeSeq = this.parseBeforeSeq(payload?.before_seq);
-    if (!categoryId || !beforeSeq) {
-      this.sendJSON(socket, { type: "error", error: "category_id and before_seq are required" });
+    if (type === "publish_item") {
+      if (!Object.prototype.hasOwnProperty.call(payload, "item")) {
+        this.sendJSON(socket, { type: "error", error: "item is required" });
+        return;
+      }
+
+      const itemError = validatePublishItemShape(payload.item);
+      if (itemError) {
+        this.sendJSON(socket, { type: "error", error: itemError });
+        return;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(payload, "snapshot")) {
+        const snapshotError = validateSnapshotShape(payload.snapshot);
+        if (snapshotError) {
+          this.sendJSON(socket, { type: "error", error: snapshotError });
+          return;
+        }
+
+        try {
+          this.writeFanout(payload.snapshot);
+        } catch {
+          this.sendJSON(socket, { type: "error", error: "Failed to save snapshot" });
+          return;
+        }
+      }
+
+      this.broadcastPayload(payload.item);
+      this.sendJSON(socket, { type: "publish_item_ack", hub: this.hub, ...this.getCounts() });
       return;
     }
 
-    const limit = parseIntSafe(
-      payload?.limit,
-      this.getMaxLoadOlder(),
-      1,
-      this.getMaxLoadOlder()
-    );
-    const items = this.getOlderItems(categoryId, beforeSeq, limit);
-    this.sendJSON(socket, { type: "older_items", category_id: categoryId, items });
+    this.sendJSON(socket, { type: "error", error: "Unsupported message type" });
   }
 
   webSocketClose() {
-    // No cleanup needed for global fanout mode.
+    return;
   }
 
   webSocketError(socket) {
     try {
       socket.close(1011, "Socket error");
     } catch {
-      // best effort close.
+      return;
     }
   }
 }
@@ -1064,28 +942,8 @@ export default {
       return handleLiveFeedSocket(request, env);
     }
 
-    if (path === "/api/v1/live-feed/admin/items") {
-      return handleLiveFeedPublish(request, env);
-    }
-
-    if (path === "/api/v1/live-feed/admin/purge-category") {
-      return handleLiveFeedPurgeCategory(request, env);
-    }
-
-    if (path === "/api/v1/live-feed/admin/categories/list") {
-      return handleLiveFeedCategoryList(request, env);
-    }
-
-    if (path === "/api/v1/live-feed/admin/categories/upsert") {
-      return handleLiveFeedCategoryUpsert(request, env);
-    }
-
-    if (path === "/api/v1/live-feed/admin/categories/delete") {
-      return handleLiveFeedCategoryDelete(request, env);
-    }
-
-    if (path === "/api/v1/live-feed/admin/items/list") {
-      return handleLiveFeedItemsList(request, env);
+    if (path === "/api/v1/admin/live-feed") {
+      return handleAdminLiveFeedSocket(request, env);
     }
 
     if (path === "/api/v1/get-token") {
