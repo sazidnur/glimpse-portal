@@ -22,6 +22,11 @@ tag = "v2_live_feed_hub"
 deleted_classes = ["LiveFeedHubDO"]
 new_sqlite_classes = ["LiveFeedHubv2"]
 
+[[migrations]]
+tag = "v3_live_feed_regional_hubs"
+deleted_classes = ["LiveFeedHubv2"]
+new_sqlite_classes = ["LiveFeedRegionalHubV3"]
+
 # Secrets (set via wrangler secret put):
 #   TOKEN_SECRET       - HMAC key for Worker JWTs
 #   APP_SECRET         - Shared secret for /api/v1/get-token
@@ -37,12 +42,3 @@ new_sqlite_classes = ["LiveFeedHubv2"]
 [[analytics_engine_datasets]]
 binding = "ANALYTICS"
 dataset = "cache_analytics"
-
-[[migrations]]
-tag = "v3_live_feed_regional_hubs"
-new_sqlite_classes = ["LiveFeedRegionalHub"]
-
-[[migrations]]
-tag = "v4_live_feed_hard_reset_v3"
-deleted_classes = ["LiveFeedRegionalHub"]
-new_sqlite_classes = ["LiveFeedRegionalHubV3"]
