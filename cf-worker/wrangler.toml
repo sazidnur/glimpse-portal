@@ -26,6 +26,10 @@ new_sqlite_classes = ["LiveFeedHubv2"]
 tag = "v3_live_feed_regional_hubs"
 new_sqlite_classes = ["LiveFeedRegionalHubV3"]
 
+[[migrations]]
+tag = "v4_cleanup"
+deleted_classes = ["LiveFeedHubv2"]
+
 # Secrets (set via wrangler secret put):
 #   TOKEN_SECRET       - HMAC key for Worker JWTs
 #   APP_SECRET         - Shared secret for /api/v1/get-token
