@@ -14,7 +14,7 @@ const LIVE_FEED_HUBS = {
   apac: { name: "hub-v3-apac", locationHint: "apac" },
   europe: { name: "hub-v4-europe", locationHint: "weur" },
   "middle-east": { name: "hub-v3-middle-east", locationHint: "me" },
-  americas: { name: "hub-v3-americas", locationHint: "wnam" },
+  americas: { name: "hub-v3-americas", locationHint: "enam" },
 };
 
 const LIVE_FEED_HUB_ALIASES = {
