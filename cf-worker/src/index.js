@@ -649,6 +649,16 @@ function doJSON(data, status = 200) {
   });
 }
 
+// Stub exports for old DO classes - required for migration
+export class LiveFeedHubDO {
+  constructor(state) { this.state = state; }
+  async fetch() { return new Response("Deprecated", { status: 410 }); }
+}
+export class LiveFeedHubv2 {
+  constructor(state) { this.state = state; }
+  async fetch() { return new Response("Deprecated", { status: 410 }); }
+}
+
 export class LiveFeedRegionalHubV3 {
   constructor(state) {
     this.state = state;
