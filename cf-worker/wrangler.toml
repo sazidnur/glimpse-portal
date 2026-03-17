@@ -24,7 +24,6 @@ new_sqlite_classes = ["LiveFeedHubv2"]
 
 [[migrations]]
 tag = "v3_live_feed_regional_hubs"
-deleted_classes = ["LiveFeedHubv2"]
 new_sqlite_classes = ["LiveFeedRegionalHubV3"]
 
 # Secrets (set via wrangler secret put):
