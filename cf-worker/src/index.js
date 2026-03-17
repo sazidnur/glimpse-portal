@@ -679,6 +679,13 @@ export class LiveFeedRegionalHubV3 {
           updated_at TEXT NOT NULL
         )
       `);
+      this.sql.exec(
+        `INSERT INTO fanout_state (id, payload_json, updated_at)
+         VALUES (1, ?, ?)
+         ON CONFLICT(id) DO NOTHING`,
+        JSON.stringify({ initial_fanout: true }),
+        new Date().toISOString()
+      );
 
       const storedHubRaw = await this.state.storage.get("hub_key");
       const storedHub = resolveLiveFeedHubKey(storedHubRaw);
