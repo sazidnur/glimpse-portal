@@ -31,6 +31,7 @@ if settings.DEBUG:
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
+urlpatterns.append(path(f'{portal_prefix}/live-feed/', include('portal.live_feed.urls')))
 urlpatterns.append(path(f'{portal_prefix}/', admin.site.urls))
 
 admin.site.site_header = "Glimpse Portal Admin"

@@ -223,7 +223,7 @@ def dashboard_callback(request, context):
         {"title": "Add News", "url": reverse("admin:data_news_add"), "icon": "add_circle"},
         {"title": "Add Video", "url": reverse("admin:data_videos_add"), "icon": "add_circle"},
         {"title": "CF Analytics", "url": reverse("admin:cf_analytics"), "icon": "insights"},
-        {"title": "Live Feed", "url": reverse("admin:live_feed_dashboard"), "icon": "stream"},
+        {"title": "Live Feed", "url": reverse("live_feed:dashboard"), "icon": "stream"},
     ]
     
     context.update({

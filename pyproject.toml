@@ -18,6 +18,7 @@ django-cors-headers = "^4.6"
 djangorestframework = "^3.15"
 django-redis = "^5.4"
 django-unfold = "^0.83.1"
+websocket-client = "^1.8"
 
 [tool.poetry.group.dev.dependencies]
 django-debug-toolbar = "^4.4"

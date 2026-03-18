@@ -1,29 +1,24 @@
 # Python
 FROM python:3.12-slim
 
-# Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV POETRY_VERSION=2.1.4
-ENV POETRY_HOME=/opt/poetry
-ENV POETRY_VENV=/opt/poetry-venv
-ENV POETRY_CACHE_DIR=/opt/.cache
+ENV TZ=Europe/Helsinki
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     libpq-dev \
     gcc \
-    && rm -rf /var/lib/apt/lists/*
+    tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone
 
 # Install Poetry
-RUN python3 -m venv $POETRY_VENV \
-    && $POETRY_VENV/bin/pip install -U pip setuptools \
-    && $POETRY_VENV/bin/pip install poetry==${POETRY_VERSION}
+RUN pip install --no-cache-dir poetry==2.1.4 \
+    && poetry config virtualenvs.create false
 
-ENV PATH="${PATH}:${POETRY_VENV}/bin"
-
-# Set work directory
 WORKDIR /app
 
 # Copy poetry files
@@ -31,8 +26,7 @@ COPY pyproject.toml poetry.lock* ./
 
 # Install dependencies
 ARG INSTALL_DEV=false
-RUN poetry config virtualenvs.create false \
-    && if [ "$INSTALL_DEV" = "true" ]; then \
+RUN if [ "$INSTALL_DEV" = "true" ]; then \
         poetry install --no-interaction --no-ansi --no-root; \
     else \
         poetry install --no-interaction --no-ansi --no-root --only main; \
@@ -41,7 +35,7 @@ RUN poetry config virtualenvs.create false \
 # Copy project
 COPY . .
 
-# Create directories for static and media files
+# Create directories
 RUN mkdir -p /app/staticfiles /app/media /app/static
 
 # Copy and set permissions for entrypoint
@@ -53,10 +47,8 @@ RUN adduser --disabled-password --gecos '' appuser \
     && chown -R appuser:appuser /app
 USER appuser
 
-# Expose port
 EXPOSE 8000
 
-# Set entrypoint
 ENTRYPOINT ["/entrypoint.sh"]
 
 # Run gunicorn

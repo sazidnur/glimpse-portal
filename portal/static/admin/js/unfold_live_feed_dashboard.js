@@ -152,7 +152,7 @@
           '<td class="border-b border-base-200 px-3 py-2 text-sm dark:border-base-800">' + Number(c.order || 0) + '</td>' +
           '<td class="border-b border-base-200 px-3 py-2 text-sm dark:border-base-800">' +
             '<button type="button" class="bg-white border border-base-200 cursor-pointer font-medium px-2 py-1 rounded-default shadow-xs text-important text-xs hover:bg-base-100/80 dark:bg-transparent dark:border-base-700 dark:hover:bg-base-800/80" data-action="edit">Edit</button> ' +
-            '<button type="button" class="bg-red-600 border border-transparent cursor-pointer font-medium px-2 py-1 rounded-default shadow-xs text-xs text-white hover:bg-red-600/80" data-action="delete">Delete</button>' +
+            '<button type="button" class="bg-red-500 border border-transparent cursor-pointer font-medium px-2 py-1 rounded-default shadow-xs text-xs text-white hover:bg-red-600/80" data-action="delete">Delete</button>' +
           '</td>' +
         '</tr>';
       }).join('');

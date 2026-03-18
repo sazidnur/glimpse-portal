@@ -1,0 +1,688 @@
+{% extends 'admin/base.html' %}
+{% load i18n unfold live_feed_tags %}
+
+{% block breadcrumbs %}{% endblock %}
+
+{% block title %}{% trans 'Live Feed Manager' %} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block branding %}
+    {% include "unfold/helpers/site_branding.html" %}
+{% endblock %}
+
+{% block content %}
+{% include "unfold/helpers/messages.html" %}
+
+<div class="flex flex-col gap-6 mb-8" id="lf-app">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+            <h1 class="font-semibold text-2xl text-font-important-light dark:text-font-important-dark">Live Feed Manager</h1>
+            <p class="mt-1 text-sm text-font-subtle-light dark:text-font-subtle-dark">Server-side hub connections with real-time monitoring</p>
+        </div>
+        <div class="flex gap-2">
+            <button type="button" id="btn-connect-all" class="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors cursor-pointer bg-primary-600 text-white hover:bg-primary-700">
+                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                Connect All
+            </button>
+            <button type="button" id="btn-disconnect-all" class="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors cursor-pointer bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636"/></svg>
+                Disconnect All
+            </button>
+        </div>
+    </div>
+
+    <!-- Global Overlay for Connect All / Disconnect All -->
+    <div id="global-overlay" class="hidden fixed inset-0 z-50 bg-black/30 backdrop-blur-sm flex items-center justify-center">
+        <div class="bg-white dark:bg-base-900 rounded-lg p-6 flex items-center gap-3 shadow-xl">
+            <svg class="w-6 h-6 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+            <span id="global-overlay-text" class="text-font-important-light dark:text-font-important-dark font-medium">Processing...</span>
+        </div>
+    </div>
+
+    <!-- Total Stats Cards -->
+    <div>
+        <h2 class="font-medium text-sm text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wider mb-3">Live Statistics</h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
+                <div class="flex items-center justify-between">
+                    <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Total Live Users</p>
+                    <button type="button" id="btn-refresh-stats" class="p-1.5 rounded-md cursor-pointer text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-colors" title="Refresh">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    </button>
+                </div>
+                <p id="stat-total-users" class="mt-1 text-2xl font-semibold text-font-important-light dark:text-font-important-dark">0</p>
+            </div>
+            <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Total Admins</p>
+                <p id="stat-total-admins" class="mt-1 text-2xl font-semibold text-font-important-light dark:text-font-important-dark">0</p>
+            </div>
+            <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Connected Hubs</p>
+                <p id="stat-connected-hubs" class="mt-1 text-2xl font-semibold text-font-important-light dark:text-font-important-dark">0 / 4</p>
+            </div>
+            <div class="bg-white border-l-4 border-l-green-500 border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800 dark:border-l-green-500">
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Status</p>
+                <p id="stat-status" class="mt-1 text-2xl font-semibold text-green-600 dark:text-green-400">Offline</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hub Cards -->
+    <div>
+        <h2 class="font-medium text-sm text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wider mb-3">Regional Hubs</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {% for hub in hubs %}
+            <div class="hub-card bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800 relative" data-hub="{{ hub }}">
+                <!-- Hub Loading Overlay -->
+                <div class="hub-overlay hidden absolute inset-0 bg-white/80 dark:bg-base-900/80 rounded-lg flex items-center justify-center z-10">
+                    <svg class="w-6 h-6 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                </div>
+                <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center gap-2">
+                        <span class="hub-dot w-2.5 h-2.5 rounded-full bg-base-300 dark:bg-base-600" data-hub="{{ hub }}"></span>
+                        <span class="font-medium text-font-important-light dark:text-font-important-dark">{{ hub_info|get_key:hub|get_key:'name' }}</span>
+                    </div>
+                    <span class="hub-status text-xs font-medium px-2 py-0.5 rounded bg-base-100 text-font-subtle-light dark:bg-base-800 dark:text-font-subtle-dark" data-hub="{{ hub }}">Offline</span>
+                </div>
+                <div class="space-y-2 mb-4">
+                    <div class="flex justify-between text-sm">
+                        <span class="text-font-subtle-light dark:text-font-subtle-dark">Live Users</span>
+                        <span class="hub-users font-medium text-font-default-light dark:text-font-default-dark" data-hub="{{ hub }}">—</span>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-font-subtle-light dark:text-font-subtle-dark">Admins</span>
+                        <span class="hub-admins font-medium text-font-default-light dark:text-font-default-dark" data-hub="{{ hub }}">—</span>
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button type="button" class="hub-toggle flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer bg-primary-600 text-white hover:bg-primary-700" data-hub="{{ hub }}" data-action="connect">
+                        Connect
+                    </button>
+                    <button type="button" class="hub-refresh p-1.5 rounded-md cursor-pointer text-primary-600 hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/20 transition-colors" data-hub="{{ hub }}" title="Refresh Stats">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    </button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Cost Tracking -->
+    <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+        <div class="px-5 py-4 border-b border-base-200 dark:border-base-800 flex items-center justify-between">
+            <h2 class="font-semibold text-font-important-light dark:text-font-important-dark">Session Costs</h2>
+            <button type="button" id="btn-reset-costs" class="px-2 py-1 text-xs font-medium cursor-pointer text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors">Reset</button>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-x divide-base-100 dark:divide-base-800">
+            <div class="p-4 text-center">
+                <p id="cost-connects" class="text-2xl font-bold text-font-important-light dark:text-font-important-dark">0</p>
+                <p class="mt-1 text-xs text-font-subtle-light dark:text-font-subtle-dark">Connects</p>
+            </div>
+            <div class="p-4 text-center">
+                <p id="cost-disconnects" class="text-2xl font-bold text-font-important-light dark:text-font-important-dark">0</p>
+                <p class="mt-1 text-xs text-font-subtle-light dark:text-font-subtle-dark">Disconnects</p>
+            </div>
+            <div class="p-4 text-center">
+                <p id="cost-publishes" class="text-2xl font-bold text-font-important-light dark:text-font-important-dark">0</p>
+                <p class="mt-1 text-xs text-font-subtle-light dark:text-font-subtle-dark">Publishes</p>
+            </div>
+            <div class="p-4 text-center">
+                <p id="cost-broadcasts" class="text-2xl font-bold text-font-important-light dark:text-font-important-dark">0</p>
+                <p class="mt-1 text-xs text-font-subtle-light dark:text-font-subtle-dark">Broadcasts</p>
+            </div>
+            <div class="p-4 text-center">
+                <p id="cost-sent" class="text-2xl font-bold text-font-important-light dark:text-font-important-dark">0</p>
+                <p class="mt-1 text-xs text-font-subtle-light dark:text-font-subtle-dark">Msgs Sent</p>
+            </div>
+            <div class="p-4 text-center">
+                <p id="cost-received" class="text-2xl font-bold text-font-important-light dark:text-font-important-dark">0</p>
+                <p class="mt-1 text-xs text-font-subtle-light dark:text-font-subtle-dark">Msgs Recv</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Grid: Categories + Publish -->
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <!-- Categories Table -->
+        <div class="xl:col-span-2 bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+            <div class="px-5 py-4 border-b border-base-200 dark:border-base-800 flex items-center justify-between">
+                <h2 class="font-semibold text-font-important-light dark:text-font-important-dark">Live Feed Categories</h2>
+                <a href="{% url 'admin:data_categories_changelist' %}?live_feed_type__gt=0" class="text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400">Manage</a>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-left text-xs uppercase tracking-wider text-font-subtle-light dark:text-font-subtle-dark bg-base-50 dark:bg-base-800">
+                            <th class="px-5 py-3 font-medium">ID</th>
+                            <th class="px-5 py-3 font-medium">Name</th>
+                            <th class="px-5 py-3 font-medium">Type</th>
+                            <th class="px-5 py-3 font-medium">Status</th>
+                            <th class="px-5 py-3 font-medium">Order</th>
+                        </tr>
+                    </thead>
+                    <tbody id="categories-table" class="divide-y divide-base-100 dark:divide-base-800">
+                        {% for cat in categories %}
+                        <tr>
+                            <td class="px-5 py-3 font-medium text-font-important-light dark:text-font-important-dark">{{ cat.id }}</td>
+                            <td class="px-5 py-3 text-font-default-light dark:text-font-default-dark">{{ cat.name }}</td>
+                            <td class="px-5 py-3 text-font-default-light dark:text-font-default-dark">{{ cat.live_feed_type }}</td>
+                            <td class="px-5 py-3">
+                                {% if cat.enabled %}
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Enabled</span>
+                                {% else %}
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-base-100 text-font-subtle-light dark:bg-base-800 dark:text-font-subtle-dark">Disabled</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-5 py-3 text-font-default-light dark:text-font-default-dark">{{ cat.order }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="5" class="px-5 py-8 text-center text-sm text-font-subtle-light dark:text-font-subtle-dark">
+                                No live feed categories. Create categories with live_feed_type &gt; 0.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Publish Form -->
+        <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800 relative" id="publish-card">
+            <div class="px-5 py-4 border-b border-base-200 dark:border-base-800">
+                <h2 class="font-semibold text-font-important-light dark:text-font-important-dark">Publish Item</h2>
+            </div>
+            <form id="publish-form" class="p-5 space-y-5">
+                <div>
+                    <label class="block text-xs font-medium text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide mb-1.5">Target Hub</label>
+                    <select id="pub-hub" class="w-full px-3 py-2 text-sm rounded-md border border-base-200 bg-white text-font-default-light focus:ring-2 focus:ring-primary-500 focus:border-primary-500 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark">
+                        <option value="all">All Connected Hubs</option>
+                        {% for hub in hubs %}
+                        <option value="{{ hub }}">{{ hub_info|get_key:hub|get_key:'name' }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide mb-1.5">Category</label>
+                    <select id="pub-category" class="w-full px-3 py-2 text-sm rounded-md border border-base-200 bg-white text-font-default-light focus:ring-2 focus:ring-primary-500 focus:border-primary-500 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark" required>
+                        {% for cat in categories %}
+                        {% if cat.enabled %}
+                        <option value="{{ cat.id }}">{{ cat.name }}</option>
+                        {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide mb-1.5">Impact</label>
+                    <select id="pub-impact" class="w-full px-3 py-2 text-sm rounded-md border border-base-200 bg-white text-font-default-light focus:ring-2 focus:ring-primary-500 focus:border-primary-500 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark">
+                        <option value="0">0 - Normal</option>
+                        <option value="1">1 - Important</option>
+                        <option value="2">2 - Critical</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide mb-1.5">Title</label>
+                    <input type="text" id="pub-title" class="w-full px-3 py-2 text-sm rounded-md border border-base-200 bg-white text-font-default-light focus:ring-2 focus:ring-primary-500 focus:border-primary-500 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark" placeholder="Enter item title..." required>
+                </div>
+                <button type="submit" id="btn-publish" class="w-full px-3 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                    Publish
+                </button>
+            </form>
+            <!-- Publish Overlay -->
+            <div id="publish-overlay" class="hidden absolute inset-0 bg-base-50 dark:bg-base-950 rounded-lg flex items-center justify-center z-10" style="background-color: rgba(249, 250, 251, 0.95);">
+                <span class="text-sm font-medium text-font-subtle-light dark:text-font-subtle-dark bg-base-200 dark:bg-base-800 px-4 py-2 rounded-md">Connect to at least one hub</span>
+            </div>
+            <style>
+                .dark #publish-overlay { background-color: rgba(17, 24, 39, 0.95) !important; }
+            </style>
+        </div>
+    </div>
+
+    <!-- Activity Log -->
+    <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+        <div class="px-5 py-4 border-b border-base-200 dark:border-base-800 flex items-center justify-between">
+            <h2 class="font-semibold text-font-important-light dark:text-font-important-dark">Activity Log</h2>
+            <div class="flex items-center gap-3">
+                <select id="log-filter" class="px-2 py-1 text-sm rounded-md border border-base-200 bg-white text-font-default-light dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark">
+                    <option value="all">All Hubs</option>
+                    {% for hub in hubs %}
+                    <option value="{{ hub }}">{{ hub_info|get_key:hub|get_key:'name' }}</option>
+                    {% endfor %}
+                </select>
+                <button type="button" id="btn-clear-logs" class="px-2 py-1 text-xs font-medium cursor-pointer text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors">Clear</button>
+            </div>
+        </div>
+        <div class="h-80 overflow-y-auto">
+            <table class="w-full text-sm">
+                <tbody id="log-table" class="divide-y divide-base-100 dark:divide-base-800 font-mono text-xs">
+                    <tr>
+                        <td colspan="4" class="px-5 py-8 text-center text-sm text-font-subtle-light dark:text-font-subtle-dark">
+                            No activity yet
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Live Feed Stream -->
+    <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+        <div class="px-5 py-4 border-b border-base-200 dark:border-base-800 flex items-center justify-between">
+            <h2 class="font-semibold text-font-important-light dark:text-font-important-dark">Live Feed Stream</h2>
+            <div class="flex items-center gap-3">
+                <select id="stream-hub" class="px-2 py-1 text-sm rounded-md border border-base-200 bg-white text-font-default-light dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark">
+                    {% for hub in hubs %}
+                    <option value="{{ hub }}"{% if hub == 'apac' %} selected{% endif %}>{{ hub_info|get_key:hub|get_key:'name' }}</option>
+                    {% endfor %}
+                </select>
+                <span id="stream-count" class="text-xs text-font-subtle-light dark:text-font-subtle-dark">0 items</span>
+            </div>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-left text-xs uppercase tracking-wider text-font-subtle-light dark:text-font-subtle-dark bg-base-50 dark:bg-base-800">
+                        <th class="px-5 py-3 font-medium w-32">Category</th>
+                        <th class="px-5 py-3 font-medium w-20">Impact</th>
+                        <th class="px-5 py-3 font-medium">Title</th>
+                        <th class="px-5 py-3 font-medium w-36">Time</th>
+                    </tr>
+                </thead>
+                <tbody id="stream-table" class="divide-y divide-base-100 dark:divide-base-800">
+                    <tr>
+                        <td colspan="4" class="px-5 py-8 text-center text-sm text-font-subtle-light dark:text-font-subtle-dark">
+                            Connect to a hub to see live items
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Status Footer -->
+    <div id="status" class="text-sm text-font-subtle-light dark:text-font-subtle-dark"></div>
+</div>
+
+<script>
+(function() {
+    'use strict';
+
+    const CATEGORIES = {{ categories_json|safe }};
+    const POLL_INTERVAL = 3000;
+
+    const state = {
+        hubs: {},
+        previousHubs: {},
+        pollTimer: null,
+        logPollTimer: null,
+        streamPollTimer: null,
+    };
+
+    function csrf() {
+        return document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';
+    }
+
+    async function api(url, method = 'GET', body = null) {
+        const opts = {
+            method,
+            headers: { 'X-CSRFToken': csrf(), 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+        };
+        if (body) opts.body = JSON.stringify(body);
+        const res = await fetch(url, opts);
+        return res.json();
+    }
+
+    function showGlobalOverlay(text) {
+        const overlay = document.getElementById('global-overlay');
+        document.getElementById('global-overlay-text').textContent = text;
+        overlay.classList.remove('hidden');
+    }
+
+    function hideGlobalOverlay() {
+        document.getElementById('global-overlay').classList.add('hidden');
+    }
+
+    function showHubOverlay(hub) {
+        const card = document.querySelector(`.hub-card[data-hub="${hub}"]`);
+        card.querySelector('.hub-overlay').classList.remove('hidden');
+    }
+
+    function hideHubOverlay(hub) {
+        const card = document.querySelector(`.hub-card[data-hub="${hub}"]`);
+        card.querySelector('.hub-overlay').classList.add('hidden');
+    }
+
+    function updateHubUI(hub, data) {
+        const dot = document.querySelector(`.hub-dot[data-hub="${hub}"]`);
+        const status = document.querySelector(`.hub-status[data-hub="${hub}"]`);
+        const users = document.querySelector(`.hub-users[data-hub="${hub}"]`);
+        const admins = document.querySelector(`.hub-admins[data-hub="${hub}"]`);
+        const btn = document.querySelector(`.hub-toggle[data-hub="${hub}"]`);
+
+        hideHubOverlay(hub);
+
+        if (data.connected) {
+            dot.className = 'hub-dot w-2.5 h-2.5 rounded-full bg-green-500';
+            status.textContent = 'Online';
+            status.className = 'hub-status text-xs font-medium px-2 py-0.5 rounded bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
+            users.textContent = data.live_users.toLocaleString();
+            admins.textContent = data.admin_users;
+            btn.textContent = 'Disconnect';
+            btn.dataset.action = 'disconnect';
+            btn.className = 'hub-toggle flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer bg-red-600 text-white hover:bg-red-700';
+        } else if (data.connecting) {
+            dot.className = 'hub-dot w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse';
+            status.textContent = 'Connecting';
+            status.className = 'hub-status text-xs font-medium px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400';
+            showHubOverlay(hub);
+        } else {
+            dot.className = 'hub-dot w-2.5 h-2.5 rounded-full bg-base-300 dark:bg-base-600';
+            status.textContent = 'Offline';
+            status.className = 'hub-status text-xs font-medium px-2 py-0.5 rounded bg-base-100 text-font-subtle-light dark:bg-base-800 dark:text-font-subtle-dark';
+            users.textContent = '—';
+            admins.textContent = '—';
+            btn.textContent = 'Connect';
+            btn.dataset.action = 'connect';
+            btn.className = 'hub-toggle flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer bg-primary-600 text-white hover:bg-primary-700';
+        }
+    }
+
+    function updateTotalStats() {
+        let totalUsers = 0, totalAdmins = 0, connectedCount = 0;
+        const totalHubs = Object.keys(state.hubs).length;
+
+        Object.values(state.hubs).forEach(h => {
+            if (h.connected) {
+                totalUsers += h.live_users || 0;
+                totalAdmins += h.admin_users || 0;
+                connectedCount++;
+            }
+        });
+
+        document.getElementById('stat-total-users').textContent = totalUsers.toLocaleString();
+        document.getElementById('stat-total-admins').textContent = totalAdmins;
+        document.getElementById('stat-connected-hubs').textContent = `${connectedCount} / ${totalHubs}`;
+        
+        const statusEl = document.getElementById('stat-status');
+        if (connectedCount === totalHubs) {
+            statusEl.textContent = 'All Online';
+            statusEl.className = 'mt-1 text-2xl font-semibold text-green-600 dark:text-green-400';
+        } else if (connectedCount > 0) {
+            statusEl.textContent = 'Partial';
+            statusEl.className = 'mt-1 text-2xl font-semibold text-amber-600 dark:text-amber-400';
+        } else {
+            statusEl.textContent = 'Offline';
+            statusEl.className = 'mt-1 text-2xl font-semibold text-font-subtle-light dark:text-font-subtle-dark';
+        }
+
+        // Update disconnect all button
+        const disconnectAllBtn = document.getElementById('btn-disconnect-all');
+        disconnectAllBtn.disabled = connectedCount === 0;
+    }
+
+    function checkConnectionDropped() {
+        for (const [hub, data] of Object.entries(state.hubs)) {
+            const prev = state.previousHubs[hub];
+            if (prev && prev.connected && !data.connected && !data.connecting) {
+                resetCosts();
+                return;
+            }
+        }
+    }
+
+    function updatePublishState() {
+        const anyConnected = Object.values(state.hubs).some(h => h.connected);
+        const overlay = document.getElementById('publish-overlay');
+        const btn = document.getElementById('btn-publish');
+
+        if (anyConnected) {
+            overlay.classList.add('hidden');
+            btn.disabled = false;
+        } else {
+            overlay.classList.remove('hidden');
+            btn.disabled = true;
+        }
+    }
+
+    async function fetchHubs() {
+        try {
+            const data = await api('{% url "live_feed:api_hubs" %}');
+            state.previousHubs = { ...state.hubs };
+            state.hubs = data.hubs;
+            Object.entries(data.hubs).forEach(([hub, info]) => updateHubUI(hub, info));
+            checkConnectionDropped();
+            updateTotalStats();
+            updatePublishState();
+        } catch (e) {
+            console.error('Failed to fetch hubs:', e);
+        }
+    }
+
+    async function fetchCosts() {
+        try {
+            const data = await api('{% url "live_feed:api_costs" %}');
+            document.getElementById('cost-connects').textContent = data.connects;
+            document.getElementById('cost-disconnects').textContent = data.disconnects;
+            document.getElementById('cost-publishes').textContent = data.publishes;
+            document.getElementById('cost-broadcasts').textContent = data.broadcasts;
+            document.getElementById('cost-sent').textContent = data.messages_sent;
+            document.getElementById('cost-received').textContent = data.messages_received;
+        } catch (e) {
+            console.error('Failed to fetch costs:', e);
+        }
+    }
+
+    async function fetchLogs() {
+        try {
+            const filter = document.getElementById('log-filter').value;
+            let url = '{% url "live_feed:api_logs" %}?limit=200';
+            if (filter && filter !== 'all') url += `&hub=${filter}`;
+
+            const data = await api(url);
+            renderLogs(data.logs);
+        } catch (e) {
+            console.error('Failed to fetch logs:', e);
+        }
+    }
+
+    function renderLogs(logs) {
+        const tbody = document.getElementById('log-table');
+        if (!logs.length) {
+            tbody.innerHTML = '<tr><td colspan="4" class="px-5 py-8 text-center text-sm text-font-subtle-light dark:text-font-subtle-dark">No activity yet</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = logs.map(log => {
+            const level = log.level_display.toLowerCase();
+            const levelColors = {
+                debug: 'text-font-subtle-light dark:text-font-subtle-dark',
+                info: 'text-blue-600 dark:text-blue-400',
+                warning: 'text-amber-600 dark:text-amber-400',
+                error: 'text-red-600 dark:text-red-400'
+            };
+            const time = new Date(log.created_at).toLocaleTimeString();
+            return `<tr>
+                <td class="px-3 py-2 ${levelColors[level] || ''} font-semibold">[${log.level_display.toUpperCase()}]</td>
+                <td class="px-3 py-2 text-font-subtle-light dark:text-font-subtle-dark">${time}</td>
+                <td class="px-3 py-2 font-medium text-font-default-light dark:text-font-default-dark">${log.hub}</td>
+                <td class="px-3 py-2 text-font-subtle-light dark:text-font-subtle-dark">${escapeHtml(log.message)}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    async function fetchStream() {
+        try {
+            const hub = document.getElementById('stream-hub').value;
+            const data = await api(`{% url "live_feed:api_stream" %}?hub=${hub}&limit=50`);
+            renderStream(data.items);
+        } catch (e) {
+            console.error('Failed to fetch stream:', e);
+        }
+    }
+
+    function renderStream(items) {
+        const tbody = document.getElementById('stream-table');
+        const count = document.getElementById('stream-count');
+
+        count.textContent = `${items.length} items`;
+
+        if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="4" class="px-5 py-8 text-center text-sm text-font-subtle-light dark:text-font-subtle-dark">No items yet</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = items.map(item => {
+            const cat = CATEGORIES.find(c => c.id === item.category_id);
+            const catName = cat ? cat.name : `#${item.category_id}`;
+            const time = item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : '-';
+            const impactColors = {
+                2: 'text-red-600 dark:text-red-400 font-bold',
+                1: 'text-amber-600 dark:text-amber-400 font-medium',
+                0: 'text-font-default-light dark:text-font-default-dark'
+            };
+
+            return `<tr>
+                <td class="px-5 py-3"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900/30 dark:text-primary-400">${escapeHtml(catName)}</span></td>
+                <td class="px-5 py-3 ${impactColors[item.impact] || impactColors[0]}">${item.impact || 0}</td>
+                <td class="px-5 py-3 text-font-default-light dark:text-font-default-dark">${escapeHtml(item.title || '')}</td>
+                <td class="px-5 py-3 text-font-subtle-light dark:text-font-subtle-dark">${time}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    async function connectHub(hub) {
+        showHubOverlay(hub);
+        await api('{% url "live_feed:api_connect" %}', 'POST', { hub });
+        setTimeout(fetchHubs, 500);
+    }
+
+    async function disconnectHub(hub) {
+        showHubOverlay(hub);
+        await api('{% url "live_feed:api_disconnect" %}', 'POST', { hub });
+        setTimeout(fetchHubs, 500);
+    }
+
+    async function connectAll() {
+        // Skip already connected hubs
+        const disconnectedHubs = Object.entries(state.hubs)
+            .filter(([_, data]) => !data.connected && !data.connecting)
+            .map(([hub]) => hub);
+        
+        if (disconnectedHubs.length === 0) return;
+
+        showGlobalOverlay('Connecting to all hubs...');
+        await api('{% url "live_feed:api_connect" %}', 'POST', { hub: 'all' });
+        setTimeout(() => {
+            hideGlobalOverlay();
+            fetchHubs();
+        }, 1000);
+    }
+
+    async function disconnectAll() {
+        showGlobalOverlay('Disconnecting from all hubs...');
+        await api('{% url "live_feed:api_disconnect" %}', 'POST', { hub: 'all' });
+        setTimeout(() => {
+            hideGlobalOverlay();
+            fetchHubs();
+        }, 1000);
+    }
+
+    async function publish(e) {
+        e.preventDefault();
+
+        const hub = document.getElementById('pub-hub').value;
+        const categoryId = parseInt(document.getElementById('pub-category').value);
+        const title = document.getElementById('pub-title').value.trim();
+        const impact = parseInt(document.getElementById('pub-impact').value);
+
+        if (!title) return;
+
+        const btn = document.getElementById('btn-publish');
+        btn.disabled = true;
+        btn.textContent = 'Publishing...';
+
+        try {
+            await api('{% url "live_feed:api_publish" %}', 'POST', {
+                hub,
+                category_id: categoryId,
+                title,
+                impact,
+            });
+            document.getElementById('pub-title').value = '';
+            fetchLogs();
+        } catch (e) {
+            console.error('Publish failed:', e);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Publish';
+        }
+    }
+
+    async function clearLogs() {
+        if (!confirm('Clear all logs?')) return;
+        const filter = document.getElementById('log-filter').value;
+        await api('{% url "live_feed:api_clear_logs" %}', 'POST', { hub: filter });
+        fetchLogs();
+    }
+
+    async function resetCosts() {
+        await api('{% url "live_feed:api_reset_costs" %}', 'POST');
+        fetchCosts();
+    }
+
+    function startPolling() {
+        state.pollTimer = setInterval(() => {
+            fetchHubs();
+            fetchCosts();
+        }, POLL_INTERVAL);
+
+        state.logPollTimer = setInterval(fetchLogs, POLL_INTERVAL);
+        state.streamPollTimer = setInterval(fetchStream, POLL_INTERVAL);
+    }
+
+    function init() {
+        document.getElementById('btn-connect-all').onclick = connectAll;
+        document.getElementById('btn-disconnect-all').onclick = disconnectAll;
+        document.getElementById('btn-clear-logs').onclick = clearLogs;
+        document.getElementById('btn-reset-costs').onclick = resetCosts;
+        document.getElementById('btn-refresh-stats').onclick = fetchHubs;
+        document.getElementById('publish-form').onsubmit = publish;
+
+        document.querySelectorAll('.hub-toggle').forEach(btn => {
+            btn.onclick = () => {
+                const hub = btn.dataset.hub;
+                const action = btn.dataset.action;
+                if (action === 'connect') connectHub(hub);
+                else disconnectHub(hub);
+            };
+        });
+
+        document.querySelectorAll('.hub-refresh').forEach(btn => {
+            btn.onclick = () => fetchHubs();
+        });
+
+        document.getElementById('log-filter').onchange = fetchLogs;
+        document.getElementById('stream-hub').onchange = fetchStream;
+
+        fetchHubs();
+        fetchCosts();
+        fetchLogs();
+        fetchStream();
+        startPolling();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+</script>
+{% endblock %}

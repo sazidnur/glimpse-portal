@@ -140,3 +140,64 @@ class Videos(models.Model):
     def __str__(self):
         return self.title or self.videourl or f"Video {self.id}"
 
+
+class LiveFeedLog(models.Model):
+    class LogLevel(models.IntegerChoices):
+        DEBUG = 0, 'Debug'
+        INFO = 1, 'Info'
+        WARNING = 2, 'Warning'
+        ERROR = 3, 'Error'
+
+    class EventType(models.TextChoices):
+        CONNECT = 'connect', 'Hub Connected'
+        DISCONNECT = 'disconnect', 'Hub Disconnected'
+        PUBLISH = 'publish', 'Item Published'
+        BROADCAST = 'broadcast', 'Snapshot Broadcast'
+        RECEIVED = 'received', 'Message Received'
+        ERROR = 'error', 'Error'
+
+    id = models.BigAutoField(primary_key=True)
+    hub = models.CharField(max_length=20, db_index=True)
+    event_type = models.CharField(max_length=20, choices=EventType.choices)
+    level = models.IntegerField(choices=LogLevel.choices, default=LogLevel.INFO)
+    message = models.TextField()
+    details = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'live_feed_logs'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['hub', '-created_at'], name='lfl_hub_created_idx'),
+            models.Index(fields=['event_type', '-created_at'], name='lfl_event_created_idx'),
+        ]
+
+    def __str__(self):
+        return f"[{self.get_level_display()}] {self.hub}: {self.message[:50]}"
+
+    @classmethod
+    def cleanup_if_needed(cls, threshold=1_000_000, delete_count=10_000):
+        total = cls.objects.count()
+        if total > threshold:
+            oldest_ids = list(
+                cls.objects.order_by('created_at')
+                .values_list('id', flat=True)[:delete_count]
+            )
+            if oldest_ids:
+                cls.objects.filter(id__in=oldest_ids).delete()
+                return len(oldest_ids)
+        return 0
+
+    @classmethod
+    def log(cls, hub, event_type, message, level=None, details=None):
+        if level is None:
+            level = cls.LogLevel.INFO
+        entry = cls.objects.create(
+            hub=hub,
+            event_type=event_type,
+            level=level,
+            message=message,
+            details=details
+        )
+        cls.cleanup_if_needed()
+        return entry

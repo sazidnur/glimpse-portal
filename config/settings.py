@@ -101,7 +101,7 @@ UNFOLD = {
                     {
                         "title": _("Live Feed"),
                         "icon": "stream",
-                        "link": reverse_lazy("admin:live_feed_dashboard"),
+                        "link": reverse_lazy("live_feed:dashboard"),
                     },
                 ],
             },
@@ -336,6 +336,7 @@ ORIGIN_PATH_SECRET = config('ORIGIN_PATH_SECRET', default='')
 # Live feed control-plane settings (Django -> Worker publish)
 WORKER_BASE_URL = config('WORKER_BASE_URL', default='https://glimpseapp.net')
 APP_SECRET = config('APP_SECRET', default='')
+LIVE_FEED_ADMIN_TOKEN = config('LIVE_FEED_ADMIN_TOKEN', default='')
 
 # ===========================================
 # Caching Configuration (Redis)
