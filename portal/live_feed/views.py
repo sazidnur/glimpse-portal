@@ -1,4 +1,5 @@
 import json
+import time
 from datetime import datetime, timezone
 
 from django.http import JsonResponse
@@ -36,6 +37,13 @@ def dashboard_view(request):
 @staff_member_required
 @require_GET
 def api_hubs(request):
+    refresh = request.GET.get('refresh', '').strip().lower() in {'1', 'true', 'yes'}
+    if refresh:
+        hub = request.GET.get('hub', 'all')
+        hub_manager.request_live_users(hub)
+        # Give socket handlers a brief moment to process hub_users replies.
+        time.sleep(0.2)
+
     states = hub_manager.get_hub_states()
     return JsonResponse({'hubs': states})
 

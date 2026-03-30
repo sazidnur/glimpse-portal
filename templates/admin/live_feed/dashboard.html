@@ -41,15 +41,15 @@
 
     <!-- Total Stats Cards -->
     <div>
-        <h2 class="font-medium text-sm text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wider mb-3">Live Statistics</h2>
+        <div class="flex items-center gap-2 mb-3">
+            <h2 class="font-medium text-sm text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wider">Live Statistics</h2>
+            <button type="button" id="btn-refresh-stats" class="p-1.5 rounded-md cursor-pointer text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-colors" title="Refresh live statistics" aria-label="Refresh live statistics">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            </button>
+        </div>
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
-                <div class="flex items-center justify-between">
-                    <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Total Live Users</p>
-                    <button type="button" id="btn-refresh-stats" class="p-1.5 rounded-md cursor-pointer text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-colors" title="Refresh">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                    </button>
-                </div>
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Total Live Users</p>
                 <p id="stat-total-users" class="mt-1 text-2xl font-semibold text-font-important-light dark:text-font-important-dark">0</p>
             </div>
             <div class="bg-white border border-base-200 rounded-lg p-4 dark:bg-base-900 dark:border-base-800">
@@ -252,7 +252,7 @@
                 <button type="button" id="btn-clear-logs" class="px-2 py-1 text-xs font-medium cursor-pointer text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors">Clear</button>
             </div>
         </div>
-        <div class="h-80 overflow-y-auto">
+        <div id="activity-log-scroll" class="overflow-y-auto" style="max-height: 20rem;">
             <table class="w-full text-sm">
                 <tbody id="log-table" class="divide-y divide-base-100 dark:divide-base-800 font-mono text-xs">
                     <tr>
@@ -303,6 +303,34 @@
     <div id="status" class="text-sm text-font-subtle-light dark:text-font-subtle-dark"></div>
 </div>
 
+
+<style>
+    #activity-log-scroll {
+        scrollbar-width: thin;
+        scrollbar-color: #9ca3af #e5e7eb;
+    }
+    #activity-log-scroll::-webkit-scrollbar {
+        width: 10px;
+    }
+    #activity-log-scroll::-webkit-scrollbar-track {
+        background: #e5e7eb;
+    }
+    #activity-log-scroll::-webkit-scrollbar-thumb {
+        background: #9ca3af;
+        border-radius: 9999px;
+        border: 2px solid #e5e7eb;
+    }
+    .dark #activity-log-scroll {
+        scrollbar-color: #4b5563 #1f2937;
+    }
+    .dark #activity-log-scroll::-webkit-scrollbar-track {
+        background: #1f2937;
+    }
+    .dark #activity-log-scroll::-webkit-scrollbar-thumb {
+        background: #4b5563;
+        border-color: #1f2937;
+    }
+</style>
 <script>
 (function() {
     'use strict';
@@ -316,6 +344,7 @@
         pollTimer: null,
         logPollTimer: null,
         streamPollTimer: null,
+        refreshTick: 0,
     };
 
     function csrf() {
@@ -331,6 +360,10 @@
         if (body) opts.body = JSON.stringify(body);
         const res = await fetch(url, opts);
         return res.json();
+    }
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 
     function showGlobalOverlay(text) {
@@ -422,12 +455,14 @@
     }
 
     function checkConnectionDropped() {
-        for (const [hub, data] of Object.entries(state.hubs)) {
-            const prev = state.previousHubs[hub];
-            if (prev && prev.connected && !data.connected && !data.connecting) {
-                resetCosts();
-                return;
-            }
+        const prevItems = Object.values(state.previousHubs || {});
+        if (!prevItems.length) return;
+
+        const previouslyHadConnections = prevItems.some(h => h.connected || h.connecting);
+        const currentlyHasConnections = Object.values(state.hubs).some(h => h.connected || h.connecting);
+
+        if (previouslyHadConnections && !currentlyHasConnections) {
+            resetCosts();
         }
     }
 
@@ -445,9 +480,10 @@
         }
     }
 
-    async function fetchHubs() {
+    async function fetchHubs(forceRefreshCounts = false) {
         try {
-            const data = await api('{% url "live_feed:api_hubs" %}');
+            const hubsUrl = forceRefreshCounts ? '{% url "live_feed:api_hubs" %}?refresh=1' : '{% url "live_feed:api_hubs" %}';
+            const data = await api(hubsUrl);
             state.previousHubs = { ...state.hubs };
             state.hubs = data.hubs;
             Object.entries(data.hubs).forEach(([hub, info]) => updateHubUI(hub, info));
@@ -476,7 +512,7 @@
     async function fetchLogs() {
         try {
             const filter = document.getElementById('log-filter').value;
-            let url = '{% url "live_feed:api_logs" %}?limit=200';
+            let url = '{% url "live_feed:api_logs" %}?limit=500';
             if (filter && filter !== 'all') url += `&hub=${filter}`;
 
             const data = await api(url);
@@ -588,10 +624,17 @@
     async function disconnectAll() {
         showGlobalOverlay('Disconnecting from all hubs...');
         await api('{% url "live_feed:api_disconnect" %}', 'POST', { hub: 'all' });
-        setTimeout(() => {
-            hideGlobalOverlay();
-            fetchHubs();
-        }, 1000);
+
+        const deadline = Date.now() + 20000;
+        while (Date.now() < deadline) {
+            await fetchHubs();
+            const allDisconnected = Object.values(state.hubs).every(h => !h.connected && !h.connecting);
+            if (allDisconnected) break;
+            await sleep(400);
+        }
+
+        hideGlobalOverlay();
+        fetchHubs();
     }
 
     async function publish(e) {
@@ -639,7 +682,11 @@
 
     function startPolling() {
         state.pollTimer = setInterval(() => {
-            fetchHubs();
+            state.refreshTick += 1;
+            // Force a live recount periodically so other tabs/instances converge
+            // without requiring manual refresh.
+            const forceRefreshCounts = (state.refreshTick % 5) === 0;
+            fetchHubs(forceRefreshCounts);
             fetchCosts();
         }, POLL_INTERVAL);
 
@@ -652,7 +699,7 @@
         document.getElementById('btn-disconnect-all').onclick = disconnectAll;
         document.getElementById('btn-clear-logs').onclick = clearLogs;
         document.getElementById('btn-reset-costs').onclick = resetCosts;
-        document.getElementById('btn-refresh-stats').onclick = fetchHubs;
+        document.getElementById('btn-refresh-stats').onclick = () => fetchHubs(true);
         document.getElementById('publish-form').onsubmit = publish;
 
         document.querySelectorAll('.hub-toggle').forEach(btn => {
@@ -665,7 +712,7 @@
         });
 
         document.querySelectorAll('.hub-refresh').forEach(btn => {
-            btn.onclick = () => fetchHubs();
+            btn.onclick = () => fetchHubs(true);
         });
 
         document.getElementById('log-filter').onchange = fetchLogs;

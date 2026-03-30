@@ -590,7 +590,10 @@ Django side (`.env`):
 
 ```
 ORIGIN_PATH_SECRET=your-random-secret-here
+LIVE_FEED_ADMIN_TOKEN=your-drf-token-here  # Same as Worker's DRF_TOKEN
 ```
+
+The `LIVE_FEED_ADMIN_TOKEN` is the DRF Token used by the Django server to connect to the Worker admin WebSocket endpoint. This should be the same token stored in the Worker as `DRF_TOKEN`.
 
 This secret must match between the Worker and Django. Generate it the same way as the others (`-join ((1..32) | ForEach-Object { "{0:x2}" -f (Get-Random -Max 256) })`).
 

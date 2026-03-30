@@ -31,6 +31,7 @@ REDIS_COMMAND_PREFIX = 'live_feed:cmd:'
 
 OWNER_TTL_SECONDS = 180
 COMMAND_QUEUE_TTL_SECONDS = 600
+SESSION_COSTS_TTL_SECONDS = 24 * 60 * 60
 
 
 @dataclass
@@ -108,7 +109,7 @@ class HubConnection:
             return False
         try:
             self.ws.send(json.dumps(message))
-            self.manager.costs.messages_sent += 1
+            self.manager._increment_cost('messages_sent')
             self._update_activity()
             return True
         except Exception as e:
@@ -148,14 +149,14 @@ class HubConnection:
                 self.state.last_error = None
                 self._reconnect_count = 0
             self._update_activity()
-            self.manager.costs.connects += 1
+            self.manager._increment_cost('connects')
             self.manager._update_hub_redis(self.hub, self.state)
             self.manager._refresh_hub_owner(self.hub)
             logger.info("Connected to hub: %s", self.hub)
 
         def on_message(ws, message):
             self._update_activity()
-            self.manager.costs.messages_received += 1
+            self.manager._increment_cost('messages_received')
             try:
                 data = json.loads(message)
                 self._handle_message(data)
@@ -175,10 +176,19 @@ class HubConnection:
             self.manager._update_hub_redis(self.hub, self.state)
 
             if was_connected:
-                self.manager._log_event(
-                    self.hub, 'disconnect',
-                    f'Connection closed (code={close_status_code})'
-                )
+                # `code=None` usually means transport dropped without a clean
+                # WebSocket close frame (proxy/network blip). Avoid polluting
+                # activity logs with noisy reconnect events.
+                if close_status_code is None and not self._stop_event.is_set():
+                    logger.warning(
+                        "Connection to %s closed without close code; reconnecting",
+                        self.hub,
+                    )
+                else:
+                    self.manager._log_event(
+                        self.hub, 'disconnect',
+                        f'Connection closed (code={close_status_code})'
+                    )
 
             if not self._stop_event.is_set():
                 self._schedule_reconnect()
@@ -194,7 +204,7 @@ class HubConnection:
                 on_error=on_error,
                 on_close=on_close,
             )
-            self.ws.run_forever(ping_interval=30, ping_timeout=10)
+            self.ws.run_forever(ping_interval=30, ping_timeout=20)
         except Exception as e:
             logger.exception("WebSocket run failed for %s", self.hub)
             self.state.connecting = False
@@ -320,6 +330,54 @@ class LiveFeedHubManager:
     @staticmethod
     def _command_queue_key(instance_id: str) -> str:
         return f"{REDIS_COMMAND_PREFIX}{instance_id}"
+
+    @staticmethod
+    def _costs_key() -> str:
+        return f"{REDIS_COSTS_PREFIX}global"
+
+    @staticmethod
+    def _cost_fields() -> tuple:
+        return (
+            'connects',
+            'disconnects',
+            'publishes',
+            'broadcasts',
+            'messages_sent',
+            'messages_received',
+        )
+
+    def _increment_cost(self, field: str, amount: int = 1):
+        if field in self._cost_fields():
+            setattr(self.costs, field, getattr(self.costs, field) + amount)
+        try:
+            r = self._redis()
+            r.hincrby(self._costs_key(), field, int(amount))
+            r.expire(self._costs_key(), SESSION_COSTS_TTL_SECONDS)
+        except Exception:
+            pass
+
+    def _read_costs(self) -> dict:
+        key = self._costs_key()
+        try:
+            raw = self._redis().hgetall(key)
+        except Exception:
+            raw = {}
+
+        if raw:
+            decoded = {
+                self._decode_redis_value(k): self._to_int(self._decode_redis_value(v), 0)
+                for k, v in raw.items()
+            }
+            return {field: int(decoded.get(field, 0)) for field in self._cost_fields()}
+
+        return {
+            'connects': self.costs.connects,
+            'disconnects': self.costs.disconnects,
+            'publishes': self.costs.publishes,
+            'broadcasts': self.costs.broadcasts,
+            'messages_sent': self.costs.messages_sent,
+            'messages_received': self.costs.messages_received,
+        }
 
     def _get_hub_owner(self, hub: str) -> Optional[str]:
         try:
@@ -554,7 +612,7 @@ class LiveFeedHubManager:
 
         self._clear_hub_data(hub)
         conn.disconnect()
-        self.costs.disconnects += 1
+        self._increment_cost('disconnects')
         return {'success': True}
 
     def disconnect_all(self) -> dict:
@@ -615,6 +673,15 @@ class LiveFeedHubManager:
             results[hub] = self.send_to_hub(hub, message, _routed=_routed)
         return results
 
+    def request_live_users(self, hub: str = 'all') -> dict:
+        """
+        Ask connected hub sockets to return current live/admin user counts.
+        """
+        message = {'type': 'get_live_users'}
+        if hub == 'all':
+            return self.send_to_all(message)
+        return {hub: self.send_to_hub(hub, message)}
+
     def publish_item(self, hub: str, category_id: int, title: str,
                      impact: int = 0, timestamp: str = None) -> dict:
         item = {
@@ -639,7 +706,7 @@ class LiveFeedHubManager:
             results = self.send_to_all(message)
             success = any(r.get('success') for r in results.values())
             if success:
-                self.costs.publishes += 1
+                self._increment_cost('publishes')
                 self._log_event(
                     'all', 'publish',
                     f'Published to all hubs: "{title[:50]}"',
@@ -649,7 +716,7 @@ class LiveFeedHubManager:
         else:
             result = self.send_to_hub(hub, message)
             if result.get('success'):
-                self.costs.publishes += 1
+                self._increment_cost('publishes')
                 self._log_event(
                     hub, 'publish',
                     f'Published: "{title[:50]}"',
@@ -658,17 +725,14 @@ class LiveFeedHubManager:
             return result
 
     def get_costs(self) -> dict:
-        return {
-            'connects': self.costs.connects,
-            'disconnects': self.costs.disconnects,
-            'publishes': self.costs.publishes,
-            'broadcasts': self.costs.broadcasts,
-            'messages_sent': self.costs.messages_sent,
-            'messages_received': self.costs.messages_received,
-        }
+        return self._read_costs()
 
     def reset_costs(self):
         self.costs = CostCounters()
+        try:
+            self._redis().delete(self._costs_key())
+        except Exception:
+            pass
 
     def _ensure_inactivity_monitor(self):
         if self._inactivity_thread and self._inactivity_thread.is_alive():
