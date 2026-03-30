@@ -920,10 +920,7 @@ export class LiveFeedRegionalHubV3 {
   }
 
   webSocketClose() {
-    const adminSockets = this.state.getWebSockets("admin");
-    for (const adminSocket of adminSockets) {
-      this.sendHubUsers(adminSocket);
-    }
+    return;
   }
 
   webSocketError(socket) {
