@@ -11,6 +11,8 @@ from django.conf import settings
 from django.db.models import Q
 from unfold.admin import ModelAdmin
 from unfold.forms import AdminPasswordChangeForm, UserChangeForm, UserCreationForm
+from rest_framework.authtoken.admin import TokenAdmin as DRFTokenAdmin
+from rest_framework.authtoken.models import TokenProxy
 
 from api.v1.resources import news_cache, video_cache, metadata_cache, rebuild_metadata_cache
 from .models import (
@@ -415,6 +417,22 @@ class UserAdmin(BaseUserAdmin, ModelAdmin):
 @admin.register(Group)
 class GroupAdmin(BaseGroupAdmin, ModelAdmin):
     pass
+
+
+try:
+    admin.site.unregister(TokenProxy)
+except admin.sites.NotRegistered:
+    pass
+
+
+@admin.register(TokenProxy)
+class TokenProxyAdmin(DRFTokenAdmin, ModelAdmin):
+    readonly_fields = ("key", "created")
+
+    def get_fields(self, request, obj=None):
+        if obj:
+            return ("user", "key", "created")
+        return ("user",)
 
 
 _original_get_urls = admin.AdminSite.get_urls
