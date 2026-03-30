@@ -42,7 +42,7 @@ def api_hubs(request):
         hub = request.GET.get('hub', 'all')
         hub_manager.request_live_users(hub)
         # Give socket handlers a brief moment to process hub_users replies.
-        time.sleep(0.2)
+        time.sleep(0.3)
 
     states = hub_manager.get_hub_states()
     return JsonResponse({'hubs': states})
@@ -220,3 +220,4 @@ def api_categories(request):
         .values('id', 'name', 'enabled', 'order', 'live_feed_type')
     )
     return JsonResponse({'categories': categories})
+
