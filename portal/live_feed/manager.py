@@ -275,6 +275,25 @@ class LiveFeedHubManager:
     def _redis(self):
         return get_redis_connection("default")
 
+    @staticmethod
+    def _decode_redis_value(value: Any) -> str:
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="ignore")
+        if value is None:
+            return ""
+        return str(value)
+
+    @staticmethod
+    def _to_bool(value: str) -> bool:
+        return value in ("1", "true", "True", "yes", "on")
+
+    @staticmethod
+    def _to_int(value: str, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
     def _update_hub_redis(self, hub: str, state: HubState):
         r = self._redis()
         key = f"{REDIS_KEY_PREFIX}{hub}:state"
@@ -288,6 +307,36 @@ class LiveFeedHubManager:
             'last_error': state.last_error or '',
         }
         r.hset(key, mapping=data)
+
+    def _get_hub_state_redis(self, hub: str) -> Optional[dict]:
+        """
+        Read hub state from Redis so status is shared across Django workers.
+        Returns None if state is not present or Redis is unavailable.
+        """
+        key = f"{REDIS_KEY_PREFIX}{hub}:state"
+        try:
+            raw = self._redis().hgetall(key)
+        except Exception:
+            return None
+
+        if not raw:
+            return None
+
+        decoded = {
+            self._decode_redis_value(k): self._decode_redis_value(v)
+            for k, v in raw.items()
+        }
+        return {
+            'name': HUBS[hub]['name'],
+            'location': HUBS[hub]['location'],
+            'connected': self._to_bool(decoded.get('connected', '0')),
+            'connecting': self._to_bool(decoded.get('connecting', '0')),
+            'live_users': self._to_int(decoded.get('live_users', '0')),
+            'admin_users': self._to_int(decoded.get('admin_users', '0')),
+            'connected_at': decoded.get('connected_at') or None,
+            'last_activity': decoded.get('last_activity') or None,
+            'last_error': decoded.get('last_error') or None,
+        }
 
     def _store_snapshot(self, hub: str, snapshot: dict):
         r = self._redis()
@@ -369,6 +418,11 @@ class LiveFeedHubManager:
     def get_hub_states(self) -> Dict[str, dict]:
         states = {}
         for hub, conn in self.connections.items():
+            redis_state = self._get_hub_state_redis(hub)
+            if redis_state is not None:
+                states[hub] = redis_state
+                continue
+
             states[hub] = {
                 'name': HUBS[hub]['name'],
                 'location': HUBS[hub]['location'],
