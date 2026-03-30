@@ -182,7 +182,7 @@ UNFOLD = {
                     {
                         "title": _("API Tokens"),
                         "icon": "vpn_key",
-                        "link": reverse_lazy("admin:authtoken_token_changelist"),
+                        "link": reverse_lazy("admin:authtoken_tokenproxy_changelist"),
                     },
                 ],
             },
