@@ -1,6 +1,7 @@
 import json
 import time
 from datetime import datetime, timezone
+from typing import Any
 
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods, require_GET, require_POST
@@ -10,12 +11,54 @@ from django.contrib import admin
 
 from portal.models import Categories
 from .manager import hub_manager, HUBS
-from .models import LiveFeedLog
+from .models import LiveFeedLog, LiveFeedPipeline, LiveFeedPipelineLog
+from .pipeline_manager import pipeline_manager
+from .pipelines import get_pipeline_sources, source_definition_map
+
+
+def _pipeline_sources_payload():
+    return [
+        {
+            'key': source.key,
+            'label': source.label,
+            'pipeline_type': source.pipeline_type,
+        }
+        for source in get_pipeline_sources()
+    ]
+
+
+def _serialize_pipeline(pipeline: LiveFeedPipeline, source_map: dict[str, Any]) -> dict:
+    data = {
+        'id': pipeline.id,
+        'source': pipeline.source,
+        'source_label': source_map.get(pipeline.source).label if source_map.get(pipeline.source) else pipeline.source,
+        'pipeline_type': pipeline.pipeline_type,
+        'category_id': pipeline.category_id,
+        'category_name': pipeline.category.name if pipeline.category_id else '',
+        'default_impact': int(pipeline.default_impact or 0),
+        'should_run': bool(pipeline.should_run),
+        'status': pipeline.status,
+        'owner_instance': pipeline.owner_instance or '',
+        'last_started_at': pipeline.last_started_at.isoformat() if pipeline.last_started_at else None,
+        'last_stopped_at': pipeline.last_stopped_at.isoformat() if pipeline.last_stopped_at else None,
+        'last_activity_at': pipeline.last_activity_at.isoformat() if pipeline.last_activity_at else None,
+        'last_error': pipeline.last_error or '',
+        'total_seen': int(pipeline.total_seen or 0),
+        'total_published': int(pipeline.total_published or 0),
+        'updated_at': pipeline.updated_at.isoformat() if pipeline.updated_at else None,
+    }
+    return data
 
 
 @staff_member_required
 @require_GET
 def dashboard_view(request):
+    # Safety net: ensure monitor is active when live feed admin is visited.
+    try:
+        pipeline_manager.start_monitor()
+    except Exception:
+        pass
+
     categories = list(
         Categories.objects
         .filter(live_feed_type__gt=0)
@@ -30,6 +73,8 @@ def dashboard_view(request):
         'hub_info': HUBS,
         'categories': categories,
         'categories_json': json.dumps(categories),
+        'pipeline_sources': _pipeline_sources_payload(),
+        'pipeline_sources_json': json.dumps(_pipeline_sources_payload()),
     }
     return TemplateResponse(request, 'admin/live_feed/dashboard.html', context)
 
@@ -220,4 +265,243 @@ def api_categories(request):
         .values('id', 'name', 'enabled', 'order', 'live_feed_type')
     )
     return JsonResponse({'categories': categories})
+
+
+@staff_member_required
+@require_GET
+def api_pipeline_sources(request):
+    return JsonResponse({'sources': _pipeline_sources_payload()})
+
+
+@staff_member_required
+@require_GET
+def api_pipelines(request):
+    source_map = source_definition_map()
+    rows = (
+        LiveFeedPipeline.objects
+        .select_related('category')
+        .order_by('-updated_at')
+    )
+    pipelines = [_serialize_pipeline(row, source_map) for row in rows]
+    return JsonResponse({'pipelines': pipelines})
+
+
+@staff_member_required
+@require_GET
+def api_pipeline_logs(request):
+    pipeline_id = request.GET.get('pipeline_id')
+    limit = min(max(int(request.GET.get('limit', 100)), 1), 500)
+
+    qs = LiveFeedPipelineLog.objects.select_related('pipeline')
+    if pipeline_id:
+        try:
+            qs = qs.filter(pipeline_id=int(pipeline_id))
+        except (TypeError, ValueError):
+            return JsonResponse({'error': 'pipeline_id must be integer'}, status=400)
+
+    logs = []
+    for row in qs.order_by('-created_at')[:limit]:
+        logs.append({
+            'id': row.id,
+            'pipeline_id': row.pipeline_id,
+            'event_type': row.event_type,
+            'level': row.level,
+            'level_display': row.get_level_display(),
+            'message': row.message,
+            'details': row.details or {},
+            'created_at': row.created_at.isoformat(),
+        })
+    return JsonResponse({'logs': logs})
+
+
+def _validate_source_and_category(source_key: str, category_id: int):
+    definitions = source_definition_map()
+    source = definitions.get(source_key)
+    if not source:
+        return None, None, JsonResponse({'error': 'Invalid pipeline source'}, status=400)
+
+    category = Categories.objects.filter(id=category_id, enabled=True, live_feed_type__gt=0).first()
+    if not category:
+        return None, None, JsonResponse({'error': 'Category not found or not enabled live feed category'}, status=404)
+
+    category_type = int(category.live_feed_type or 0)
+    if category_type != int(source.pipeline_type):
+        return None, None, JsonResponse({
+            'error': (
+                f'Category type mismatch. Source "{source.label}" requires live_feed_type={source.pipeline_type}, '
+                f'but category has live_feed_type={category_type}.'
+            )
+        }, status=400)
+
+    return source, category, None
+
+
+def _normalize_impact(value: Any, *, default: int = 2) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = int(default)
+    return max(0, min(2, parsed))
+
+
+@staff_member_required
+@require_POST
+def api_pipeline_run(request):
+    try:
+        data = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    source_key = str(data.get('source') or '').strip()
+    default_impact = _normalize_impact(data.get('default_impact'), default=2)
+    category_raw = data.get('category_id')
+    try:
+        category_id = int(category_raw)
+    except (TypeError, ValueError):
+        return JsonResponse({'error': 'category_id must be integer'}, status=400)
+
+    source, category, error_response = _validate_source_and_category(source_key, category_id)
+    if error_response:
+        return error_response
+
+    pipeline, _created = LiveFeedPipeline.objects.get_or_create(
+        source=source.key,
+        category=category,
+        defaults={
+            'pipeline_type': int(source.pipeline_type),
+            'default_impact': default_impact,
+        }
+    )
+
+    pipeline.pipeline_type = int(source.pipeline_type)
+    pipeline.default_impact = default_impact
+    pipeline.should_run = True
+    pipeline.status = LiveFeedPipeline.Status.STARTING
+    pipeline.last_error = ''
+    pipeline.save(update_fields=['pipeline_type', 'default_impact', 'should_run', 'status', 'last_error', 'updated_at'])
+
+    LiveFeedPipelineLog.log(
+        pipeline=pipeline,
+        event_type=LiveFeedPipelineLog.EventType.START,
+        level=LiveFeedPipelineLog.LogLevel.INFO,
+        message='Pipeline requested to run',
+        details={'source': source.key, 'category_id': category.id, 'default_impact': default_impact},
+    )
+
+    pipeline_manager.request_reconcile()
+
+    source_map = source_definition_map()
+    return JsonResponse({'success': True, 'pipeline': _serialize_pipeline(pipeline, source_map)})
+
+
+@staff_member_required
+@require_POST
+def api_pipeline_start(request, pipeline_id: int):
+    pipeline = LiveFeedPipeline.objects.select_related('category').filter(id=pipeline_id).first()
+    if not pipeline:
+        return JsonResponse({'error': 'Pipeline not found'}, status=404)
+
+    source_map = source_definition_map()
+    source = source_map.get(pipeline.source)
+    if not source:
+        return JsonResponse({'error': f'Unsupported source: {pipeline.source}'}, status=400)
+
+    if int(pipeline.pipeline_type or 0) != int(source.pipeline_type):
+        return JsonResponse({'error': 'Pipeline source type configuration mismatch'}, status=400)
+
+    if int(pipeline.category.live_feed_type or 0) != int(pipeline.pipeline_type):
+        return JsonResponse({'error': 'Pipeline category type no longer matches pipeline type'}, status=400)
+
+    pipeline.should_run = True
+    pipeline.status = LiveFeedPipeline.Status.STARTING
+    pipeline.last_error = ''
+    pipeline.save(update_fields=['should_run', 'status', 'last_error', 'updated_at'])
+
+    LiveFeedPipelineLog.log(
+        pipeline=pipeline,
+        event_type=LiveFeedPipelineLog.EventType.START,
+        level=LiveFeedPipelineLog.LogLevel.INFO,
+        message='Pipeline requested to start',
+    )
+    pipeline_manager.request_reconcile()
+    return JsonResponse({'success': True, 'pipeline': _serialize_pipeline(pipeline, source_map)})
+
+
+@staff_member_required
+@require_POST
+def api_pipeline_stop(request, pipeline_id: int):
+    pipeline = LiveFeedPipeline.objects.select_related('category').filter(id=pipeline_id).first()
+    if not pipeline:
+        return JsonResponse({'error': 'Pipeline not found'}, status=404)
+
+    pipeline.should_run = False
+    pipeline.status = LiveFeedPipeline.Status.STOPPING
+    pipeline.save(update_fields=['should_run', 'status', 'updated_at'])
+
+    LiveFeedPipelineLog.log(
+        pipeline=pipeline,
+        event_type=LiveFeedPipelineLog.EventType.STOP,
+        level=LiveFeedPipelineLog.LogLevel.INFO,
+        message='Pipeline requested to stop',
+    )
+    pipeline_manager.stop_local_runner(pipeline.id)
+    pipeline_manager.request_reconcile()
+    source_map = source_definition_map()
+    return JsonResponse({'success': True, 'pipeline': _serialize_pipeline(pipeline, source_map)})
+
+
+@staff_member_required
+@require_POST
+def api_pipeline_update(request, pipeline_id: int):
+    pipeline = LiveFeedPipeline.objects.select_related('category').filter(id=pipeline_id).first()
+    if not pipeline:
+        return JsonResponse({'error': 'Pipeline not found'}, status=404)
+
+    try:
+        data = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    updated_fields: list[str] = []
+    details: dict[str, Any] = {}
+
+    if 'default_impact' in data:
+        default_impact = _normalize_impact(data.get('default_impact'), default=int(pipeline.default_impact or 2))
+        if int(pipeline.default_impact or 0) != default_impact:
+            pipeline.default_impact = default_impact
+            updated_fields.append('default_impact')
+            details['default_impact'] = default_impact
+
+    if not updated_fields:
+        source_map = source_definition_map()
+        return JsonResponse({'success': True, 'pipeline': _serialize_pipeline(pipeline, source_map), 'unchanged': True})
+
+    updated_fields.append('updated_at')
+    pipeline.save(update_fields=updated_fields)
+
+    LiveFeedPipelineLog.log(
+        pipeline=pipeline,
+        event_type=LiveFeedPipelineLog.EventType.UPDATE,
+        level=LiveFeedPipelineLog.LogLevel.INFO,
+        message='Pipeline settings updated',
+        details=details,
+    )
+    source_map = source_definition_map()
+    return JsonResponse({'success': True, 'pipeline': _serialize_pipeline(pipeline, source_map)})
+
+
+@staff_member_required
+@require_POST
+def api_pipeline_delete(request, pipeline_id: int):
+    pipeline = LiveFeedPipeline.objects.filter(id=pipeline_id).first()
+    if not pipeline:
+        return JsonResponse({'error': 'Pipeline not found'}, status=404)
+
+    if pipeline.should_run:
+        return JsonResponse({'error': 'Stop the pipeline before deleting it'}, status=400)
+
+    pipeline_manager.stop_local_runner(pipeline.id)
+    pipeline.delete()
+    pipeline_manager.request_reconcile()
+    return JsonResponse({'success': True})
 

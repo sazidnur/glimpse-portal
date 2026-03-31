@@ -201,3 +201,112 @@ class LiveFeedLog(models.Model):
         )
         cls.cleanup_if_needed()
         return entry
+
+
+class LiveFeedPipeline(models.Model):
+    class Status(models.TextChoices):
+        STOPPED = 'stopped', 'Stopped'
+        STARTING = 'starting', 'Starting'
+        RUNNING = 'running', 'Running'
+        STOPPING = 'stopping', 'Stopping'
+        ERROR = 'error', 'Error'
+
+    id = models.BigAutoField(primary_key=True)
+    source = models.CharField(max_length=60, db_index=True)
+    category = models.ForeignKey(Categories, on_delete=models.CASCADE, related_name='live_feed_pipelines')
+    pipeline_type = models.IntegerField(db_index=True)
+    default_impact = models.IntegerField(default=2)
+    should_run = models.BooleanField(default=False, db_index=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.STOPPED, db_index=True)
+    owner_instance = models.CharField(max_length=80, blank=True, default='')
+    last_started_at = models.DateTimeField(null=True, blank=True)
+    last_stopped_at = models.DateTimeField(null=True, blank=True)
+    last_activity_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default='')
+    total_seen = models.BigIntegerField(default=0)
+    total_published = models.BigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'live_feed_pipelines'
+        ordering = ['-updated_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['source', 'category'],
+                name='lfp_source_category_uniq',
+            )
+        ]
+        indexes = [
+            models.Index(fields=['should_run', 'status'], name='lfp_run_status_idx'),
+            models.Index(fields=['source', 'pipeline_type'], name='lfp_source_type_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.source} -> {self.category_id} ({self.status})"
+
+
+class LiveFeedPipelineLog(models.Model):
+    class LogLevel(models.IntegerChoices):
+        DEBUG = 0, 'Debug'
+        INFO = 1, 'Info'
+        WARNING = 2, 'Warning'
+        ERROR = 3, 'Error'
+
+    class EventType(models.TextChoices):
+        START = 'start', 'Start'
+        STOP = 'stop', 'Stop'
+        UPDATE = 'update', 'Update'
+        PUBLISH = 'publish', 'Publish'
+        ERROR = 'error', 'Error'
+
+    id = models.BigAutoField(primary_key=True)
+    pipeline = models.ForeignKey(
+        LiveFeedPipeline,
+        on_delete=models.CASCADE,
+        related_name='logs',
+        db_index=True,
+    )
+    event_type = models.CharField(max_length=20, choices=EventType.choices)
+    level = models.IntegerField(choices=LogLevel.choices, default=LogLevel.INFO)
+    message = models.TextField()
+    details = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'live_feed_pipeline_logs'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['pipeline', '-created_at'], name='lfpl_pipe_created_idx'),
+            models.Index(fields=['event_type', '-created_at'], name='lfpl_event_created_idx'),
+        ]
+
+    def __str__(self):
+        return f"[{self.get_level_display()}] pipeline={self.pipeline_id}: {self.message[:50]}"
+
+    @classmethod
+    def cleanup_if_needed(cls, threshold=250_000, delete_count=5_000):
+        total = cls.objects.count()
+        if total > threshold:
+            oldest_ids = list(
+                cls.objects.order_by('created_at')
+                .values_list('id', flat=True)[:delete_count]
+            )
+            if oldest_ids:
+                cls.objects.filter(id__in=oldest_ids).delete()
+                return len(oldest_ids)
+        return 0
+
+    @classmethod
+    def log(cls, pipeline, event_type, message, level=None, details=None):
+        if level is None:
+            level = cls.LogLevel.INFO
+        entry = cls.objects.create(
+            pipeline=pipeline,
+            event_type=event_type,
+            level=level,
+            message=message,
+            details=details,
+        )
+        cls.cleanup_if_needed()
+        return entry

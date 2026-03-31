@@ -32,6 +32,7 @@ REDIS_COMMAND_PREFIX = 'live_feed:cmd:'
 OWNER_TTL_SECONDS = 180
 COMMAND_QUEUE_TTL_SECONDS = 600
 SESSION_COSTS_TTL_SECONDS = 24 * 60 * 60
+HUB_STATE_TTL_SECONDS = 15 * 60
 
 
 @dataclass
@@ -66,6 +67,7 @@ class HubConnection:
         self._stop_event = threading.Event()
         self._reconnect_count = 0
         self._lock = threading.Lock()
+        self._reconnect_scheduled = False
 
     def _get_ws_url(self) -> str:
         worker_base = (getattr(settings, 'WORKER_BASE_URL', '') or '').rstrip('/')
@@ -83,6 +85,7 @@ class HubConnection:
             return False
 
         self.state.connecting = True
+        self._reconnect_scheduled = False
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_connection, daemon=True)
         self._thread.start()
@@ -95,6 +98,7 @@ class HubConnection:
                 self.ws.close()
             except Exception:
                 pass
+        self._reconnect_scheduled = False
         self.state.connected = False
         self.state.connecting = False
         self.manager._update_hub_redis(self.hub, self.state)
@@ -148,6 +152,7 @@ class HubConnection:
                 self.state.connected_at = datetime.now(timezone.utc)
                 self.state.last_error = None
                 self._reconnect_count = 0
+                self._reconnect_scheduled = False
             self._update_activity()
             self.manager._increment_cost('connects')
             self.manager._update_hub_redis(self.hub, self.state)
@@ -209,6 +214,8 @@ class HubConnection:
             logger.exception("WebSocket run failed for %s", self.hub)
             self.state.connecting = False
             self.state.last_error = str(e)
+            with self._lock:
+                self._reconnect_scheduled = False
             self.manager._release_hub_owner(self.hub)
 
     def _handle_message(self, data: dict):
@@ -263,9 +270,18 @@ class HubConnection:
         def reconnect():
             time.sleep(delay)
             if not self._stop_event.is_set():
-                self.state.connecting = True
+                with self._lock:
+                    self._reconnect_scheduled = False
+                    if self.state.connected or self.state.connecting:
+                        return
+                    self.state.connecting = True
                 self.manager._refresh_hub_owner(self.hub)
                 self._run_connection()
+
+        with self._lock:
+            if self._reconnect_scheduled:
+                return
+            self._reconnect_scheduled = True
 
         threading.Thread(target=reconnect, daemon=True).start()
 
@@ -486,6 +502,7 @@ class LiveFeedHubManager:
             'last_error': state.last_error or '',
         }
         r.hset(key, mapping=data)
+        r.expire(key, HUB_STATE_TTL_SECONDS)
 
     def _get_hub_state_redis(self, hub: str) -> Optional[dict]:
         """
@@ -505,11 +522,18 @@ class LiveFeedHubManager:
             self._decode_redis_value(k): self._decode_redis_value(v)
             for k, v in raw.items()
         }
+        connected = self._to_bool(decoded.get('connected', '0'))
+        connecting = self._to_bool(decoded.get('connecting', '0'))
+        owner = self._get_hub_owner(hub)
+        if (connected or connecting) and not owner:
+            connected = False
+            connecting = False
+
         return {
             'name': HUBS[hub]['name'],
             'location': HUBS[hub]['location'],
-            'connected': self._to_bool(decoded.get('connected', '0')),
-            'connecting': self._to_bool(decoded.get('connecting', '0')),
+            'connected': connected,
+            'connecting': connecting,
             'live_users': self._to_int(decoded.get('live_users', '0')),
             'admin_users': self._to_int(decoded.get('admin_users', '0')),
             'connected_at': decoded.get('connected_at') or None,
@@ -579,6 +603,9 @@ class LiveFeedHubManager:
         if conn.state.connected:
             self._refresh_hub_owner(hub)
             return {'success': True, 'already_connected': True}
+        if conn.state.connecting:
+            self._refresh_hub_owner(hub)
+            return {'success': True, 'already_connecting': True}
 
         started = conn.connect()
         self._ensure_inactivity_monitor()
@@ -625,8 +652,12 @@ class LiveFeedHubManager:
         states = {}
         for hub, conn in self.connections.items():
             redis_state = self._get_hub_state_redis(hub)
+            owner = self._get_hub_owner(hub)
             if redis_state is not None:
-                states[hub] = redis_state
+                states[hub] = {
+                    **redis_state,
+                    'owner': owner or '',
+                }
                 continue
 
             states[hub] = {
@@ -639,6 +670,7 @@ class LiveFeedHubManager:
                 'connected_at': conn.state.connected_at.isoformat() if conn.state.connected_at else None,
                 'last_activity': conn.state.last_activity.isoformat() if conn.state.last_activity else None,
                 'last_error': conn.state.last_error,
+                'owner': owner or '',
             }
         return states
 
@@ -651,17 +683,18 @@ class LiveFeedHubManager:
         if hub not in self.connections:
             return {'success': False, 'error': f'Unknown hub: {hub}'}
 
+        if not _routed:
+            owner = self._get_hub_owner(hub)
+            if owner and owner != self.instance_id:
+                queued = self._enqueue_command(owner, {
+                    'action': 'publish',
+                    'hub': hub,
+                    'message': message,
+                })
+                return {'success': queued, 'routed': queued, 'owner': owner}
+
         conn = self.connections[hub]
         if not conn.state.connected:
-            if not _routed:
-                owner = self._get_hub_owner(hub)
-                if owner and owner != self.instance_id:
-                    queued = self._enqueue_command(owner, {
-                        'action': 'publish',
-                        'hub': hub,
-                        'message': message,
-                    })
-                    return {'success': queued, 'routed': queued, 'owner': owner}
             return {'success': False, 'error': f'Hub {hub} not connected'}
 
         success = conn.send(message)
@@ -704,13 +737,19 @@ class LiveFeedHubManager:
 
         if hub == 'all':
             results = self.send_to_all(message)
-            success = any(r.get('success') for r in results.values())
+            successful_hubs = [hub_name for hub_name, result in results.items() if result.get('success')]
+            failed_hubs = [hub_name for hub_name, result in results.items() if not result.get('success')]
+            success = bool(successful_hubs)
             if success:
                 self._increment_cost('publishes')
                 self._log_event(
                     'all', 'publish',
-                    f'Published to all hubs: "{title[:50]}"',
-                    details={'category_id': category_id, 'hubs': list(results.keys())}
+                    f'Published to {len(successful_hubs)} hub(s): "{title[:50]}"',
+                    details={
+                        'category_id': category_id,
+                        'successful_hubs': successful_hubs,
+                        'failed_hubs': failed_hubs,
+                    }
                 )
             return {'success': success, 'results': results}
         else:
@@ -755,6 +794,10 @@ class LiveFeedHubManager:
             for hub, conn in self.connections.items():
                 if conn.state.connected or conn.state.connecting:
                     self._refresh_hub_owner(hub)
+                    try:
+                        self._update_hub_redis(hub, conn.state)
+                    except Exception:
+                        pass
 
             any_connected = any(
                 conn.state.connected for conn in self.connections.values()

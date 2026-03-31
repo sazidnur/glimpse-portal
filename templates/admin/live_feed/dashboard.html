@@ -235,6 +235,82 @@
         </div>
     </div>
 
+    <!-- Pipeline Automation -->
+    <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+        <div class="px-5 py-4 border-b border-base-200 dark:border-base-800 flex items-center justify-between">
+            <div>
+                <h2 class="font-semibold text-font-important-light dark:text-font-important-dark">Pipeline</h2>
+                <p class="mt-1 text-xs text-font-subtle-light dark:text-font-subtle-dark">System-wide server pipelines for automated live feed publishing</p>
+            </div>
+            <button type="button" id="btn-pipeline-refresh" class="px-2 py-1 text-xs font-medium cursor-pointer text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded transition-colors">Refresh</button>
+        </div>
+        <div class="p-5 grid grid-cols-1 xl:grid-cols-3 gap-6">
+            <div class="xl:col-span-1 border border-base-200 rounded-lg p-4 dark:border-base-800 bg-base-50/60 dark:bg-base-950/30">
+                <h3 class="font-medium text-sm text-font-important-light dark:text-font-important-dark mb-3">Run Pipeline</h3>
+                <div class="flex flex-col gap-4">
+                    <div class="flex flex-col gap-2">
+                        <label class="block text-xs font-medium text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Pipeline Source</label>
+                        <select id="pipe-source" class="w-full px-3 py-2 text-sm rounded-md border border-base-200 bg-white text-font-default-light focus:ring-2 focus:ring-primary-500 focus:border-primary-500 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark">
+                            {% for source in pipeline_sources %}
+                            <option value="{{ source.key }}" data-pipeline-type="{{ source.pipeline_type }}">{{ source.label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <label class="block text-xs font-medium text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Target Category</label>
+                        <select id="pipe-category" class="w-full px-3 py-2 text-sm rounded-md border border-base-200 bg-white text-font-default-light focus:ring-2 focus:ring-primary-500 focus:border-primary-500 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark"></select>
+                        <p id="pipe-category-hint" class="text-xs text-font-subtle-light dark:text-font-subtle-dark hidden">No enabled category matches this pipeline type.</p>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <label class="block text-xs font-medium text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Default Impact</label>
+                        <select id="pipe-default-impact" class="w-full px-3 py-2 text-sm rounded-md border border-base-200 bg-white text-font-default-light focus:ring-2 focus:ring-primary-500 focus:border-primary-500 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark">
+                            <option value="0">0 - Normal</option>
+                            <option value="1">1 - Important</option>
+                            <option value="2" selected>2 - Critical</option>
+                        </select>
+                    </div>
+                    <button type="button" id="btn-pipe-run" class="w-full px-3 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                        Run Pipeline
+                    </button>
+                </div>
+            </div>
+            <div class="xl:col-span-2">
+                <div class="overflow-x-auto border border-base-200 rounded-lg dark:border-base-800">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-xs uppercase tracking-wider text-font-subtle-light dark:text-font-subtle-dark bg-base-50 dark:bg-base-800">
+                                <th class="px-4 py-3 font-medium">Source</th>
+                                <th class="px-4 py-3 font-medium">Category</th>
+                                <th class="px-4 py-3 font-medium">Type</th>
+                                <th class="px-4 py-3 font-medium">Status</th>
+                                <th class="px-4 py-3 font-medium">Impact</th>
+                                <th class="px-4 py-3 font-medium">Published</th>
+                                <th class="px-4 py-3 font-medium">Last Activity</th>
+                                <th class="px-4 py-3 font-medium text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pipeline-table" class="divide-y divide-base-100 dark:divide-base-800">
+                            <tr>
+                                <td colspan="8" class="px-4 py-8 text-center text-sm text-font-subtle-light dark:text-font-subtle-dark">
+                                    No pipelines configured.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="mt-3 overflow-y-auto border border-base-200 rounded-lg dark:border-base-800" style="max-height: 12rem;">
+                    <table class="w-full text-sm">
+                        <tbody id="pipeline-log-table" class="divide-y divide-base-100 dark:divide-base-800 font-mono text-xs">
+                            <tr>
+                                <td class="px-4 py-4 text-center text-font-subtle-light dark:text-font-subtle-dark">No pipeline logs yet.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Activity Log -->
     <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
         <div class="px-5 py-4 border-b border-base-200 dark:border-base-800 flex items-center justify-between">
@@ -719,6 +795,287 @@
         document.addEventListener('DOMContentLoaded', init);
     } else {
         init();
+    }
+})();
+</script>
+<script>
+(function() {
+    'use strict';
+
+    const SOURCES = {{ pipeline_sources_json|safe }};
+    const CATEGORIES = {{ categories_json|safe }};
+    const POLL_MS = 5000;
+
+    const sourceMap = new Map((SOURCES || []).map(s => [String(s.key), s]));
+    const state = {
+        pipelines: [],
+        logs: [],
+    };
+
+    function csrf() {
+        return document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';
+    }
+
+    async function api(url, method = 'GET', body = null) {
+        const opts = {
+            method,
+            headers: { 'X-CSRFToken': csrf(), 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+        };
+        if (body) opts.body = JSON.stringify(body);
+        const res = await fetch(url, opts);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            throw new Error(data.error || `HTTP ${res.status}`);
+        }
+        return data;
+    }
+
+    function esc(value) {
+        const div = document.createElement('div');
+        div.textContent = value == null ? '' : String(value);
+        return div.innerHTML;
+    }
+
+    function formatTs(value) {
+        if (!value) return '-';
+        const dt = new Date(value);
+        if (Number.isNaN(dt.getTime())) return '-';
+        return dt.toLocaleString();
+    }
+
+    function sourceType() {
+        const sourceSelect = document.getElementById('pipe-source');
+        const key = sourceSelect ? String(sourceSelect.value || '') : '';
+        const def = sourceMap.get(key);
+        return def ? Number(def.pipeline_type || 0) : 0;
+    }
+
+    function renderPipelineCategoryOptions() {
+        const sourceSelect = document.getElementById('pipe-source');
+        const categorySelect = document.getElementById('pipe-category');
+        const hint = document.getElementById('pipe-category-hint');
+        const runBtn = document.getElementById('btn-pipe-run');
+        if (!sourceSelect || !categorySelect || !hint || !runBtn) return;
+
+        const neededType = sourceType();
+        const categories = (CATEGORIES || []).filter(c => c.enabled && Number(c.live_feed_type || 0) === neededType);
+
+        if (!categories.length) {
+            categorySelect.innerHTML = '';
+            categorySelect.disabled = true;
+            runBtn.disabled = true;
+            hint.classList.remove('hidden');
+            return;
+        }
+
+        categorySelect.innerHTML = categories.map(c => `<option value="${Number(c.id)}">${esc(c.name)}</option>`).join('');
+        categorySelect.disabled = false;
+        runBtn.disabled = false;
+        hint.classList.add('hidden');
+    }
+
+    function statusBadge(status) {
+        const s = String(status || '').toLowerCase();
+        if (s === 'running') {
+            return '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Running</span>';
+        }
+        if (s === 'starting' || s === 'stopping') {
+            return `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">${esc(status)}</span>`;
+        }
+        if (s === 'error') {
+            return '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">Error</span>';
+        }
+        return '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-base-100 text-font-subtle-light dark:bg-base-800 dark:text-font-subtle-dark">Stopped</span>';
+    }
+
+    function renderPipelines() {
+        const body = document.getElementById('pipeline-table');
+        if (!body) return;
+
+        if (!state.pipelines.length) {
+            body.innerHTML = '<tr><td colspan="8" class="px-4 py-8 text-center text-sm text-font-subtle-light dark:text-font-subtle-dark">No pipelines configured.</td></tr>';
+            return;
+        }
+
+        const impactOptions = [0, 1, 2];
+        body.innerHTML = state.pipelines.map(p => {
+            const startStopBtn = p.should_run
+                ? `<button type="button" data-action="stop" data-id="${p.id}" class="px-2 py-1 text-xs font-medium rounded cursor-pointer bg-red-600 text-white hover:bg-red-700">Stop</button>`
+                : `<button type="button" data-action="start" data-id="${p.id}" class="px-2 py-1 text-xs font-medium rounded cursor-pointer bg-primary-600 text-white hover:bg-primary-700">Start</button>`;
+            const deleteBtn = p.should_run
+                ? `<button type="button" disabled class="px-2 py-1 text-xs font-medium rounded bg-base-200 text-font-subtle-light dark:bg-base-800 dark:text-font-subtle-dark cursor-not-allowed">Delete</button>`
+                : `<button type="button" data-action="delete" data-id="${p.id}" class="px-2 py-1 text-xs font-medium rounded cursor-pointer bg-base-100 hover:bg-base-200 text-font-default-light dark:bg-base-800 dark:hover:bg-base-700 dark:text-font-default-dark">Delete</button>`;
+            const impact = Number(p.default_impact || 0);
+            const impactControl = `<div class="inline-flex items-center gap-1">
+                <select data-role="impact" data-id="${p.id}" class="px-1 py-1 text-xs rounded border border-base-200 bg-white text-font-default-light dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark">
+                    ${impactOptions.map(v => `<option value="${v}" ${impact === v ? 'selected' : ''}>${v}</option>`).join('')}
+                </select>
+                <button type="button" data-action="impact" data-id="${p.id}" class="px-2 py-1 text-xs font-medium rounded cursor-pointer bg-base-100 hover:bg-base-200 text-font-default-light dark:bg-base-800 dark:hover:bg-base-700 dark:text-font-default-dark">Save</button>
+            </div>`;
+
+            const activity = p.last_activity_at ? formatTs(p.last_activity_at) : '-';
+            const error = p.last_error ? `<div class="mt-1 text-[11px] text-red-600 dark:text-red-400 max-w-xs truncate" title="${esc(p.last_error)}">${esc(p.last_error)}</div>` : '';
+
+            return `<tr>
+                <td class="px-4 py-3 text-sm text-font-default-light dark:text-font-default-dark">${esc(p.source_label || p.source)}</td>
+                <td class="px-4 py-3 text-sm text-font-default-light dark:text-font-default-dark">${esc(p.category_name || ('#' + p.category_id))}</td>
+                <td class="px-4 py-3 text-sm text-font-default-light dark:text-font-default-dark">${Number(p.pipeline_type || 0)}</td>
+                <td class="px-4 py-3 text-sm">${statusBadge(p.status)}${error}</td>
+                <td class="px-4 py-3 text-sm">${impactControl}</td>
+                <td class="px-4 py-3 text-sm text-font-default-light dark:text-font-default-dark">${Number(p.total_published || 0)}</td>
+                <td class="px-4 py-3 text-sm text-font-subtle-light dark:text-font-subtle-dark">${activity}</td>
+                <td class="px-4 py-3 text-sm text-right"><div class="inline-flex gap-1">${startStopBtn}${deleteBtn}</div></td>
+            </tr>`;
+        }).join('');
+    }
+
+    function renderPipelineLogs() {
+        const body = document.getElementById('pipeline-log-table');
+        if (!body) return;
+
+        if (!state.logs.length) {
+            body.innerHTML = '<tr><td class="px-4 py-4 text-center text-font-subtle-light dark:text-font-subtle-dark">No pipeline logs yet.</td></tr>';
+            return;
+        }
+
+        body.innerHTML = state.logs.map(log => {
+            const level = String(log.level_display || '').toUpperCase();
+            const ts = formatTs(log.created_at);
+            return `<tr>
+                <td class="px-4 py-2 text-font-subtle-light dark:text-font-subtle-dark">${esc(ts)}</td>
+                <td class="px-4 py-2 text-font-default-light dark:text-font-default-dark">[${esc(level)}] Pipeline #${Number(log.pipeline_id || 0)} - ${esc(log.message || '')}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    async function fetchPipelines() {
+        const data = await api('{% url "live_feed:api_pipelines" %}');
+        state.pipelines = data.pipelines || [];
+        renderPipelines();
+    }
+
+    async function fetchPipelineLogs() {
+        const data = await api('{% url "live_feed:api_pipeline_logs" %}?limit=80');
+        state.logs = data.logs || [];
+        renderPipelineLogs();
+    }
+
+    async function refreshPipelineData() {
+        try {
+            await Promise.all([fetchPipelines(), fetchPipelineLogs()]);
+        } catch (err) {
+            console.error('Pipeline refresh failed:', err);
+        }
+    }
+
+    async function runPipeline() {
+        const source = document.getElementById('pipe-source')?.value || '';
+        const category = document.getElementById('pipe-category')?.value || '';
+        const defaultImpact = Number(document.getElementById('pipe-default-impact')?.value || 2);
+        if (!source || !category) return;
+
+        const btn = document.getElementById('btn-pipe-run');
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Starting...';
+        }
+
+        try {
+            await api('{% url "live_feed:api_pipeline_run" %}', 'POST', {
+                source,
+                category_id: Number(category),
+                default_impact: defaultImpact,
+            });
+            await refreshPipelineData();
+        } catch (err) {
+            alert(err.message || 'Failed to run pipeline');
+        } finally {
+            if (btn) {
+                btn.textContent = 'Run Pipeline';
+                renderPipelineCategoryOptions();
+            }
+        }
+    }
+
+    async function startPipeline(id) {
+        await api(`{% url "live_feed:api_pipeline_start" 0 %}`.replace('/0/start/', `/${id}/start/`), 'POST');
+        await refreshPipelineData();
+    }
+
+    async function stopPipeline(id) {
+        await api(`{% url "live_feed:api_pipeline_stop" 0 %}`.replace('/0/stop/', `/${id}/stop/`), 'POST');
+        await refreshPipelineData();
+    }
+
+    async function deletePipeline(id) {
+        if (!confirm(`Delete pipeline #${id}?`)) return;
+        await api(`{% url "live_feed:api_pipeline_delete" 0 %}`.replace('/0/delete/', `/${id}/delete/`), 'POST');
+        await refreshPipelineData();
+    }
+
+    async function updatePipelineImpact(id, value) {
+        await api(`{% url "live_feed:api_pipeline_update" 0 %}`.replace('/0/update/', `/${id}/update/`), 'POST', {
+            default_impact: Number(value),
+        });
+        await refreshPipelineData();
+    }
+
+    function bindPipelineEvents() {
+        const sourceSelect = document.getElementById('pipe-source');
+        const runBtn = document.getElementById('btn-pipe-run');
+        const refreshBtn = document.getElementById('btn-pipeline-refresh');
+        const table = document.getElementById('pipeline-table');
+
+        if (sourceSelect) {
+            sourceSelect.addEventListener('change', renderPipelineCategoryOptions);
+        }
+        if (runBtn) {
+            runBtn.addEventListener('click', runPipeline);
+        }
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', refreshPipelineData);
+        }
+        if (table) {
+            table.addEventListener('click', async (event) => {
+                const btn = event.target.closest('button[data-action]');
+                if (!btn) return;
+                const action = btn.dataset.action;
+                const id = Number(btn.dataset.id || 0);
+                if (!id) return;
+                btn.disabled = true;
+                try {
+                    if (action === 'start') await startPipeline(id);
+                    if (action === 'stop') await stopPipeline(id);
+                    if (action === 'delete') await deletePipeline(id);
+                    if (action === 'impact') {
+                        const select = table.querySelector(`select[data-role="impact"][data-id="${id}"]`);
+                        const impactValue = Number(select?.value ?? 0);
+                        await updatePipelineImpact(id, impactValue);
+                    }
+                } catch (err) {
+                    alert(err.message || 'Pipeline action failed');
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+        }
+    }
+
+    function initPipeline() {
+        const section = document.getElementById('pipeline-table');
+        if (!section) return;
+
+        bindPipelineEvents();
+        renderPipelineCategoryOptions();
+        refreshPipelineData();
+        setInterval(refreshPipelineData, POLL_MS);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initPipeline);
+    } else {
+        initPipeline();
     }
 })();
 </script>
