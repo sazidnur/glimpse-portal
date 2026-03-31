@@ -8,6 +8,7 @@ from django.views.decorators.http import require_http_methods, require_GET, requ
 from django.contrib.admin.views.decorators import staff_member_required
 from django.template.response import TemplateResponse
 from django.contrib import admin
+from django.db import OperationalError, ProgrammingError
 
 from portal.models import Categories
 from .manager import hub_manager, HUBS
@@ -48,6 +49,19 @@ def _serialize_pipeline(pipeline: LiveFeedPipeline, source_map: dict[str, Any]) 
         'updated_at': pipeline.updated_at.isoformat() if pipeline.updated_at else None,
     }
     return data
+
+
+def _pipeline_schema_error_response(exc: Exception) -> JsonResponse:
+    return JsonResponse(
+        {
+            'error': (
+                'Live feed pipeline schema is out of date. '
+                'Run migrations (python manage.py migrate).'
+            ),
+            'details': str(exc),
+        },
+        status=503,
+    )
 
 
 @staff_member_required
@@ -277,12 +291,15 @@ def api_pipeline_sources(request):
 @require_GET
 def api_pipelines(request):
     source_map = source_definition_map()
-    rows = (
-        LiveFeedPipeline.objects
-        .select_related('category')
-        .order_by('-updated_at')
-    )
-    pipelines = [_serialize_pipeline(row, source_map) for row in rows]
+    try:
+        rows = (
+            LiveFeedPipeline.objects
+            .select_related('category')
+            .order_by('-updated_at')
+        )
+        pipelines = [_serialize_pipeline(row, source_map) for row in rows]
+    except (ProgrammingError, OperationalError) as exc:
+        return _pipeline_schema_error_response(exc)
     return JsonResponse({'pipelines': pipelines})
 
 
@@ -292,7 +309,10 @@ def api_pipeline_logs(request):
     pipeline_id = request.GET.get('pipeline_id')
     limit = min(max(int(request.GET.get('limit', 100)), 1), 500)
 
-    qs = LiveFeedPipelineLog.objects.select_related('pipeline')
+    try:
+        qs = LiveFeedPipelineLog.objects.select_related('pipeline')
+    except (ProgrammingError, OperationalError) as exc:
+        return _pipeline_schema_error_response(exc)
     if pipeline_id:
         try:
             qs = qs.filter(pipeline_id=int(pipeline_id))
@@ -300,17 +320,20 @@ def api_pipeline_logs(request):
             return JsonResponse({'error': 'pipeline_id must be integer'}, status=400)
 
     logs = []
-    for row in qs.order_by('-created_at')[:limit]:
-        logs.append({
-            'id': row.id,
-            'pipeline_id': row.pipeline_id,
-            'event_type': row.event_type,
-            'level': row.level,
-            'level_display': row.get_level_display(),
-            'message': row.message,
-            'details': row.details or {},
-            'created_at': row.created_at.isoformat(),
-        })
+    try:
+        for row in qs.order_by('-created_at')[:limit]:
+            logs.append({
+                'id': row.id,
+                'pipeline_id': row.pipeline_id,
+                'event_type': row.event_type,
+                'level': row.level,
+                'level_display': row.get_level_display(),
+                'message': row.message,
+                'details': row.details or {},
+                'created_at': row.created_at.isoformat(),
+            })
+    except (ProgrammingError, OperationalError) as exc:
+        return _pipeline_schema_error_response(exc)
     return JsonResponse({'logs': logs})
 
 
