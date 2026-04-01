@@ -216,6 +216,7 @@ class LiveFeedPipeline(models.Model):
     category = models.ForeignKey(Categories, on_delete=models.CASCADE, related_name='live_feed_pipelines')
     pipeline_type = models.IntegerField(db_index=True)
     default_impact = models.IntegerField(default=2)
+    config = models.JSONField(default=dict, blank=True)
     should_run = models.BooleanField(default=False, db_index=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.STOPPED, db_index=True)
     owner_instance = models.CharField(max_length=80, blank=True, default='')
@@ -310,3 +311,122 @@ class LiveFeedPipelineLog(models.Model):
         )
         cls.cleanup_if_needed()
         return entry
+
+
+class OpenAIJob(models.Model):
+    class Mode(models.TextChoices):
+        REALTIME = 'realtime', 'Realtime'
+        BATCH = 'batch', 'Batch'
+
+    class Status(models.TextChoices):
+        QUEUED = 'queued', 'Queued'
+        REALTIME_QUEUED = 'realtime_queued', 'Realtime Queued'
+        REALTIME_RUNNING = 'realtime_running', 'Realtime Running'
+        BATCH_QUEUED = 'batch_queued', 'Batch Queued'
+        BATCH_SUBMITTED = 'batch_submitted', 'Batch Submitted'
+        BATCH_TIMEOUT = 'batch_timeout', 'Batch Timeout'
+        COMPLETED = 'completed', 'Completed'
+        PUBLISHED = 'published', 'Published'
+        FAILED = 'failed', 'Failed'
+        CANCEL_REQUESTED = 'cancel_requested', 'Cancel Requested'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    id = models.BigAutoField(primary_key=True)
+    pipeline = models.ForeignKey(
+        LiveFeedPipeline,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='openai_jobs',
+    )
+    source = models.CharField(max_length=80, db_index=True)
+    source_item_id = models.CharField(max_length=120, db_index=True)
+    target_lang = models.CharField(max_length=16, default='en', db_index=True)
+    target_hub = models.CharField(max_length=20, default='all')
+    category_id = models.BigIntegerField(db_index=True)
+    impact = models.IntegerField(default=0)
+    timestamp = models.CharField(max_length=64, blank=True, default='')
+    mode = models.CharField(max_length=20, choices=Mode.choices, default=Mode.REALTIME, db_index=True)
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.QUEUED, db_index=True)
+    cancel_requested = models.BooleanField(default=False, db_index=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+
+    system_prompt = models.TextField(blank=True, default='')
+    user_payload = models.JSONField(default=dict, blank=True)
+    response_schema = models.JSONField(default=dict, blank=True)
+    original_title = models.TextField(blank=True, default='')
+    translated_title = models.TextField(blank=True, default='')
+
+    provider_batch_id = models.CharField(max_length=120, blank=True, default='', db_index=True)
+    provider_response_id = models.CharField(max_length=120, blank=True, default='', db_index=True)
+    celery_task_id = models.CharField(max_length=120, blank=True, default='')
+    batch_deadline_at = models.DateTimeField(null=True, blank=True)
+
+    provider_request = models.JSONField(null=True, blank=True)
+    provider_response = models.JSONField(null=True, blank=True)
+    publish_result = models.JSONField(null=True, blank=True)
+    error_message = models.TextField(blank=True, default='')
+
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'openai_jobs'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['source', 'source_item_id', 'target_lang'],
+                name='openai_job_source_item_lang_uniq',
+            )
+        ]
+        indexes = [
+            models.Index(fields=['status', 'mode'], name='openai_job_status_mode_idx'),
+            models.Index(fields=['provider_batch_id', 'status'], name='openai_job_batch_status_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.source}:{self.source_item_id} [{self.mode}/{self.status}]"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in {
+            self.Status.PUBLISHED,
+            self.Status.FAILED,
+            self.Status.CANCELLED,
+        }
+
+
+class OpenAIJobLog(models.Model):
+    class Level(models.IntegerChoices):
+        DEBUG = 0, 'Debug'
+        INFO = 1, 'Info'
+        WARNING = 2, 'Warning'
+        ERROR = 3, 'Error'
+
+    id = models.BigAutoField(primary_key=True)
+    job = models.ForeignKey(OpenAIJob, on_delete=models.CASCADE, related_name='logs', db_index=True)
+    level = models.IntegerField(choices=Level.choices, default=Level.INFO)
+    message = models.TextField()
+    details = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'openai_job_logs'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['job', '-created_at'], name='openai_job_log_job_created_idx'),
+            models.Index(fields=['level', '-created_at'], name='oaj_log_level_created_idx'),
+        ]
+
+    def __str__(self):
+        return f"[{self.get_level_display()}] job={self.job_id}: {self.message[:50]}"
+
+    @classmethod
+    def log(cls, job: OpenAIJob, message: str, *, level: int = Level.INFO, details: dict | None = None):
+        return cls.objects.create(
+            job=job,
+            level=level,
+            message=message,
+            details=details,
+        )

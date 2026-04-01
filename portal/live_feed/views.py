@@ -37,6 +37,7 @@ def _serialize_pipeline(pipeline: LiveFeedPipeline, source_map: dict[str, Any]) 
         'category_id': pipeline.category_id,
         'category_name': pipeline.category.name if pipeline.category_id else '',
         'default_impact': int(pipeline.default_impact or 0),
+        'config': pipeline.config if isinstance(pipeline.config, dict) else {},
         'should_run': bool(pipeline.should_run),
         'status': pipeline.status,
         'owner_instance': pipeline.owner_instance or '',
@@ -62,7 +63,6 @@ def _pipeline_schema_error_response(exc: Exception) -> JsonResponse:
         },
         status=503,
     )
-
 
 @staff_member_required
 @require_GET
@@ -95,6 +95,16 @@ def dashboard_view(request):
 
 @staff_member_required
 @require_GET
+def pipeline_manager_view(request):
+    context = {
+        **admin.site.each_context(request),
+        'title': 'Pipeline Configuration',
+    }
+    return TemplateResponse(request, 'admin/live_feed/pipelines.html', context)
+
+
+@staff_member_required
+@require_GET
 def api_hubs(request):
     refresh = request.GET.get('refresh', '').strip().lower() in {'1', 'true', 'yes'}
     if refresh:
@@ -105,7 +115,6 @@ def api_hubs(request):
 
     states = hub_manager.get_hub_states()
     return JsonResponse({'hubs': states})
-
 
 @staff_member_required
 @require_POST
@@ -124,7 +133,6 @@ def api_connect(request):
         result = hub_manager.connect_hub(hub)
         return JsonResponse(result)
 
-
 @staff_member_required
 @require_POST
 def api_disconnect(request):
@@ -141,7 +149,6 @@ def api_disconnect(request):
     else:
         result = hub_manager.disconnect_hub(hub)
         return JsonResponse(result)
-
 
 @staff_member_required
 @require_POST
@@ -186,7 +193,6 @@ def api_publish(request):
 
     return JsonResponse(result)
 
-
 @staff_member_required
 @require_GET
 def api_logs(request):
@@ -217,7 +223,6 @@ def api_logs(request):
 
     return JsonResponse({'logs': logs})
 
-
 @staff_member_required
 @require_POST
 def api_clear_logs(request):
@@ -234,7 +239,6 @@ def api_clear_logs(request):
         count, _ = LiveFeedLog.objects.all().delete()
 
     return JsonResponse({'deleted': count})
-
 
 @staff_member_required
 @require_GET
@@ -254,20 +258,17 @@ def api_stream(request):
         'snapshot': snapshot,
     })
 
-
 @staff_member_required
 @require_GET
 def api_costs(request):
     costs = hub_manager.get_costs()
     return JsonResponse(costs)
 
-
 @staff_member_required
 @require_POST
 def api_reset_costs(request):
     hub_manager.reset_costs()
     return JsonResponse({'success': True})
-
 
 @staff_member_required
 @require_GET
@@ -280,12 +281,10 @@ def api_categories(request):
     )
     return JsonResponse({'categories': categories})
 
-
 @staff_member_required
 @require_GET
 def api_pipeline_sources(request):
     return JsonResponse({'sources': _pipeline_sources_payload()})
-
 
 @staff_member_required
 @require_GET
@@ -301,7 +300,6 @@ def api_pipelines(request):
     except (ProgrammingError, OperationalError) as exc:
         return _pipeline_schema_error_response(exc)
     return JsonResponse({'pipelines': pipelines})
-
 
 @staff_member_required
 @require_GET
@@ -367,6 +365,25 @@ def _normalize_impact(value: Any, *, default: int = 2) -> int:
     return max(0, min(2, parsed))
 
 
+def _normalize_pipeline_config(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError('config must be a JSON object')
+
+    normalized: dict[str, Any] = {}
+    for raw_key, raw_value in value.items():
+        key = str(raw_key or '').strip()
+        if not key:
+            continue
+        normalized[key] = raw_value
+
+    try:
+        json.dumps(normalized)
+    except TypeError as exc:
+        raise ValueError('config contains non-JSON-serializable values') from exc
+    return normalized
+
 @staff_member_required
 @require_POST
 def api_pipeline_run(request):
@@ -377,6 +394,13 @@ def api_pipeline_run(request):
 
     source_key = str(data.get('source') or '').strip()
     default_impact = _normalize_impact(data.get('default_impact'), default=2)
+    config_payload: dict[str, Any] | None = None
+    if 'config' in data:
+        try:
+            config_payload = _normalize_pipeline_config(data.get('config'))
+        except ValueError as exc:
+            return JsonResponse({'error': str(exc)}, status=400)
+
     category_raw = data.get('category_id')
     try:
         category_id = int(category_raw)
@@ -393,29 +417,38 @@ def api_pipeline_run(request):
         defaults={
             'pipeline_type': int(source.pipeline_type),
             'default_impact': default_impact,
+            'config': config_payload or {},
         }
     )
 
+    if config_payload is None:
+        config_payload = pipeline.config if isinstance(pipeline.config, dict) else {}
+
     pipeline.pipeline_type = int(source.pipeline_type)
     pipeline.default_impact = default_impact
+    pipeline.config = config_payload
     pipeline.should_run = True
     pipeline.status = LiveFeedPipeline.Status.STARTING
     pipeline.last_error = ''
-    pipeline.save(update_fields=['pipeline_type', 'default_impact', 'should_run', 'status', 'last_error', 'updated_at'])
+    pipeline.save(update_fields=['pipeline_type', 'default_impact', 'config', 'should_run', 'status', 'last_error', 'updated_at'])
 
     LiveFeedPipelineLog.log(
         pipeline=pipeline,
         event_type=LiveFeedPipelineLog.EventType.START,
         level=LiveFeedPipelineLog.LogLevel.INFO,
         message='Pipeline requested to run',
-        details={'source': source.key, 'category_id': category.id, 'default_impact': default_impact},
+        details={
+            'source': source.key,
+            'category_id': category.id,
+            'default_impact': default_impact,
+            'config_keys': sorted(config_payload.keys()),
+        },
     )
 
     pipeline_manager.request_reconcile()
 
     source_map = source_definition_map()
     return JsonResponse({'success': True, 'pipeline': _serialize_pipeline(pipeline, source_map)})
-
 
 @staff_member_required
 @require_POST
@@ -449,7 +482,6 @@ def api_pipeline_start(request, pipeline_id: int):
     pipeline_manager.request_reconcile()
     return JsonResponse({'success': True, 'pipeline': _serialize_pipeline(pipeline, source_map)})
 
-
 @staff_member_required
 @require_POST
 def api_pipeline_stop(request, pipeline_id: int):
@@ -471,7 +503,6 @@ def api_pipeline_stop(request, pipeline_id: int):
     pipeline_manager.request_reconcile()
     source_map = source_definition_map()
     return JsonResponse({'success': True, 'pipeline': _serialize_pipeline(pipeline, source_map)})
-
 
 @staff_member_required
 @require_POST
@@ -495,6 +526,17 @@ def api_pipeline_update(request, pipeline_id: int):
             updated_fields.append('default_impact')
             details['default_impact'] = default_impact
 
+    if 'config' in data:
+        try:
+            config_payload = _normalize_pipeline_config(data.get('config'))
+        except ValueError as exc:
+            return JsonResponse({'error': str(exc)}, status=400)
+        existing_config = pipeline.config if isinstance(pipeline.config, dict) else {}
+        if existing_config != config_payload:
+            pipeline.config = config_payload
+            updated_fields.append('config')
+            details['config_keys'] = sorted(config_payload.keys())
+
     if not updated_fields:
         source_map = source_definition_map()
         return JsonResponse({'success': True, 'pipeline': _serialize_pipeline(pipeline, source_map), 'unchanged': True})
@@ -511,7 +553,6 @@ def api_pipeline_update(request, pipeline_id: int):
     )
     source_map = source_definition_map()
     return JsonResponse({'success': True, 'pipeline': _serialize_pipeline(pipeline, source_map)})
-
 
 @staff_member_required
 @require_POST

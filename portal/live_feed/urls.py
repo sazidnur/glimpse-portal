@@ -5,6 +5,7 @@ app_name = 'live_feed'
 
 urlpatterns = [
     path('', views.dashboard_view, name='dashboard'),
+    path('pipelines/', views.pipeline_manager_view, name='pipelines'),
     path('api/hubs/', views.api_hubs, name='api_hubs'),
     path('api/connect/', views.api_connect, name='api_connect'),
     path('api/disconnect/', views.api_disconnect, name='api_disconnect'),

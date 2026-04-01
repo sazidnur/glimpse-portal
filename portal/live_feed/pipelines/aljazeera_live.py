@@ -89,6 +89,31 @@ def get_source_definition() -> PipelineSourceDefinition:
     )
 
 
+def build_translation_request(title: str) -> dict[str, Any]:
+    return {
+        'system_prompt': (
+            'You are a news editor. Translate into Bengali headline style (live update). Prioritize news and perspectives relevant to Muslim, Bangladeshi, and Palestinian communities.\n'
+            'Rules:\n'
+            '- Use concise, natural Bengali\n'
+            '- Maintain factual accuracy\n'
+            '- No extra words or explanation\n'
+            '- Tone: urgent but neutral\n'
+            'Return JSON only, strictly matching the provided schema.'
+        ),
+        'user_payload': {
+            'title': str(title or ''),
+        },
+        'response_schema': {
+            'type': 'object',
+            'properties': {
+                't': {'type': 'string'},
+            },
+            'required': ['t'],
+            'additionalProperties': False,
+        },
+    }
+
+
 def extract_children_from_ws_message(message: dict[str, Any]) -> list[int]:
     payload = message.get("payload") or {}
     data = payload.get("data") or {}

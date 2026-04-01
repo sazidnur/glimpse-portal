@@ -31,6 +31,10 @@ class PortalConfig(AppConfig):
         if len(sys.argv) > 1 and sys.argv[1] in blocked_commands:
             return False
 
+        argv_lower = [str(arg).strip().lower() for arg in sys.argv]
+        if any('celery' in arg for arg in argv_lower):
+            return False
+
         if settings.DEBUG:
             # In runserver autoreload, only start once in the serving process.
             if len(sys.argv) > 1 and sys.argv[1] == 'runserver':

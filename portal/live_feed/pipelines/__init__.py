@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from .aljazeera_live import AlJazeeraLiveClient, extract_children_from_ws_message, get_source_definition
+from .aljazeera_live import (
+    AlJazeeraLiveClient,
+    build_translation_request,
+    extract_children_from_ws_message,
+    get_source_definition,
+)
 from .base import (
     BasePipelineClient,
     LiveTarget,
@@ -24,12 +29,19 @@ def get_pipeline_client(source_key: str) -> BasePipelineClient:
     raise ValueError(f"Unsupported pipeline source: {source_key}")
 
 
+def build_pipeline_translation_request(source_key: str, *, title: str) -> dict:
+    if source_key == 'aljazeera_live':
+        return build_translation_request(title)
+    raise ValueError(f"Unsupported pipeline source for translation request: {source_key}")
+
+
 __all__ = [
     'AlJazeeraLiveClient',
     'BasePipelineClient',
     'LiveTarget',
     'PipelineSourceDefinition',
     'extract_children_from_ws_message',
+    'build_pipeline_translation_request',
     'get_pipeline_client',
     'get_pipeline_sources',
     'is_breaking_item',

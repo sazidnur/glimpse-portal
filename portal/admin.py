@@ -19,6 +19,8 @@ from .models import (
     Categories,
     Divisions,
     Extradetails,
+    OpenAIJob,
+    OpenAIJobLog,
     News,
     Sourcealias,
     Timelines,
@@ -26,6 +28,7 @@ from .models import (
     Videopublishers,
     Videos,
 )
+from .openai.jobs import cancel_openai_job
 from .youtube import validate_youtube_shorts_url
 
 import json
@@ -398,6 +401,128 @@ class CategoriesAdmin(ModelAdmin):
 
 
 admin.site.register(Categories, CategoriesAdmin)
+
+
+class OpenAIJobLogInline(admin.TabularInline):
+    model = OpenAIJobLog
+    extra = 0
+    can_delete = False
+    ordering = ['-created_at']
+    readonly_fields = ['created_at', 'level', 'message', 'details']
+    fields = ['created_at', 'level', 'message', 'details']
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+class OpenAIJobAdmin(ModelAdmin):
+    list_display = [
+        'id',
+        'status',
+        'mode',
+        'source',
+        'source_item_id',
+        'provider_batch_id',
+        'category_id',
+        'impact',
+        'created_at',
+        'updated_at',
+    ]
+    list_filter = ['status', 'mode', 'source', 'target_lang', 'created_at']
+    list_filter_submit = True
+    search_fields = ['source_item_id', 'original_title', 'translated_title', 'provider_batch_id', 'provider_response_id']
+    readonly_fields = [
+        'id',
+        'pipeline',
+        'source',
+        'source_item_id',
+        'target_lang',
+        'target_hub',
+        'category_id',
+        'impact',
+        'timestamp',
+        'mode',
+        'status',
+        'cancel_requested',
+        'cancelled_at',
+        'system_prompt',
+        'user_payload',
+        'response_schema',
+        'original_title',
+        'translated_title',
+        'provider_batch_id',
+        'provider_response_id',
+        'celery_task_id',
+        'batch_deadline_at',
+        'provider_request',
+        'provider_response',
+        'publish_result',
+        'error_message',
+        'published_at',
+        'created_at',
+        'updated_at',
+    ]
+    actions = ['cancel_selected_jobs']
+    inlines = [OpenAIJobLogInline]
+    ordering = ['-created_at']
+
+    fieldsets = (
+        ('Identity', {
+            'fields': ('id', 'pipeline', 'source', 'source_item_id', 'target_lang', 'mode', 'status'),
+        }),
+        ('Publish Target', {
+            'fields': ('target_hub', 'category_id', 'impact', 'timestamp', 'published_at'),
+        }),
+        ('Request', {
+            'fields': ('system_prompt', 'user_payload', 'response_schema', 'original_title'),
+        }),
+        ('Result', {
+            'fields': ('translated_title', 'provider_response_id', 'provider_batch_id', 'batch_deadline_at'),
+        }),
+        ('Diagnostics', {
+            'fields': (
+                'cancel_requested',
+                'cancelled_at',
+                'celery_task_id',
+                'provider_request',
+                'provider_response',
+                'publish_result',
+                'error_message',
+                'created_at',
+                'updated_at',
+            ),
+        }),
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def cancel_selected_jobs(self, request, queryset):
+        count = 0
+        for job in queryset.iterator():
+            if job.is_terminal:
+                continue
+            cancel_openai_job(job, reason=f'manual cancel by admin user={request.user}')
+            count += 1
+        self.message_user(request, f'Cancellation requested for {count} job(s).')
+
+    cancel_selected_jobs.short_description = 'Cancel selected OpenAI jobs'
+
+
+class OpenAIJobLogAdmin(ModelAdmin):
+    list_display = ['id', 'job', 'level', 'message', 'created_at']
+    list_filter = ['level', 'created_at']
+    list_filter_submit = True
+    search_fields = ['message', 'job__source_item_id', 'job__source']
+    readonly_fields = ['id', 'job', 'level', 'message', 'details', 'created_at']
+    ordering = ['-created_at']
+
+    def has_add_permission(self, request):
+        return False
+
+
+admin.site.register(OpenAIJob, OpenAIJobAdmin)
+admin.site.register(OpenAIJobLog, OpenAIJobLogAdmin)
 
 
 for model in (User, Group):

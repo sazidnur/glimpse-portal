@@ -17,7 +17,9 @@ from websocket import WebSocketTimeoutException
 
 from .manager import hub_manager
 from .models import LiveFeedPipeline, LiveFeedPipelineLog
+from ..openai.jobs import enqueue_pipeline_translation_job, openai_is_available, resolve_pipeline_openai_mode
 from .pipelines import (
+    build_pipeline_translation_request,
     extract_children_from_ws_message,
     get_pipeline_client,
     is_breaking_item,
@@ -164,6 +166,7 @@ class LiveFeedPipelineRunner:
         self,
         client,
         *,
+        pipeline: LiveFeedPipeline,
         child_ids: list[int],
         category_id: int,
     ):
@@ -191,6 +194,57 @@ class LiveFeedPipelineRunner:
                 continue
 
             timestamp = item.get('date') or item.get('timestamp')
+            mode = resolve_pipeline_openai_mode(pipeline.source, pipeline_config=pipeline.config)
+            if mode != 'off' and openai_is_available():
+                try:
+                    translation_request = build_pipeline_translation_request(
+                        pipeline.source,
+                        title=title,
+                    )
+                    job, created = enqueue_pipeline_translation_job(
+                        pipeline_id=int(self.pipeline_id),
+                        source=str(pipeline.source),
+                        source_item_id=str(child_id),
+                        category_id=int(pipeline.category_id),
+                        impact=max(0, min(2, int(default_impact))),
+                        timestamp=(str(timestamp) if timestamp else ''),
+                        original_title=title,
+                        system_prompt=str(translation_request.get('system_prompt') or ''),
+                        user_payload=translation_request.get('user_payload') or {},
+                        response_schema=translation_request.get('response_schema') or {},
+                        pipeline_config=pipeline.config,
+                    )
+                except Exception as exc:
+                    self.manager.log(
+                        self.pipeline_id,
+                        event_type=LiveFeedPipelineLog.EventType.ERROR,
+                        level=LiveFeedPipelineLog.LogLevel.ERROR,
+                        message=f'Failed to queue translation job for child_id={child_id}: {exc}',
+                    )
+                    continue
+
+                if created and job:
+                    self.manager.log(
+                        self.pipeline_id,
+                        event_type=LiveFeedPipelineLog.EventType.UPDATE,
+                        level=LiveFeedPipelineLog.LogLevel.INFO,
+                        message='Queued OpenAI translation job',
+                        details={
+                            'child_id': child_id,
+                            'openai_job_id': job.id,
+                            'mode': job.mode,
+                        },
+                    )
+                else:
+                    self.manager.log(
+                        self.pipeline_id,
+                        event_type=LiveFeedPipelineLog.EventType.UPDATE,
+                        level=LiveFeedPipelineLog.LogLevel.DEBUG,
+                        message='Skipped duplicate OpenAI translation job',
+                        details={'child_id': child_id},
+                    )
+                continue
+
             publish_result = hub_manager.publish_item(
                 hub='all',
                 category_id=category_id,
@@ -289,6 +343,7 @@ class LiveFeedPipelineRunner:
                     else:
                         self._process_child_ids(
                             client,
+                            pipeline=pipeline,
                             child_ids=current_children,
                             category_id=int(pipeline.category_id),
                         )
@@ -329,6 +384,7 @@ class LiveFeedPipelineRunner:
                                 child_ids = extract_children_from_ws_message(message)
                                 self._process_child_ids(
                                     client,
+                                    pipeline=pipeline,
                                     child_ids=child_ids,
                                     category_id=int(pipeline.category_id),
                                 )
@@ -343,6 +399,7 @@ class LiveFeedPipelineRunner:
                             polled_children = client.fetch_children_only(slug=target.slug)
                             self._process_child_ids(
                                 client,
+                                pipeline=pipeline,
                                 child_ids=polled_children,
                                 category_id=int(pipeline.category_id),
                             )

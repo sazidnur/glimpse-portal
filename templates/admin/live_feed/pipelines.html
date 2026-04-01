@@ -1,0 +1,390 @@
+{% extends 'admin/base.html' %}
+{% load i18n unfold %}
+
+{% block breadcrumbs %}{% endblock %}
+
+{% block title %}{% trans 'Pipeline Configuration' %} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block branding %}
+    {% include "unfold/helpers/site_branding.html" %}
+{% endblock %}
+
+{% block content %}
+{% include "unfold/helpers/messages.html" %}
+
+<div class="flex flex-col gap-6 mb-8" id="pipeline-config-app">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+            <h1 class="font-semibold text-2xl text-font-important-light dark:text-font-important-dark">Pipeline Configuration</h1>
+            <p class="mt-1 text-sm text-font-subtle-light dark:text-font-subtle-dark">Configure settings for each pipeline</p>
+        </div>
+        <a href="{% url 'live_feed:dashboard' %}" class="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors cursor-pointer bg-base-100 text-font-default-light hover:bg-base-200 dark:bg-base-800 dark:hover:bg-base-700 dark:text-font-default-dark">
+            <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+            Live Feed Dashboard
+        </a>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="lg:col-span-1">
+            <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800 sticky top-4">
+                <div class="px-4 py-3 border-b border-base-200 dark:border-base-800">
+                    <h2 class="font-semibold text-font-important-light dark:text-font-important-dark">Pipelines</h2>
+                </div>
+                <div id="pipeline-list" class="divide-y divide-base-100 dark:divide-base-800 max-h-[calc(100vh-16rem)] overflow-y-auto">
+                    <div class="px-4 py-8 text-center text-sm text-font-subtle-light dark:text-font-subtle-dark">
+                        Loading...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="lg:col-span-2">
+            <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+                <div id="config-header" class="px-4 py-3 border-b border-base-200 dark:border-base-800 flex items-center justify-between">
+                    <div>
+                        <h2 class="font-semibold text-font-important-light dark:text-font-important-dark">Configuration</h2>
+                        <p id="config-subtitle" class="text-xs text-font-subtle-light dark:text-font-subtle-dark">Select a pipeline to edit</p>
+                    </div>
+                    <div id="config-actions" class="hidden flex items-center gap-2">
+                        <button type="button" id="btn-save" class="px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50">
+                            Save Changes
+                        </button>
+                        <button type="button" id="btn-reset" class="px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer bg-base-100 text-font-default-light hover:bg-base-200 dark:bg-base-800 dark:hover:bg-base-700 dark:text-font-default-dark">
+                            Reset
+                        </button>
+                    </div>
+                </div>
+
+                <div id="config-empty" class="p-8 text-center">
+                    <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-base-100 dark:bg-base-800 mb-3">
+                        <svg class="w-6 h-6 text-font-subtle-light dark:text-font-subtle-dark" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    </div>
+                    <p class="text-sm text-font-subtle-light dark:text-font-subtle-dark">Select a pipeline from the list to configure its settings</p>
+                </div>
+
+                <div id="config-editor" class="hidden">
+                    <div class="p-4 border-b border-base-100 dark:border-base-800 bg-base-50/50 dark:bg-base-950/30">
+                        <div class="flex flex-wrap gap-2">
+                            <span class="text-xs text-font-subtle-light dark:text-font-subtle-dark">Quick add:</span>
+                            <button type="button" data-preset="openai_mode" class="preset-btn px-2 py-0.5 text-xs rounded bg-base-100 hover:bg-base-200 text-font-default-light dark:bg-base-800 dark:hover:bg-base-700 dark:text-font-default-dark cursor-pointer transition-colors">openai_mode</button>
+                            <button type="button" data-preset="openai_realtime_model" class="preset-btn px-2 py-0.5 text-xs rounded bg-base-100 hover:bg-base-200 text-font-default-light dark:bg-base-800 dark:hover:bg-base-700 dark:text-font-default-dark cursor-pointer transition-colors">openai_realtime_model</button>
+                            <button type="button" data-preset="openai_batch_model" class="preset-btn px-2 py-0.5 text-xs rounded bg-base-100 hover:bg-base-200 text-font-default-light dark:bg-base-800 dark:hover:bg-base-700 dark:text-font-default-dark cursor-pointer transition-colors">openai_batch_model</button>
+                            <button type="button" data-preset="openai_batch_timeout_minutes" class="preset-btn px-2 py-0.5 text-xs rounded bg-base-100 hover:bg-base-200 text-font-default-light dark:bg-base-800 dark:hover:bg-base-700 dark:text-font-default-dark cursor-pointer transition-colors">openai_batch_timeout_minutes</button>
+                        </div>
+                    </div>
+
+                    <div class="p-4">
+                        <div id="config-fields" class="flex flex-col gap-3"></div>
+
+                        <button type="button" id="btn-add-field" class="mt-4 w-full px-3 py-2 text-sm font-medium rounded-md border-2 border-dashed border-base-200 text-font-subtle-light hover:border-primary-400 hover:text-primary-600 dark:border-base-700 dark:hover:border-primary-500 dark:hover:text-primary-400 cursor-pointer transition-colors">
+                            + Add Field
+                        </button>
+                    </div>
+
+                    <div class="px-4 py-3 border-t border-base-100 dark:border-base-800 bg-base-50/50 dark:bg-base-950/30">
+                        <div class="text-xs text-font-subtle-light dark:text-font-subtle-dark">
+                            <span class="font-medium">Value types:</span> strings, numbers, <code class="px-1 bg-base-100 dark:bg-base-800 rounded">true</code>/<code class="px-1 bg-base-100 dark:bg-base-800 rounded">false</code>, <code class="px-1 bg-base-100 dark:bg-base-800 rounded">null</code>, or JSON objects/arrays
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-4 bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+                <div class="px-4 py-3 border-b border-base-200 dark:border-base-800">
+                    <h3 class="font-medium text-sm text-font-important-light dark:text-font-important-dark">Available Configuration Keys</h3>
+                </div>
+                <div class="p-4">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-xs uppercase tracking-wider text-font-subtle-light dark:text-font-subtle-dark">
+                                <th class="pb-2 font-medium">Key</th>
+                                <th class="pb-2 font-medium">Description</th>
+                                <th class="pb-2 font-medium">Default</th>
+                            </tr>
+                        </thead>
+                        <tbody class="text-font-default-light dark:text-font-default-dark">
+                            <tr class="border-t border-base-100 dark:border-base-800">
+                                <td class="py-2 font-mono text-xs text-primary-600 dark:text-primary-400">openai_mode</td>
+                                <td class="py-2 text-font-subtle-light dark:text-font-subtle-dark">AI processing mode: off, realtime, or batch</td>
+                                <td class="py-2 font-mono text-xs">batch</td>
+                            </tr>
+                            <tr class="border-t border-base-100 dark:border-base-800">
+                                <td class="py-2 font-mono text-xs text-primary-600 dark:text-primary-400">openai_realtime_model</td>
+                                <td class="py-2 text-font-subtle-light dark:text-font-subtle-dark">Model for realtime processing</td>
+                                <td class="py-2 font-mono text-xs">gpt-5.4-mini</td>
+                            </tr>
+                            <tr class="border-t border-base-100 dark:border-base-800">
+                                <td class="py-2 font-mono text-xs text-primary-600 dark:text-primary-400">openai_batch_model</td>
+                                <td class="py-2 text-font-subtle-light dark:text-font-subtle-dark">Model for batch processing</td>
+                                <td class="py-2 font-mono text-xs">gpt-5.4-mini</td>
+                            </tr>
+                            <tr class="border-t border-base-100 dark:border-base-800">
+                                <td class="py-2 font-mono text-xs text-primary-600 dark:text-primary-400">openai_batch_timeout_minutes</td>
+                                <td class="py-2 text-font-subtle-light dark:text-font-subtle-dark">Timeout before falling back to realtime</td>
+                                <td class="py-2 font-mono text-xs">30</td>
+                            </tr>
+                            <tr class="border-t border-base-100 dark:border-base-800">
+                                <td class="py-2 font-mono text-xs text-primary-600 dark:text-primary-400">openai_batch_max_items</td>
+                                <td class="py-2 text-font-subtle-light dark:text-font-subtle-dark">Maximum items per batch request</td>
+                                <td class="py-2 font-mono text-xs">100</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    'use strict';
+
+    const state = {
+        pipelines: [],
+        selectedId: null,
+        fields: [],
+        dirty: false,
+    };
+
+    function csrf() {
+        return document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';
+    }
+
+    async function api(url, method = 'GET', body = null) {
+        const opts = {
+            method,
+            headers: { 'X-CSRFToken': csrf(), 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+        };
+        if (body) opts.body = JSON.stringify(body);
+        const res = await fetch(url, opts);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        return data;
+    }
+
+    function esc(val) {
+        const d = document.createElement('div');
+        d.textContent = val == null ? '' : String(val);
+        return d.innerHTML;
+    }
+
+    function stringify(val) {
+        if (val === null) return 'null';
+        if (typeof val === 'string') return val;
+        if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+        try { return JSON.stringify(val); } catch { return String(val); }
+    }
+
+    function parseValue(raw) {
+        const text = String(raw ?? '').trim();
+        if (!text) return '';
+        if (text.toLowerCase() === 'true') return true;
+        if (text.toLowerCase() === 'false') return false;
+        if (text.toLowerCase() === 'null') return null;
+        if (/^-?\d+(\.\d+)?$/.test(text)) return Number(text);
+        if ((text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']'))) {
+            try { return JSON.parse(text); } catch { return raw; }
+        }
+        return raw;
+    }
+
+    function getPipeline(id) {
+        return state.pipelines.find(p => Number(p.id) === Number(id)) || null;
+    }
+
+    function statusDot(status) {
+        const s = String(status || '').toLowerCase();
+        if (s === 'running') return 'bg-green-500';
+        if (s === 'starting' || s === 'stopping') return 'bg-amber-500';
+        if (s === 'error') return 'bg-red-500';
+        return 'bg-base-300 dark:bg-base-600';
+    }
+
+    function renderPipelineList() {
+        const list = document.getElementById('pipeline-list');
+        if (!list) return;
+
+        if (!state.pipelines.length) {
+            list.innerHTML = '<div class="px-4 py-8 text-center text-sm text-font-subtle-light dark:text-font-subtle-dark">No pipelines found. Start a pipeline from the Live Feed Dashboard.</div>';
+            return;
+        }
+
+        list.innerHTML = state.pipelines.map(p => {
+            const isSelected = Number(p.id) === Number(state.selectedId);
+            const configCount = p.config && typeof p.config === 'object' ? Object.keys(p.config).length : 0;
+            const mode = p.config?.openai_mode || 'batch';
+            return `<button type="button" data-select="${p.id}" class="w-full text-left px-4 py-3 hover:bg-base-50 dark:hover:bg-base-800/50 cursor-pointer transition-colors ${isSelected ? 'bg-primary-100 dark:bg-primary-900/40 border-l-2 border-l-primary-500' : ''}">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full ${statusDot(p.status)}"></span>
+                        <span class="font-medium text-sm text-font-important-light dark:text-font-important-dark">${esc(p.source_label || p.source)}</span>
+                    </div>
+                    <span class="text-xs px-1.5 py-0.5 rounded bg-base-100 dark:bg-base-800 text-font-subtle-light dark:text-font-subtle-dark">${configCount}</span>
+                </div>
+                <div class="mt-1 text-xs text-font-subtle-light dark:text-font-subtle-dark">Mode: ${esc(mode)}</div>
+            </button>`;
+        }).join('');
+    }
+
+    function syncFieldsFromDom() {
+        const container = document.getElementById('config-fields');
+        if (!container) return;
+        const rows = container.querySelectorAll('.field-row');
+        state.fields = Array.from(rows).map(row => ({
+            key: row.querySelector('[data-role="key"]')?.value || '',
+            value: row.querySelector('[data-role="value"]')?.value || '',
+        }));
+    }
+
+    function renderConfigEditor() {
+        const empty = document.getElementById('config-empty');
+        const editor = document.getElementById('config-editor');
+        const actions = document.getElementById('config-actions');
+        const subtitle = document.getElementById('config-subtitle');
+        const fields = document.getElementById('config-fields');
+
+        if (!empty || !editor || !actions || !subtitle || !fields) return;
+
+        const pipeline = getPipeline(state.selectedId);
+        if (!pipeline) {
+            empty.classList.remove('hidden');
+            editor.classList.add('hidden');
+            actions.classList.add('hidden');
+            subtitle.textContent = 'Select a pipeline to edit';
+            return;
+        }
+
+        empty.classList.add('hidden');
+        editor.classList.remove('hidden');
+        actions.classList.remove('hidden');
+        actions.classList.add('flex');
+        subtitle.textContent = pipeline.source_label || pipeline.source;
+
+        if (!state.fields.length) {
+            fields.innerHTML = '<div class="text-sm text-font-subtle-light dark:text-font-subtle-dark py-4 text-center">No configuration keys. Use quick add or add field button.</div>';
+        } else {
+            fields.innerHTML = `<table class="w-full text-sm"><thead><tr class="text-left text-xs uppercase tracking-wider text-font-subtle-light dark:text-font-subtle-dark"><th class="pb-2 font-medium w-1/3">Key</th><th class="pb-2 font-medium">Value</th><th class="pb-2 font-medium w-10"></th></tr></thead><tbody class="divide-y divide-base-100 dark:divide-base-800">${state.fields.map((f, i) => `<tr class="field-row" data-index="${i}"><td class="py-2 pr-2"><input type="text" data-role="key" value="${esc(f.key)}" placeholder="key" class="w-full px-2 py-1.5 text-sm rounded border border-base-200 bg-white text-font-default-light focus:ring-1 focus:ring-primary-500 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark font-mono"></td><td class="py-2 pr-2"><input type="text" data-role="value" value="${esc(f.value)}" placeholder="value" class="w-full px-2 py-1.5 text-sm rounded border border-base-200 bg-white text-font-default-light focus:ring-1 focus:ring-primary-500 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark"></td><td class="py-2"><button type="button" data-remove="${i}" class="p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded cursor-pointer"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button></td></tr>`).join('')}</tbody></table>`;
+        }
+    }
+
+    function selectPipeline(id) {
+        if (state.dirty && !confirm('You have unsaved changes. Discard them?')) return;
+        state.selectedId = Number(id);
+        const pipeline = getPipeline(id);
+        if (pipeline && pipeline.config && typeof pipeline.config === 'object') {
+            state.fields = Object.entries(pipeline.config).map(([key, val]) => ({ key, value: stringify(val) }));
+        } else {
+            state.fields = [];
+        }
+        state.dirty = false;
+        renderPipelineList();
+        renderConfigEditor();
+    }
+
+    function addField(key = '', value = '') {
+        syncFieldsFromDom();
+        if (key && state.fields.some(f => f.key === key)) return;
+        state.fields.push({ key, value });
+        state.dirty = true;
+        renderConfigEditor();
+    }
+
+    function removeField(index) {
+        syncFieldsFromDom();
+        state.fields.splice(index, 1);
+        state.dirty = true;
+        renderConfigEditor();
+    }
+
+    function buildConfig() {
+        syncFieldsFromDom();
+        const config = {};
+        const seen = new Set();
+        for (const f of state.fields) {
+            const key = String(f.key || '').trim();
+            if (!key) continue;
+            if (seen.has(key)) throw new Error(`Duplicate key: ${key}`);
+            seen.add(key);
+            config[key] = parseValue(f.value);
+        }
+        return config;
+    }
+
+    async function saveConfig() {
+        if (!state.selectedId) return;
+        const btn = document.getElementById('btn-save');
+        if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+        try {
+            const config = buildConfig();
+            await api(`{% url "live_feed:api_pipeline_update" 0 %}`.replace('/0/update/', `/${state.selectedId}/update/`), 'POST', { config });
+            state.dirty = false;
+            await fetchPipelines();
+            selectPipeline(state.selectedId);
+        } catch (err) {
+            alert(err.message || 'Failed to save');
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+        }
+    }
+
+    function resetConfig() {
+        if (!state.selectedId) return;
+        selectPipeline(state.selectedId);
+    }
+
+    async function fetchPipelines() {
+        try {
+            const data = await api('{% url "live_feed:api_pipelines" %}');
+            state.pipelines = data.pipelines || [];
+            renderPipelineList();
+            if (state.selectedId && !getPipeline(state.selectedId)) {
+                state.selectedId = null;
+                state.fields = [];
+                renderConfigEditor();
+            }
+        } catch (err) {
+            console.error('Failed to fetch pipelines:', err);
+        }
+    }
+
+    function bindEvents() {
+        document.getElementById('pipeline-list')?.addEventListener('click', e => {
+            const btn = e.target.closest('[data-select]');
+            if (btn) selectPipeline(btn.dataset.select);
+        });
+
+        document.getElementById('config-fields')?.addEventListener('click', e => {
+            const btn = e.target.closest('[data-remove]');
+            if (btn) removeField(Number(btn.dataset.remove));
+        });
+
+        document.getElementById('config-fields')?.addEventListener('input', () => { state.dirty = true; });
+
+        document.getElementById('btn-add-field')?.addEventListener('click', () => addField());
+        document.getElementById('btn-save')?.addEventListener('click', saveConfig);
+        document.getElementById('btn-reset')?.addEventListener('click', resetConfig);
+
+        document.querySelectorAll('.preset-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (!state.selectedId) return;
+                addField(btn.dataset.preset, '');
+            });
+        });
+    }
+
+    async function init() {
+        bindEvents();
+        await fetchPipelines();
+        setInterval(fetchPipelines, 10000);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+</script>
+{% endblock %}

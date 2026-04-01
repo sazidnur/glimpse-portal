@@ -103,6 +103,11 @@ UNFOLD = {
                         "icon": "stream",
                         "link": reverse_lazy("live_feed:dashboard"),
                     },
+                    {
+                        "title": _("Pipeline Config"),
+                        "icon": "tune",
+                        "link": reverse_lazy("live_feed:pipelines"),
+                    },
                 ],
             },
             {
@@ -343,6 +348,10 @@ WORKER_BASE_URL = config('WORKER_BASE_URL', default='https://glimpseapp.net')
 APP_SECRET = config('APP_SECRET', default='')
 LIVE_FEED_ADMIN_TOKEN = config('LIVE_FEED_ADMIN_TOKEN', default='')
 
+# OpenAI API key (required for AI features)
+# Model settings are configured per-pipeline via the Pipeline Manager UI
+OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
+
 # ===========================================
 # Caching Configuration (Redis)
 # ===========================================
@@ -392,6 +401,14 @@ CF_ANALYTICS_TOKEN = config('CF_ANALYTICS_TOKEN', default='')
 
 # Debug toolbar settings
 INTERNAL_IPS = ['127.0.0.1']
+
+# Celery settings
+CELERY_BROKER_URL = config('CELERY_BROKER_URL', default=REDIS_URL)
+CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default=REDIS_URL)
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
 
 # Logging
 LOGGING = {

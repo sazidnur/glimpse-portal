@@ -7,16 +7,18 @@ set -e
 
 echo "🚀 Starting Glimpse Portal..."
 
-echo "📦 Running migrations..."
-python manage.py migrate --database=default --noinput
+if [ "${SKIP_STARTUP_TASKS:-0}" != "1" ]; then
+  echo "📦 Running migrations..."
+  python manage.py migrate --database=default --noinput
 
-# Collect static files
-echo "📁 Collecting static files..."
-python manage.py collectstatic --noinput --clear
+  echo "📁 Collecting static files..."
+  python manage.py collectstatic --noinput --clear
 
-# Warm Redis caches (non-blocking -- continues even if Redis is unavailable)
-echo "🔥 Warming Redis caches..."
-python manage.py warm_cache || echo "⚠️  Cache warm failed, will lazy-warm on first request"
+  echo "🔥 Warming Redis caches..."
+  python manage.py warm_cache || echo "Cache warm failed, will lazy-warm on first request"
+else
+  echo "Skipping startup tasks (SKIP_STARTUP_TASKS=1)"
+fi
 
 echo "✅ Ready!"
 
