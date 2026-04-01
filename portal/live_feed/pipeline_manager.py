@@ -155,7 +155,10 @@ class LiveFeedPipelineRunner:
         row = LiveFeedPipeline.objects.filter(id=self.pipeline_id).values('default_impact').first()
         if not row:
             return max(0, min(2, int(fallback)))
-        return max(0, min(2, int(row.get('default_impact') or fallback)))
+        raw_impact = row.get('default_impact')
+        if raw_impact is None:
+            raw_impact = fallback
+        return max(0, min(2, int(raw_impact)))
 
     def _process_child_ids(
         self,
