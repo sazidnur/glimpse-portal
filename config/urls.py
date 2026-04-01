@@ -5,6 +5,8 @@ from django.conf.urls.static import static
 from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 from django.views.generic import RedirectView
 
+from portal.live_feed import views
+
 portal_prefix = settings.PORTAL_URL_PREFIX
 
 urlpatterns = [
@@ -32,6 +34,7 @@ if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 urlpatterns.append(path(f'{portal_prefix}/live-feed/', include('portal.live_feed.urls')))
+urlpatterns.append(path(f'{portal_prefix}/pipeline-config/', views.pipeline_manager_view, name='pipeline_config'))
 urlpatterns.append(path(f'{portal_prefix}/', admin.site.urls))
 
 admin.site.site_header = "Glimpse Portal Admin"

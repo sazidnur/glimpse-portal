@@ -106,7 +106,7 @@ UNFOLD = {
                     {
                         "title": _("Pipeline Config"),
                         "icon": "tune",
-                        "link": reverse_lazy("live_feed:pipelines"),
+                        "link": reverse_lazy("pipeline_config"),
                     },
                 ],
             },
