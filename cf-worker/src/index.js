@@ -839,7 +839,7 @@ export class LiveFeedRegionalHubV3 {
   }
 
   async webSocketMessage(socket, message) {
-    await this.ensureInitialized(this.hub || LIVE_FEED_DEFAULT_ADMIN_HUB);
+    await this.ensureInitialized(this.hub);
 
     if (this.getSocketRole(socket) !== "admin") {
       return;
