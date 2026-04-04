@@ -259,6 +259,11 @@ class AlJazeeraLiveClient(BasePipelineClient):
         return out
 
     def discover_latest_live_target(self) -> LiveTarget:
+        """
+        Breaking ticker is the source of truth - Al Jazeera editors update it
+        when switching to a new liveblog. Fall back to homepage only if ticker
+        doesn't point to a liveblog.
+        """
         payload = self.graphql_get(
             operation_name="ArchipelagoBreakingTickerQuery",
             query=BREAKING_NEWS_QUERY,
@@ -268,26 +273,20 @@ class AlJazeeraLiveClient(BasePipelineClient):
         ticker_link = str(breaking.get("link") or "").strip()
         ticker_post_id = to_int(breaking.get("post"))
 
-        homepage_links = self.fetch_homepage_live_links()
-
-        if homepage_links:
-            link = homepage_links[0]
-            slug = self.slug_from_link(link)
-            if slug:
-                post_id = None
-                if "/liveblog/" in ticker_link:
-                    ticker_slug = self.slug_from_link(self.normalize_liveblog_link(ticker_link))
-                    if ticker_slug == slug:
-                        post_id = ticker_post_id
-                return LiveTarget(slug=slug, link=link, post_id=post_id)
-
         if "/liveblog/" in ticker_link:
             link = self.normalize_liveblog_link(ticker_link)
             slug = self.slug_from_link(link)
             if slug:
                 return LiveTarget(slug=slug, link=link, post_id=ticker_post_id)
 
-        raise RuntimeError("Could not discover a liveblog link from homepage or breaking ticker.")
+        homepage_links = self.fetch_homepage_live_links()
+        if homepage_links:
+            link = homepage_links[0]
+            slug = self.slug_from_link(link)
+            if slug:
+                return LiveTarget(slug=slug, link=link, post_id=None)
+
+        raise RuntimeError("Could not discover a liveblog link from breaking ticker or homepage.")
 
     def fetch_parent_and_children(
         self,
