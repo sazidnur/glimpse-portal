@@ -91,11 +91,11 @@
                 <div class="space-y-2 mb-4">
                     <div class="flex justify-between text-sm">
                         <span class="text-font-subtle-light dark:text-font-subtle-dark">Live Users</span>
-                        <span class="hub-users font-medium text-font-default-light dark:text-font-default-dark" data-hub="{{ hub }}">—</span>
+                        <span class="hub-users font-medium text-font-default-light dark:text-font-default-dark" data-hub="{{ hub }}">-</span>
                     </div>
                     <div class="flex justify-between text-sm">
                         <span class="text-font-subtle-light dark:text-font-subtle-dark">Admins</span>
-                        <span class="hub-admins font-medium text-font-default-light dark:text-font-default-dark" data-hub="{{ hub }}">—</span>
+                        <span class="hub-admins font-medium text-font-default-light dark:text-font-default-dark" data-hub="{{ hub }}">-</span>
                     </div>
                 </div>
                 <div class="flex gap-2">
@@ -228,6 +228,39 @@
                 <button type="submit" id="btn-publish" class="w-full px-3 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed mt-1" disabled>
                     Publish
                 </button>
+
+                <div class="pt-4 border-t border-base-200 dark:border-base-800">
+                    <h3 class="text-xs font-medium text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide mb-3">Re-seed Initial Fanout Snapshot</h3>
+                    <div class="flex flex-col gap-3">
+                        <div class="flex flex-col gap-2">
+                            <label class="block text-xs font-medium text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Category</label>
+                            <select id="fanout-category" class="w-full px-3 py-2 text-sm rounded-md border border-base-200 bg-white text-font-default-light focus:ring-2 focus:ring-primary-500 focus:border-primary-500 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark">
+                                {% for cat in categories %}
+                                {% if cat.enabled %}
+                                <option value="{{ cat.id }}">{{ cat.name }}</option>
+                                {% endif %}
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="flex flex-col gap-2">
+                            <label class="block text-xs font-medium text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Target Hub</label>
+                            <select id="fanout-hub" class="w-full px-3 py-2 text-sm rounded-md border border-base-200 bg-white text-font-default-light focus:ring-2 focus:ring-primary-500 focus:border-primary-500 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark">
+                                <option value="all">All Connected Hubs</option>
+                                {% for hub in hubs %}
+                                <option value="{{ hub }}">{{ hub_info|get_key:hub|get_key:'name' }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="flex flex-col gap-2">
+                            <label class="block text-xs font-medium text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide">Item Limit (optional)</label>
+                            <input type="number" id="fanout-limit" min="1" max="500" step="1" class="w-full px-3 py-2 text-sm rounded-md border border-base-200 bg-white text-font-default-light focus:ring-2 focus:ring-primary-500 focus:border-primary-500 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark" placeholder="Use category default">
+                            <p class="text-[11px] text-font-subtle-light dark:text-font-subtle-dark">If empty, uses category initial_fanout_limit.</p>
+                        </div>
+                        <button type="button" id="btn-fanout-reseed" class="w-full px-3 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                            Re-seed Snapshot
+                        </button>
+                    </div>
+                </div>
             </form>
             <!-- Publish Overlay -->
             <div id="publish-overlay" class="hidden absolute inset-0 bg-base-50 dark:bg-base-950 rounded-lg flex items-center justify-center z-10" style="background-color: rgba(249, 250, 251, 0.95);">
@@ -503,8 +536,8 @@
             dot.className = 'hub-dot w-2.5 h-2.5 rounded-full bg-base-300 dark:bg-base-600';
             status.textContent = 'Offline';
             status.className = 'hub-status text-xs font-medium px-2 py-0.5 rounded bg-base-100 text-font-subtle-light dark:bg-base-800 dark:text-font-subtle-dark';
-            users.textContent = '—';
-            admins.textContent = '—';
+            users.textContent = '-';
+            admins.textContent = '-';
             btn.textContent = 'Connect';
             btn.dataset.action = 'connect';
             btn.className = 'hub-toggle flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer bg-primary-600 text-white hover:bg-primary-700';
@@ -758,6 +791,58 @@
         }
     }
 
+    async function reseedFanoutSnapshot() {
+        const categoryId = parseInt(document.getElementById('fanout-category')?.value || '0', 10);
+        const hub = document.getElementById('fanout-hub')?.value || 'all';
+        const limitRaw = String(document.getElementById('fanout-limit')?.value || '').trim();
+
+        if (!categoryId) {
+            alert('Please select a category.');
+            return;
+        }
+
+        const payload = {
+            category_id: categoryId,
+            hub,
+        };
+
+        if (limitRaw) {
+            const parsedLimit = parseInt(limitRaw, 10);
+            if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 500) {
+                alert('Item limit must be between 1 and 500.');
+                return;
+            }
+            payload.limit = parsedLimit;
+        }
+
+        const btn = document.getElementById('btn-fanout-reseed');
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Re-seeding...';
+        }
+
+        try {
+            const result = await api('{% url "live_feed:api_fanout_reseed" %}', 'POST', payload);
+            if (!result || result.success !== true) {
+                throw new Error(result?.error || 'Failed to re-seed snapshot');
+            }
+
+            const itemCount = Number(result.item_count || 0);
+            const hubCount = Array.isArray(result.successful_hubs) ? result.successful_hubs.length : (result.result?.success ? 1 : 0);
+            alert(`Snapshot re-seeded with ${itemCount} item(s) to ${hubCount || 0} hub(s).`);
+            fetchLogs();
+            fetchCosts();
+            fetchHubs(true);
+        } catch (err) {
+            alert(err.message || 'Failed to re-seed snapshot');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Re-seed Snapshot';
+            }
+        }
+    }
+
     async function clearLogs() {
         if (!confirm('Clear all logs?')) return;
         const filter = document.getElementById('log-filter').value;
@@ -790,6 +875,8 @@
             fetchCosts();
         };
         document.getElementById('publish-form').onsubmit = publish;
+        const fanoutBtn = document.getElementById('btn-fanout-reseed');
+        if (fanoutBtn) fanoutBtn.onclick = reseedFanoutSnapshot;
 
         document.querySelectorAll('.hub-toggle').forEach(btn => {
             btn.onclick = () => {
@@ -1098,5 +1185,6 @@
 })();
 </script>
 {% endblock %}
+
 
 

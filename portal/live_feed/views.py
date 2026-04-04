@@ -193,6 +193,51 @@ def api_publish(request):
 
     return JsonResponse(result)
 
+
+@staff_member_required
+@require_POST
+def api_fanout_reseed(request):
+    try:
+        data = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    hub = str(data.get('hub') or 'all').strip().lower() or 'all'
+    if hub != 'all' and hub not in HUBS:
+        return JsonResponse({'error': f'Invalid hub: {hub}'}, status=400)
+
+    category_raw = data.get('category_id')
+    try:
+        category_id = int(category_raw)
+    except (TypeError, ValueError):
+        return JsonResponse({'error': 'category_id must be integer'}, status=400)
+
+    category = Categories.objects.filter(
+        id=category_id,
+        live_feed_type__gt=0,
+        enabled=True,
+    ).first()
+    if not category:
+        return JsonResponse({'error': 'Category not found or not an enabled live feed category'}, status=404)
+
+    limit = None
+    if 'limit' in data and data.get('limit') not in (None, ''):
+        try:
+            limit = int(data.get('limit'))
+        except (TypeError, ValueError):
+            return JsonResponse({'error': 'limit must be integer'}, status=400)
+        if limit < 1 or limit > 500:
+            return JsonResponse({'error': 'limit must be between 1 and 500'}, status=400)
+
+    result = hub_manager.set_initial_fanout_snapshot(
+        category_id=category_id,
+        hub=hub,
+        limit=limit,
+    )
+    if not result.get('success'):
+        return JsonResponse(result, status=400)
+    return JsonResponse(result)
+
 @staff_member_required
 @require_GET
 def api_logs(request):
@@ -652,6 +697,51 @@ def api_published_items(request):
 
 
 @staff_member_required
+@require_POST
+def api_published_items_delete(request):
+    try:
+        data = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    raw_ids = data.get('ids')
+    if not isinstance(raw_ids, list):
+        return JsonResponse({'error': 'ids must be an array of integers'}, status=400)
+
+    ids: list[int] = []
+    for raw in raw_ids:
+        try:
+            item_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if item_id > 0:
+            ids.append(item_id)
+
+    if not ids:
+        return JsonResponse({'error': 'No valid item ids provided'}, status=400)
+
+    # keep input order while deduplicating
+    ids = list(dict.fromkeys(ids))
+
+    qs = LiveFeedPublishedItem.objects.filter(
+        id__in=ids,
+        category__live_feed_type__gt=0,
+    )
+    existing_ids = list(qs.values_list('id', flat=True))
+    qs.delete()
+
+    existing_id_set = set(existing_ids)
+    missing_ids = [item_id for item_id in ids if item_id not in existing_id_set]
+
+    return JsonResponse({
+        'success': True,
+        'deleted': len(existing_ids),
+        'deleted_ids': existing_ids,
+        'missing_ids': missing_ids,
+    })
+
+
+@staff_member_required
 @require_GET
 def api_category_config(request, category_id: int):
     """API endpoint to get category config."""
@@ -703,4 +793,3 @@ def api_category_config_update(request, category_id: int):
         'config': category.config,
         'initial_fanout_limit': category.initial_fanout_limit,
     })
-

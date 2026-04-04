@@ -892,7 +892,7 @@ class LiveFeedHubManager:
             logger.error("Failed to store published item: %s", e)
             return None
 
-    def _build_initial_fanout_snapshot(self, category_id: int) -> Optional[dict]:
+    def _build_initial_fanout_snapshot(self, category_id: int, limit: Optional[int] = None) -> Optional[dict]:
         """Build the initial fanout snapshot for a category from recent published items."""
         from .models import LiveFeedPublishedItem
         from portal.models import Categories
@@ -902,7 +902,7 @@ class LiveFeedHubManager:
             if not category:
                 return None
 
-            items = LiveFeedPublishedItem.get_initial_fanout_items(category)
+            items = LiveFeedPublishedItem.get_initial_fanout_items(category, limit=limit)
             if not items:
                 return None
 
@@ -917,6 +917,93 @@ class LiveFeedHubManager:
         except Exception as e:
             logger.error("Failed to build initial fanout snapshot: %s", e)
             return None
+
+    def set_initial_fanout_snapshot(self, *, category_id: int, hub: str = 'all', limit: Optional[int] = None) -> dict:
+        """
+        Manually re-seed category snapshot from stored published items.
+        Sends only to currently connected hub sockets.
+        """
+        snapshot = self._build_initial_fanout_snapshot(category_id=category_id, limit=limit)
+        if not snapshot:
+            return {'success': False, 'error': 'No published items available for initial fanout'}
+
+        fanout_items = ((snapshot.get('category') or {}).get(str(category_id)) or [])
+        item_count = len(fanout_items)
+        message = {
+            'type': 'set_broadcast',
+            'snapshot': snapshot,
+        }
+        states = self.get_hub_states()
+
+        if hub == 'all':
+            target_hubs = [
+                hub_name
+                for hub_name in HUBS
+                if bool((states.get(hub_name) or {}).get('connected'))
+            ]
+            if not target_hubs:
+                return {'success': False, 'error': 'No connected hubs available', 'item_count': item_count}
+
+            results = {hub_name: self.send_to_hub(hub_name, message) for hub_name in target_hubs}
+            successful_hubs = [hub_name for hub_name, result in results.items() if result.get('success')]
+            failed_hubs = [hub_name for hub_name, result in results.items() if not result.get('success')]
+            success = bool(successful_hubs)
+
+            if success:
+                self._increment_cost('broadcasts', amount=len(successful_hubs))
+                self._log_event(
+                    'all',
+                    'broadcast',
+                    f'Set initial fanout snapshot for category={category_id} on {len(successful_hubs)} hub(s)',
+                    details={
+                        'category_id': category_id,
+                        'item_count': item_count,
+                        'successful_hubs': successful_hubs,
+                        'failed_hubs': failed_hubs,
+                    },
+                )
+            else:
+                self._log_event(
+                    'all',
+                    'error',
+                    f'Failed to set initial fanout snapshot for category={category_id}',
+                    level='error',
+                    details={
+                        'category_id': category_id,
+                        'item_count': item_count,
+                        'failed_hubs': failed_hubs,
+                    },
+                )
+            return {
+                'success': success,
+                'results': results,
+                'successful_hubs': successful_hubs,
+                'failed_hubs': failed_hubs,
+                'item_count': item_count,
+                'error': '' if success else 'Failed to send snapshot to connected hubs',
+            }
+
+        if hub not in HUBS:
+            return {'success': False, 'error': f'Unknown hub: {hub}'}
+        if not bool((states.get(hub) or {}).get('connected')):
+            return {'success': False, 'error': f'Hub {hub} not connected', 'item_count': item_count}
+
+        result = self.send_to_hub(hub, message)
+        success = bool(result.get('success'))
+        if success:
+            self._increment_cost('broadcasts')
+            self._log_event(
+                hub,
+                'broadcast',
+                f'Set initial fanout snapshot for category={category_id}',
+                details={'category_id': category_id, 'item_count': item_count},
+            )
+        return {
+            'success': success,
+            'result': result,
+            'item_count': item_count,
+            'error': '' if success else str(result.get('error') or 'Failed to send snapshot'),
+        }
 
     def publish_item(self, hub: str, category_id: int, title: str,
                      impact: int = 0, timestamp: str = None) -> dict:

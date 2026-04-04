@@ -13,7 +13,6 @@
 {% include "unfold/helpers/messages.html" %}
 
 <div class="flex flex-col gap-8 mb-8" id="published-items-app">
-    <!-- Header -->
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
             <h1 class="font-semibold text-2xl text-font-important-light dark:text-font-important-dark">Published Items</h1>
@@ -31,7 +30,6 @@
         </div>
     </div>
 
-    <!-- Filters -->
     <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
         <div class="px-6 py-4 border-b border-base-200 dark:border-base-800">
             <h2 class="font-medium text-font-important-light dark:text-font-important-dark">Filters</h2>
@@ -74,19 +72,25 @@
         </div>
     </div>
 
-    <!-- Published Items Table -->
     <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800 overflow-hidden">
         <div class="px-6 py-4 border-b border-base-200 dark:border-base-800 flex items-center justify-between">
             <h2 class="font-medium text-font-important-light dark:text-font-important-dark">Results</h2>
-            <div id="loading-indicator" class="hidden flex items-center gap-2 text-sm text-font-subtle-light dark:text-font-subtle-dark">
-                <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
-                Loading...
+            <div class="flex items-center gap-3">
+                <div class="text-xs text-font-subtle-light dark:text-font-subtle-dark">Selected: <span id="selected-count">0</span></div>
+                <button type="button" id="btn-delete-selected" disabled class="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">Delete Selected</button>
+                <div id="loading-indicator" class="hidden flex items-center gap-2 text-sm text-font-subtle-light dark:text-font-subtle-dark">
+                    <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                    Loading...
+                </div>
             </div>
         </div>
         <div class="overflow-x-auto">
             <table class="w-full text-sm">
                 <thead>
                     <tr class="text-left text-xs font-medium text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wider bg-base-50 dark:bg-base-800">
+                        <th class="px-4 py-3 whitespace-nowrap">
+                            <input type="checkbox" id="items-select-all" class="rounded border-base-300 text-primary-600 focus:ring-primary-500 cursor-pointer">
+                        </th>
                         <th class="px-6 py-3 whitespace-nowrap">ID</th>
                         <th class="px-6 py-3 whitespace-nowrap">Category</th>
                         <th class="px-6 py-3">Title</th>
@@ -98,14 +102,11 @@
                 </thead>
                 <tbody id="items-tbody" class="divide-y divide-base-100 dark:divide-base-800">
                     <tr>
-                        <td colspan="7" class="px-6 py-12 text-center text-font-subtle-light dark:text-font-subtle-dark">
-                            Loading published items...
-                        </td>
+                        <td colspan="8" class="px-6 py-12 text-center text-font-subtle-light dark:text-font-subtle-dark">Loading published items...</td>
                     </tr>
                 </tbody>
             </table>
         </div>
-        <!-- Pagination -->
         <div id="pagination" class="hidden px-6 py-4 border-t border-base-200 dark:border-base-800 flex items-center justify-between bg-base-50/50 dark:bg-base-800/30">
             <button type="button" id="btn-prev" disabled class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer bg-white dark:bg-base-800 text-font-default-light dark:text-font-default-dark ring-1 ring-inset ring-base-300 dark:ring-base-700 hover:bg-base-50 dark:hover:bg-base-700 disabled:opacity-50 disabled:cursor-not-allowed">
                 <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
@@ -123,15 +124,20 @@
 <script>
 (function() {
     const API_BASE = '{% url "api_published_items_standalone" %}';
+    const API_DELETE = '{% url "api_published_items_delete_standalone" %}';
 
     let currentOffset = 0;
     let currentTotal = 0;
+    const selectedIds = new Set();
 
     const DOM = {
         filterCategory: document.getElementById('filter-category'),
         filterHub: document.getElementById('filter-hub'),
         filterLimit: document.getElementById('filter-limit'),
         btnRefresh: document.getElementById('btn-refresh'),
+        btnDeleteSelected: document.getElementById('btn-delete-selected'),
+        selectedCount: document.getElementById('selected-count'),
+        selectAll: document.getElementById('items-select-all'),
         btnPrev: document.getElementById('btn-prev'),
         btnNext: document.getElementById('btn-next'),
         tbody: document.getElementById('items-tbody'),
@@ -141,15 +147,25 @@
         resultCount: document.getElementById('result-count'),
     };
 
+    function csrf() {
+        return document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';
+    }
+
     function formatDate(isoString) {
-        if (!isoString) return '—';
+        if (!isoString) return '-';
         const d = new Date(isoString);
         return d.toLocaleString();
     }
 
     function truncate(str, len = 100) {
         if (!str) return '';
-        return str.length > len ? str.slice(0, len) + '…' : str;
+        return str.length > len ? str.slice(0, len) + '...' : str;
+    }
+
+    function escapeHtml(value) {
+        const div = document.createElement('div');
+        div.textContent = value == null ? '' : String(value);
+        return div.innerHTML;
     }
 
     function getImpactBadge(impact) {
@@ -159,6 +175,27 @@
             2: '<span class="inline-flex items-center px-2 py-1 text-xs font-medium rounded-md bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20 dark:bg-red-900/30 dark:text-red-400 dark:ring-red-500/30">High</span>',
         };
         return badges[impact] || badges[0];
+    }
+
+    function visibleCheckboxes() {
+        return Array.from(DOM.tbody.querySelectorAll('input[data-select-id]'));
+    }
+
+    function syncSelectionUI() {
+        const checkboxes = visibleCheckboxes();
+        const visibleIds = checkboxes.map(cb => Number(cb.dataset.selectId || 0)).filter(id => id > 0);
+
+        checkboxes.forEach(cb => {
+            const id = Number(cb.dataset.selectId || 0);
+            cb.checked = selectedIds.has(id);
+        });
+
+        const selectedVisible = visibleIds.filter(id => selectedIds.has(id)).length;
+        DOM.selectAll.checked = visibleIds.length > 0 && selectedVisible === visibleIds.length;
+        DOM.selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visibleIds.length;
+
+        DOM.selectedCount.textContent = String(selectedIds.size);
+        DOM.btnDeleteSelected.disabled = selectedIds.size === 0;
     }
 
     async function fetchItems() {
@@ -180,13 +217,12 @@
 
             currentTotal = data.total || 0;
             const items = data.items || [];
-
             DOM.resultCount.textContent = currentTotal.toLocaleString();
 
             if (items.length === 0) {
                 DOM.tbody.innerHTML = `
                     <tr>
-                        <td colspan="7" class="px-6 py-12 text-center text-font-subtle-light dark:text-font-subtle-dark">
+                        <td colspan="8" class="px-6 py-12 text-center text-font-subtle-light dark:text-font-subtle-dark">
                             No published items found.
                         </td>
                     </tr>
@@ -194,45 +230,94 @@
             } else {
                 DOM.tbody.innerHTML = items.map(item => `
                     <tr class="hover:bg-base-50 dark:hover:bg-base-800/50 transition-colors">
-                        <td class="px-6 py-4 text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap">${item.id}</td>
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            <span class="inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-md bg-primary-50 text-primary-700 ring-1 ring-inset ring-primary-600/20 dark:bg-primary-900/30 dark:text-primary-400 dark:ring-primary-500/30">${item.category_name || item.category_id}</span>
+                        <td class="px-4 py-4 whitespace-nowrap">
+                            <input type="checkbox" data-select-id="${Number(item.id || 0)}" class="rounded border-base-300 text-primary-600 focus:ring-primary-500 cursor-pointer">
                         </td>
-                        <td class="px-6 py-4 text-font-default-light dark:text-font-default-dark max-w-md" title="${item.title}">${truncate(item.title)}</td>
+                        <td class="px-6 py-4 text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap">${Number(item.id || 0)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <span class="inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-md bg-primary-50 text-primary-700 ring-1 ring-inset ring-primary-600/20 dark:bg-primary-900/30 dark:text-primary-400 dark:ring-primary-500/30">${escapeHtml(item.category_name || item.category_id)}</span>
+                        </td>
+                        <td class="px-6 py-4 text-font-default-light dark:text-font-default-dark max-w-md" title="${escapeHtml(item.title || '')}">${escapeHtml(truncate(item.title || ''))}</td>
                         <td class="px-6 py-4 whitespace-nowrap">${getImpactBadge(item.impact)}</td>
-                        <td class="px-6 py-4 text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap">${item.hub}</td>
-                        <td class="px-6 py-4 text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap text-xs">${formatDate(item.timestamp)}</td>
-                        <td class="px-6 py-4 text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap text-xs">${formatDate(item.created_at)}</td>
+                        <td class="px-6 py-4 text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap">${escapeHtml(item.hub || '')}</td>
+                        <td class="px-6 py-4 text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap text-xs">${escapeHtml(formatDate(item.timestamp))}</td>
+                        <td class="px-6 py-4 text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap text-xs">${escapeHtml(formatDate(item.created_at))}</td>
                     </tr>
                 `).join('');
             }
 
-            // Update pagination
-            const hasMore = data.has_more;
+            const hasMore = Boolean(data.has_more);
             const hasPrev = currentOffset > 0;
             DOM.pagination.classList.toggle('hidden', currentTotal === 0);
             DOM.btnPrev.disabled = !hasPrev;
             DOM.btnNext.disabled = !hasMore;
-            
+
             const start = currentTotal === 0 ? 0 : currentOffset + 1;
             const end = currentOffset + items.length;
-            DOM.paginationInfo.textContent = `Showing ${start} – ${end} of ${currentTotal.toLocaleString()}`;
+            DOM.paginationInfo.textContent = `Showing ${start} - ${end} of ${currentTotal.toLocaleString()}`;
 
+            syncSelectionUI();
         } catch (err) {
             console.error('Failed to fetch items:', err);
             DOM.tbody.innerHTML = `
                 <tr>
-                    <td colspan="7" class="px-6 py-12 text-center text-red-600 dark:text-red-400">
+                    <td colspan="8" class="px-6 py-12 text-center text-red-600 dark:text-red-400">
                         Failed to load items. Please try again.
                     </td>
                 </tr>
             `;
+            DOM.selectAll.checked = false;
+            DOM.selectAll.indeterminate = false;
         } finally {
             DOM.loading.classList.add('hidden');
         }
     }
 
-    // Event listeners
+    async function deleteSelected() {
+        const ids = Array.from(selectedIds);
+        if (!ids.length) return;
+
+        if (!confirm(`Delete ${ids.length} selected published item(s)?`)) return;
+
+        const btnText = DOM.btnDeleteSelected.textContent;
+        DOM.btnDeleteSelected.disabled = true;
+        DOM.btnDeleteSelected.textContent = 'Deleting...';
+
+        try {
+            const res = await fetch(API_DELETE, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrf(),
+                },
+                body: JSON.stringify({ ids }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || `HTTP ${res.status}`);
+            }
+
+            const deletedIds = Array.isArray(data.deleted_ids) ? data.deleted_ids : ids;
+            deletedIds.forEach(id => selectedIds.delete(Number(id)));
+
+            if (currentOffset > 0) {
+                const pageSize = parseInt(DOM.filterLimit.value, 10);
+                const expectedTotal = Math.max(0, currentTotal - Number(data.deleted || 0));
+                if (currentOffset >= expectedTotal) {
+                    currentOffset = Math.max(0, currentOffset - pageSize);
+                }
+            }
+
+            await fetchItems();
+        } catch (err) {
+            alert(err.message || 'Failed to delete selected items');
+        } finally {
+            DOM.btnDeleteSelected.textContent = btnText;
+            syncSelectionUI();
+        }
+    }
+
     DOM.filterCategory.addEventListener('change', () => {
         currentOffset = 0;
         fetchItems();
@@ -249,6 +334,28 @@
     });
 
     DOM.btnRefresh.addEventListener('click', fetchItems);
+    DOM.btnDeleteSelected.addEventListener('click', deleteSelected);
+
+    DOM.selectAll.addEventListener('change', () => {
+        const checked = DOM.selectAll.checked;
+        visibleCheckboxes().forEach(cb => {
+            const id = Number(cb.dataset.selectId || 0);
+            if (!id) return;
+            if (checked) selectedIds.add(id);
+            else selectedIds.delete(id);
+        });
+        syncSelectionUI();
+    });
+
+    DOM.tbody.addEventListener('change', (event) => {
+        const checkbox = event.target.closest('input[data-select-id]');
+        if (!checkbox) return;
+        const id = Number(checkbox.dataset.selectId || 0);
+        if (!id) return;
+        if (checkbox.checked) selectedIds.add(id);
+        else selectedIds.delete(id);
+        syncSelectionUI();
+    });
 
     DOM.btnPrev.addEventListener('click', () => {
         const limit = parseInt(DOM.filterLimit.value, 10);
@@ -262,7 +369,6 @@
         fetchItems();
     });
 
-    // Initial load
     fetchItems();
 })();
 </script>
