@@ -2,11 +2,22 @@ from django.db import models
 
 
 class Categories(models.Model):
+    DEFAULT_FANOUT_LIMIT = 50
+    DEFAULT_LIVE_FEED_CONFIG = {
+        'initial_fanout_limit': 50,
+        'initial_fanout_data': {},
+    }
+
     id = models.BigAutoField(primary_key=True)
     name = models.TextField(unique=True)
     enabled = models.BooleanField(db_comment='should be visible to user as separate catory tab')
     order = models.IntegerField(blank=True, null=True, db_comment='app order')
     live_feed_type = models.IntegerField(default=0, db_comment='0=not live feed, 1+=live feed type ID')
+    config = models.JSONField(
+        default=dict,
+        blank=True,
+        db_comment='Extra configuration: initial_fanout_limit, etc.'
+    )
 
     class Meta:
         db_table = 'categories'
@@ -14,6 +25,33 @@ class Categories(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        # Set default config for live feed categories
+        if self.live_feed_type and self.live_feed_type > 0:
+            if not self.config or not isinstance(self.config, dict):
+                self.config = dict(self.DEFAULT_LIVE_FEED_CONFIG)
+            else:
+                if 'initial_fanout_limit' not in self.config:
+                    self.config['initial_fanout_limit'] = self.DEFAULT_FANOUT_LIMIT
+                if 'initial_fanout_data' not in self.config:
+                    self.config['initial_fanout_data'] = {}
+        super().save(*args, **kwargs)
+
+    @property
+    def initial_fanout_limit(self) -> int:
+        """Get the initial fanout limit from config, defaulting to DEFAULT_FANOUT_LIMIT."""
+        if isinstance(self.config, dict):
+            return int(self.config.get('initial_fanout_limit', self.DEFAULT_FANOUT_LIMIT))
+        return self.DEFAULT_FANOUT_LIMIT
+
+    @property
+    def initial_fanout_data(self) -> dict:
+        """Get the initial fanout data from config, defaulting to empty dict."""
+        if isinstance(self.config, dict):
+            data = self.config.get('initial_fanout_data', {})
+            return data if isinstance(data, dict) else {}
+        return {}
 
 
 class Divisions(models.Model):
@@ -430,3 +468,70 @@ class OpenAIJobLog(models.Model):
             message=message,
             details=details,
         )
+
+
+class LiveFeedPublishedItem(models.Model):
+    """Stores published items for live feed categories."""
+
+    id = models.BigAutoField(primary_key=True)
+    category = models.ForeignKey(
+        Categories,
+        on_delete=models.CASCADE,
+        related_name='published_items',
+        db_index=True,
+    )
+    sequence_id = models.BigIntegerField(db_index=True)
+    title = models.TextField()
+    impact = models.IntegerField(default=0)
+    timestamp = models.DateTimeField(db_index=True)
+    hub = models.CharField(max_length=20, db_index=True, db_comment='Hub where item was published: all, or specific hub')
+    payload = models.JSONField(
+        default=dict,
+        blank=True,
+        db_comment='Full published payload including any extra fields'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'live_feed_published_items'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['category', '-created_at'], name='lfpi_cat_created_idx'),
+            models.Index(fields=['category', '-sequence_id'], name='lfpi_cat_seq_idx'),
+            models.Index(fields=['-timestamp'], name='lfpi_timestamp_idx'),
+        ]
+
+    def __str__(self):
+        return f"[{self.category_id}] {self.title[:50]}..."
+
+    @classmethod
+    def cleanup_if_needed(cls, threshold=500_000, delete_count=10_000):
+        """Remove oldest items if total exceeds threshold."""
+        total = cls.objects.count()
+        if total > threshold:
+            oldest_ids = list(
+                cls.objects.order_by('created_at')
+                .values_list('id', flat=True)[:delete_count]
+            )
+            if oldest_ids:
+                cls.objects.filter(id__in=oldest_ids).delete()
+                return len(oldest_ids)
+        return 0
+
+    @classmethod
+    def get_initial_fanout_items(cls, category: 'Categories', limit: int = None):
+        """Get the last N items for a category to use as initial fanout."""
+        if limit is None:
+            limit = category.initial_fanout_limit
+
+        items = cls.objects.filter(category=category).order_by('-sequence_id')[:limit]
+        return list(items)[::-1]  # Return in ascending order for fanout
+
+    def to_fanout_dict(self) -> dict:
+        """Convert to the format expected by the fanout snapshot."""
+        return {
+            'seq_id': self.sequence_id,
+            'title': self.title,
+            'impact': self.impact,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else '',
+        }

@@ -21,6 +21,7 @@ from .models import (
     Extradetails,
     OpenAIJob,
     OpenAIJobLog,
+    LiveFeedPublishedItem,
     News,
     Sourcealias,
     Timelines,
@@ -380,14 +381,68 @@ class NewsAdmin(ModelAdmin):
 admin.site.register(News, NewsAdmin)
 
 
+class PrettyJSONWidget(forms.Textarea):
+    """A textarea widget that formats JSON nicely with code editor styling."""
+
+    def __init__(self, attrs=None):
+        default_attrs = {
+            'rows': 12,
+            'spellcheck': 'false',
+            'class': 'vLargeTextField',
+            'style': (
+                'font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; '
+                'font-size: 13px; '
+                'line-height: 1.6; '
+                'tab-size: 2; '
+                'width: 100%; '
+                'resize: vertical; '
+            ),
+        }
+        if attrs:
+            default_attrs.update(attrs)
+        super().__init__(attrs=default_attrs)
+
+    def format_value(self, value):
+        if value is None:
+            return '{}'
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return value
+        try:
+            return json.dumps(value, indent=2, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(value)
+
+
+class CategoryForm(forms.ModelForm):
+    class Meta:
+        model = Categories
+        fields = '__all__'
+        widgets = {
+            'config': PrettyJSONWidget(),
+        }
+
+
 class CategoriesAdmin(ModelAdmin):
-    list_display = ['id', 'name', 'enabled', 'order', 'live_feed_type', 'live_feed_badge']
+    form = CategoryForm
+    list_display = ['id', 'name', 'enabled', 'order', 'live_feed_type', 'live_feed_badge', 'has_config']
     list_editable = ['enabled', 'order', 'live_feed_type']
     list_per_page = 50
     search_fields = ['name']
     list_filter = ['enabled', 'live_feed_type']
     list_filter_submit = True
     ordering = ['order', 'id']
+
+    def get_fieldsets(self, request, obj=None):
+        return (
+            (None, {'fields': ('name', 'enabled', 'order', 'live_feed_type')}),
+            ('Configuration', {
+                'fields': ('config',),
+                'description': 'JSON configuration. For live feed categories: "initial_fanout_limit" (default: 50), "initial_fanout_data" (dict).',
+            }),
+        )
 
     def live_feed_badge(self, obj):
         lft = getattr(obj, 'live_feed_type', 0) or 0
@@ -399,8 +454,62 @@ class CategoriesAdmin(ModelAdmin):
         return '-'
     live_feed_badge.short_description = 'Live'
 
+    def has_config(self, obj):
+        config = getattr(obj, 'config', None)
+        if config and isinstance(config, dict) and len(config) > 0:
+            return format_html(
+                '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">Yes</span>'
+            )
+        return '-'
+    has_config.short_description = 'Config'
+
 
 admin.site.register(Categories, CategoriesAdmin)
+
+
+class LiveFeedPublishedItemAdmin(ModelAdmin):
+    list_display = ['id', 'category', 'title_preview', 'impact_badge', 'hub', 'timestamp', 'created_at']
+    list_per_page = 100
+    search_fields = ['title']
+    list_filter = ['category', 'hub', 'impact']
+    list_filter_submit = True
+    ordering = ['-created_at']
+    date_hierarchy = 'created_at'
+    readonly_fields = ['id', 'category', 'sequence_id', 'title', 'impact', 'timestamp', 'hub', 'payload', 'created_at']
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('category').filter(category__live_feed_type__gt=0)
+
+    def title_preview(self, obj):
+        title = obj.title or ''
+        if len(title) > 60:
+            return title[:60] + '...'
+        return title
+    title_preview.short_description = 'Title'
+
+    def impact_badge(self, obj):
+        impact = obj.impact or 0
+        if impact == 2:
+            return format_html(
+                '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">High</span>'
+            )
+        elif impact == 1:
+            return format_html(
+                '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">Medium</span>'
+            )
+        return format_html(
+            '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-base-100 text-base-600 dark:bg-base-800 dark:text-base-400">Low</span>'
+        )
+    impact_badge.short_description = 'Impact'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+admin.site.register(LiveFeedPublishedItem, LiveFeedPublishedItemAdmin)
 
 
 class OpenAIJobLogInline(admin.TabularInline):

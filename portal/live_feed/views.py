@@ -12,7 +12,7 @@ from django.db import OperationalError, ProgrammingError
 
 from portal.models import Categories
 from .manager import hub_manager, HUBS
-from .models import LiveFeedLog, LiveFeedPipeline, LiveFeedPipelineLog
+from .models import LiveFeedLog, LiveFeedPipeline, LiveFeedPipelineLog, LiveFeedPublishedItem
 from .pipeline_manager import pipeline_manager
 from .pipelines import get_pipeline_sources, source_definition_map
 
@@ -568,4 +568,139 @@ def api_pipeline_delete(request, pipeline_id: int):
     pipeline.delete()
     pipeline_manager.request_reconcile()
     return JsonResponse({'success': True})
+
+
+@staff_member_required
+@require_GET
+def published_items_view(request):
+    """Page view for listing published items (live feed categories only)."""
+    categories = list(
+        Categories.objects
+        .filter(live_feed_type__gt=0)
+        .order_by('order', 'id')
+        .values('id', 'name', 'enabled', 'order', 'live_feed_type', 'config')
+    )
+
+    # Build hub list with proper display names
+    hub_list = [
+        {'key': hub_key, 'name': hub_info['name']}
+        for hub_key, hub_info in HUBS.items()
+    ]
+
+    context = {
+        **admin.site.each_context(request),
+        'title': 'Published Items',
+        'categories': categories,
+        'hubs': hub_list,
+    }
+    return TemplateResponse(request, 'admin/live_feed/published_items.html', context)
+
+
+@staff_member_required
+@require_GET
+def api_published_items(request):
+    """API endpoint for fetching published items with filtering."""
+    category_id = request.GET.get('category_id')
+    hub = request.GET.get('hub')
+    limit = min(max(int(request.GET.get('limit', 100)), 1), 500)
+    offset = max(int(request.GET.get('offset', 0)), 0)
+    since = request.GET.get('since')
+
+    qs = LiveFeedPublishedItem.objects.select_related('category').filter(
+        category__live_feed_type__gt=0
+    )
+
+    if category_id:
+        try:
+            qs = qs.filter(category_id=int(category_id))
+        except (TypeError, ValueError):
+            return JsonResponse({'error': 'category_id must be integer'}, status=400)
+
+    if hub and hub != 'all':
+        qs = qs.filter(hub=hub)
+
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace('Z', '+00:00'))
+            qs = qs.filter(created_at__gt=since_dt)
+        except ValueError:
+            pass
+
+    total = qs.count()
+    items = []
+    for row in qs.order_by('-created_at')[offset:offset + limit]:
+        items.append({
+            'id': row.id,
+            'category_id': row.category_id,
+            'category_name': row.category.name if row.category else '',
+            'sequence_id': row.sequence_id,
+            'title': row.title,
+            'impact': row.impact,
+            'timestamp': row.timestamp.isoformat() if row.timestamp else None,
+            'hub': row.hub,
+            'payload': row.payload or {},
+            'created_at': row.created_at.isoformat(),
+        })
+
+    return JsonResponse({
+        'items': items,
+        'total': total,
+        'limit': limit,
+        'offset': offset,
+        'has_more': offset + limit < total,
+    })
+
+
+@staff_member_required
+@require_GET
+def api_category_config(request, category_id: int):
+    """API endpoint to get category config."""
+    category = Categories.objects.filter(id=category_id, live_feed_type__gt=0).first()
+    if not category:
+        return JsonResponse({'error': 'Category not found or not a live feed category'}, status=404)
+
+    return JsonResponse({
+        'id': category.id,
+        'name': category.name,
+        'config': category.config or {},
+        'initial_fanout_limit': category.initial_fanout_limit,
+    })
+
+
+@staff_member_required
+@require_POST
+def api_category_config_update(request, category_id: int):
+    """API endpoint to update category config."""
+    category = Categories.objects.filter(id=category_id, live_feed_type__gt=0).first()
+    if not category:
+        return JsonResponse({'error': 'Category not found or not a live feed category'}, status=404)
+
+    try:
+        data = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    config = data.get('config')
+    if config is None:
+        return JsonResponse({'error': 'config is required'}, status=400)
+
+    if not isinstance(config, dict):
+        return JsonResponse({'error': 'config must be a JSON object'}, status=400)
+
+    # Validate that it's JSON serializable
+    try:
+        json.dumps(config)
+    except TypeError:
+        return JsonResponse({'error': 'config contains non-JSON-serializable values'}, status=400)
+
+    category.config = config
+    category.save(update_fields=['config'])
+
+    return JsonResponse({
+        'success': True,
+        'id': category.id,
+        'name': category.name,
+        'config': category.config,
+        'initial_fanout_limit': category.initial_fanout_limit,
+    })
 

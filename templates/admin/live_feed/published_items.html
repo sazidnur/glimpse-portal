@@ -1,0 +1,269 @@
+{% extends 'admin/base.html' %}
+{% load i18n unfold %}
+
+{% block breadcrumbs %}{% endblock %}
+
+{% block title %}{% trans 'Published Items' %} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block branding %}
+    {% include "unfold/helpers/site_branding.html" %}
+{% endblock %}
+
+{% block content %}
+{% include "unfold/helpers/messages.html" %}
+
+<div class="flex flex-col gap-8 mb-8" id="published-items-app">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+            <h1 class="font-semibold text-2xl text-font-important-light dark:text-font-important-dark">Published Items</h1>
+            <p class="mt-1 text-sm text-font-subtle-light dark:text-font-subtle-dark">View all items published to live feed categories</p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'live_feed:dashboard' %}" class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer bg-white dark:bg-base-800 text-font-default-light dark:text-font-default-dark ring-1 ring-inset ring-base-300 dark:ring-base-700 hover:bg-base-50 dark:hover:bg-base-700">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+                Back to Live Feed
+            </a>
+            <button type="button" id="btn-refresh" class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer bg-primary-600 text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:focus:ring-offset-base-900">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+        <div class="px-6 py-4 border-b border-base-200 dark:border-base-800">
+            <h2 class="font-medium text-font-important-light dark:text-font-important-dark">Filters</h2>
+        </div>
+        <div class="p-6">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div>
+                    <label for="filter-category" class="block text-sm font-medium text-font-default-light dark:text-font-default-dark mb-2">Category</label>
+                    <select id="filter-category" class="block w-full rounded-md border-0 py-2.5 px-3 text-font-default-light dark:text-font-default-dark bg-white dark:bg-base-800 ring-1 ring-inset ring-base-300 dark:ring-base-700 focus:ring-2 focus:ring-inset focus:ring-primary-600 text-sm">
+                        <option value="">All Categories</option>
+                        {% for cat in categories %}
+                        <option value="{{ cat.id }}">{{ cat.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label for="filter-hub" class="block text-sm font-medium text-font-default-light dark:text-font-default-dark mb-2">Hub</label>
+                    <select id="filter-hub" class="block w-full rounded-md border-0 py-2.5 px-3 text-font-default-light dark:text-font-default-dark bg-white dark:bg-base-800 ring-1 ring-inset ring-base-300 dark:ring-base-700 focus:ring-2 focus:ring-inset focus:ring-primary-600 text-sm">
+                        <option value="">All Hubs</option>
+                        {% for hub in hubs %}
+                        <option value="{{ hub.key }}">{{ hub.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label for="filter-limit" class="block text-sm font-medium text-font-default-light dark:text-font-default-dark mb-2">Per Page</label>
+                    <select id="filter-limit" class="block w-full rounded-md border-0 py-2.5 px-3 text-font-default-light dark:text-font-default-dark bg-white dark:bg-base-800 ring-1 ring-inset ring-base-300 dark:ring-base-700 focus:ring-2 focus:ring-inset focus:ring-primary-600 text-sm">
+                        <option value="50">50</option>
+                        <option value="100" selected>100</option>
+                        <option value="200">200</option>
+                        <option value="500">500</option>
+                    </select>
+                </div>
+                <div class="flex items-end">
+                    <div class="text-sm text-font-subtle-light dark:text-font-subtle-dark">
+                        <span id="result-count">0</span> items found
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Published Items Table -->
+    <div class="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800 overflow-hidden">
+        <div class="px-6 py-4 border-b border-base-200 dark:border-base-800 flex items-center justify-between">
+            <h2 class="font-medium text-font-important-light dark:text-font-important-dark">Results</h2>
+            <div id="loading-indicator" class="hidden flex items-center gap-2 text-sm text-font-subtle-light dark:text-font-subtle-dark">
+                <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                Loading...
+            </div>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-left text-xs font-medium text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wider bg-base-50 dark:bg-base-800">
+                        <th class="px-6 py-3 whitespace-nowrap">ID</th>
+                        <th class="px-6 py-3 whitespace-nowrap">Category</th>
+                        <th class="px-6 py-3">Title</th>
+                        <th class="px-6 py-3 whitespace-nowrap">Impact</th>
+                        <th class="px-6 py-3 whitespace-nowrap">Hub</th>
+                        <th class="px-6 py-3 whitespace-nowrap">Timestamp</th>
+                        <th class="px-6 py-3 whitespace-nowrap">Created</th>
+                    </tr>
+                </thead>
+                <tbody id="items-tbody" class="divide-y divide-base-100 dark:divide-base-800">
+                    <tr>
+                        <td colspan="7" class="px-6 py-12 text-center text-font-subtle-light dark:text-font-subtle-dark">
+                            Loading published items...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <!-- Pagination -->
+        <div id="pagination" class="hidden px-6 py-4 border-t border-base-200 dark:border-base-800 flex items-center justify-between bg-base-50/50 dark:bg-base-800/30">
+            <button type="button" id="btn-prev" disabled class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer bg-white dark:bg-base-800 text-font-default-light dark:text-font-default-dark ring-1 ring-inset ring-base-300 dark:ring-base-700 hover:bg-base-50 dark:hover:bg-base-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                Previous
+            </button>
+            <span id="pagination-info" class="text-sm text-font-subtle-light dark:text-font-subtle-dark"></span>
+            <button type="button" id="btn-next" disabled class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer bg-white dark:bg-base-800 text-font-default-light dark:text-font-default-dark ring-1 ring-inset ring-base-300 dark:ring-base-700 hover:bg-base-50 dark:hover:bg-base-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                Next
+                <svg class="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const API_BASE = '{% url "api_published_items_standalone" %}';
+
+    let currentOffset = 0;
+    let currentTotal = 0;
+
+    const DOM = {
+        filterCategory: document.getElementById('filter-category'),
+        filterHub: document.getElementById('filter-hub'),
+        filterLimit: document.getElementById('filter-limit'),
+        btnRefresh: document.getElementById('btn-refresh'),
+        btnPrev: document.getElementById('btn-prev'),
+        btnNext: document.getElementById('btn-next'),
+        tbody: document.getElementById('items-tbody'),
+        loading: document.getElementById('loading-indicator'),
+        pagination: document.getElementById('pagination'),
+        paginationInfo: document.getElementById('pagination-info'),
+        resultCount: document.getElementById('result-count'),
+    };
+
+    function formatDate(isoString) {
+        if (!isoString) return '—';
+        const d = new Date(isoString);
+        return d.toLocaleString();
+    }
+
+    function truncate(str, len = 100) {
+        if (!str) return '';
+        return str.length > len ? str.slice(0, len) + '…' : str;
+    }
+
+    function getImpactBadge(impact) {
+        const badges = {
+            0: '<span class="inline-flex items-center px-2 py-1 text-xs font-medium rounded-md bg-base-100 text-font-subtle-light dark:bg-base-700 dark:text-font-subtle-dark">Low</span>',
+            1: '<span class="inline-flex items-center px-2 py-1 text-xs font-medium rounded-md bg-yellow-50 text-yellow-700 ring-1 ring-inset ring-yellow-600/20 dark:bg-yellow-900/30 dark:text-yellow-400 dark:ring-yellow-500/30">Medium</span>',
+            2: '<span class="inline-flex items-center px-2 py-1 text-xs font-medium rounded-md bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20 dark:bg-red-900/30 dark:text-red-400 dark:ring-red-500/30">High</span>',
+        };
+        return badges[impact] || badges[0];
+    }
+
+    async function fetchItems() {
+        const params = new URLSearchParams();
+        const categoryId = DOM.filterCategory.value;
+        const hub = DOM.filterHub.value;
+        const limit = parseInt(DOM.filterLimit.value, 10);
+
+        if (categoryId) params.set('category_id', categoryId);
+        if (hub) params.set('hub', hub);
+        params.set('limit', limit);
+        params.set('offset', currentOffset);
+
+        DOM.loading.classList.remove('hidden');
+
+        try {
+            const resp = await fetch(`${API_BASE}?${params.toString()}`);
+            const data = await resp.json();
+
+            currentTotal = data.total || 0;
+            const items = data.items || [];
+
+            DOM.resultCount.textContent = currentTotal.toLocaleString();
+
+            if (items.length === 0) {
+                DOM.tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="px-6 py-12 text-center text-font-subtle-light dark:text-font-subtle-dark">
+                            No published items found.
+                        </td>
+                    </tr>
+                `;
+            } else {
+                DOM.tbody.innerHTML = items.map(item => `
+                    <tr class="hover:bg-base-50 dark:hover:bg-base-800/50 transition-colors">
+                        <td class="px-6 py-4 text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap">${item.id}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <span class="inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-md bg-primary-50 text-primary-700 ring-1 ring-inset ring-primary-600/20 dark:bg-primary-900/30 dark:text-primary-400 dark:ring-primary-500/30">${item.category_name || item.category_id}</span>
+                        </td>
+                        <td class="px-6 py-4 text-font-default-light dark:text-font-default-dark max-w-md" title="${item.title}">${truncate(item.title)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">${getImpactBadge(item.impact)}</td>
+                        <td class="px-6 py-4 text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap">${item.hub}</td>
+                        <td class="px-6 py-4 text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap text-xs">${formatDate(item.timestamp)}</td>
+                        <td class="px-6 py-4 text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap text-xs">${formatDate(item.created_at)}</td>
+                    </tr>
+                `).join('');
+            }
+
+            // Update pagination
+            const hasMore = data.has_more;
+            const hasPrev = currentOffset > 0;
+            DOM.pagination.classList.toggle('hidden', currentTotal === 0);
+            DOM.btnPrev.disabled = !hasPrev;
+            DOM.btnNext.disabled = !hasMore;
+            
+            const start = currentTotal === 0 ? 0 : currentOffset + 1;
+            const end = currentOffset + items.length;
+            DOM.paginationInfo.textContent = `Showing ${start} – ${end} of ${currentTotal.toLocaleString()}`;
+
+        } catch (err) {
+            console.error('Failed to fetch items:', err);
+            DOM.tbody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="px-6 py-12 text-center text-red-600 dark:text-red-400">
+                        Failed to load items. Please try again.
+                    </td>
+                </tr>
+            `;
+        } finally {
+            DOM.loading.classList.add('hidden');
+        }
+    }
+
+    // Event listeners
+    DOM.filterCategory.addEventListener('change', () => {
+        currentOffset = 0;
+        fetchItems();
+    });
+
+    DOM.filterHub.addEventListener('change', () => {
+        currentOffset = 0;
+        fetchItems();
+    });
+
+    DOM.filterLimit.addEventListener('change', () => {
+        currentOffset = 0;
+        fetchItems();
+    });
+
+    DOM.btnRefresh.addEventListener('click', fetchItems);
+
+    DOM.btnPrev.addEventListener('click', () => {
+        const limit = parseInt(DOM.filterLimit.value, 10);
+        currentOffset = Math.max(0, currentOffset - limit);
+        fetchItems();
+    });
+
+    DOM.btnNext.addEventListener('click', () => {
+        const limit = parseInt(DOM.filterLimit.value, 10);
+        currentOffset += limit;
+        fetchItems();
+    });
+
+    // Initial load
+    fetchItems();
+})();
+</script>
+{% endblock %}

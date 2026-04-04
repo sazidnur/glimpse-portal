@@ -863,25 +863,97 @@ class LiveFeedHubManager:
             return self.send_to_all(message)
         return {hub: self.send_to_hub(hub, message)}
 
+    def _store_published_item(self, category_id: int, sequence_id: int, title: str,
+                               impact: int, timestamp: str, hub: str, payload: dict) -> Optional['LiveFeedPublishedItem']:
+        """Store a published item in the database."""
+        from .models import LiveFeedPublishedItem
+        from portal.models import Categories
+        from dateutil.parser import parse as parse_datetime
+
+        try:
+            category = Categories.objects.filter(id=category_id, live_feed_type__gt=0).first()
+            if not category:
+                return None
+
+            ts = parse_datetime(timestamp) if timestamp else datetime.now(timezone.utc)
+
+            item = LiveFeedPublishedItem.objects.create(
+                category=category,
+                sequence_id=sequence_id,
+                title=title,
+                impact=impact,
+                timestamp=ts,
+                hub=hub,
+                payload=payload,
+            )
+            LiveFeedPublishedItem.cleanup_if_needed()
+            return item
+        except Exception as e:
+            logger.error("Failed to store published item: %s", e)
+            return None
+
+    def _build_initial_fanout_snapshot(self, category_id: int) -> Optional[dict]:
+        """Build the initial fanout snapshot for a category from recent published items."""
+        from .models import LiveFeedPublishedItem
+        from portal.models import Categories
+
+        try:
+            category = Categories.objects.filter(id=category_id, live_feed_type__gt=0).first()
+            if not category:
+                return None
+
+            items = LiveFeedPublishedItem.get_initial_fanout_items(category)
+            if not items:
+                return None
+
+            fanout_items = [item.to_fanout_dict() for item in items]
+
+            return {
+                'type': 'snapshot',
+                'category': {
+                    str(category_id): fanout_items
+                }
+            }
+        except Exception as e:
+            logger.error("Failed to build initial fanout snapshot: %s", e)
+            return None
+
     def publish_item(self, hub: str, category_id: int, title: str,
                      impact: int = 0, timestamp: str = None) -> dict:
+        sequence_id = int(datetime.now(timezone.utc).timestamp() * 1000)
+        item_timestamp = timestamp or datetime.now(timezone.utc).isoformat()
+
         item = {
             'type': 'message',
             'category_id': category_id,
-            'sequence_id': int(datetime.now(timezone.utc).timestamp() * 1000),
+            'sequence_id': sequence_id,
             'title': title,
         }
         if impact:
             item['impact'] = impact
-        if timestamp:
-            item['timestamp'] = timestamp
-        else:
-            item['timestamp'] = datetime.now(timezone.utc).isoformat()
+        item['timestamp'] = item_timestamp
+
+        # Store the published item in the database
+        stored_item = self._store_published_item(
+            category_id=category_id,
+            sequence_id=sequence_id,
+            title=title,
+            impact=impact,
+            timestamp=item_timestamp,
+            hub=hub,
+            payload=item,
+        )
 
         message = {
             'type': 'publish_item',
             'item': item,
         }
+
+        # Build and include initial fanout snapshot if item was stored successfully
+        if stored_item:
+            snapshot = self._build_initial_fanout_snapshot(category_id)
+            if snapshot:
+                message['snapshot'] = snapshot
 
         if hub == 'all':
             results = self.send_to_all(message)
@@ -897,6 +969,7 @@ class LiveFeedHubManager:
                         'category_id': category_id,
                         'successful_hubs': successful_hubs,
                         'failed_hubs': failed_hubs,
+                        'fanout_updated': snapshot is not None if stored_item else False,
                     }
                 )
             return {'success': success, 'results': results}
@@ -907,7 +980,10 @@ class LiveFeedHubManager:
                 self._log_event(
                     hub, 'publish',
                     f'Published: "{title[:50]}"',
-                    details={'category_id': category_id}
+                    details={
+                        'category_id': category_id,
+                        'fanout_updated': snapshot is not None if stored_item else False,
+                    }
                 )
             return result
 

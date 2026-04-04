@@ -20,6 +20,10 @@
             <p class="mt-1 text-sm text-font-subtle-light dark:text-font-subtle-dark">Server-side hub connections with real-time monitoring</p>
         </div>
         <div class="flex gap-2">
+            <a href="{% url 'published_items_standalone' %}" class="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors cursor-pointer bg-white dark:bg-base-800 text-font-default-light dark:text-font-default-dark ring-1 ring-inset ring-base-300 dark:ring-base-700 hover:bg-base-50 dark:hover:bg-base-700">
+                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                Published Items
+            </a>
             <button type="button" id="btn-connect-all" class="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-colors cursor-pointer bg-primary-600 text-white hover:bg-primary-700">
                 <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                 Connect All

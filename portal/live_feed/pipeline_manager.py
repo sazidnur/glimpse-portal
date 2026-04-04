@@ -20,6 +20,7 @@ from .models import LiveFeedPipeline, LiveFeedPipelineLog
 from ..openai.jobs import enqueue_pipeline_translation_job, openai_is_available, resolve_pipeline_openai_mode
 from .pipelines import (
     build_pipeline_translation_request,
+    detect_closing_with_redirect,
     extract_children_from_ws_message,
     get_pipeline_client,
     is_breaking_item,
@@ -40,7 +41,10 @@ DISCOVERY_INTERVAL_SECONDS = 300.0
 
 
 class RestartPipelineLoop(Exception):
-    pass
+    """Raised to restart the pipeline loop (reconnect to same or new liveblog)."""
+    def __init__(self, redirect_slug: str | None = None):
+        self.redirect_slug = redirect_slug
+        super().__init__()
 
 
 @dataclass
@@ -64,6 +68,7 @@ class LiveFeedPipelineRunner:
         self.stats = PipelineStats()
         self.known_ids: set[int] = set()
         self.last_slug = ''
+        self.pending_redirect_slug: str | None = None
 
     def start(self):
         self.thread.start()
@@ -169,15 +174,18 @@ class LiveFeedPipelineRunner:
         pipeline: LiveFeedPipeline,
         child_ids: list[int],
         category_id: int,
-    ):
+        current_slug: str = '',
+    ) -> str | None:
+        """Process new child IDs. Returns redirect slug if closing item detected."""
         default_impact = self._current_default_impact()
         new_ids = [child_id for child_id in child_ids if child_id not in self.known_ids]
         if not new_ids:
-            return
+            return None
 
+        redirect_slug = None
         for child_id in reversed(new_ids):
             if self.stop_event.is_set() or not self._check_should_run():
-                return
+                return redirect_slug
 
             self.known_ids.add(child_id)
             self._increment_seen()
@@ -185,6 +193,18 @@ class LiveFeedPipelineRunner:
             item = client.fetch_live_item(child_id=child_id)
             if not item:
                 continue
+
+            if current_slug and not redirect_slug:
+                detected_redirect = detect_closing_with_redirect(item, current_slug)
+                if detected_redirect:
+                    redirect_slug = detected_redirect
+                    self.manager.log(
+                        self.pipeline_id,
+                        event_type=LiveFeedPipelineLog.EventType.UPDATE,
+                        level=LiveFeedPipelineLog.LogLevel.INFO,
+                        message=f'Detected liveblog closing with redirect to: {redirect_slug}',
+                        details={'from_slug': current_slug, 'to_slug': redirect_slug, 'child_id': child_id},
+                    )
 
             if not is_breaking_item(item):
                 continue
@@ -297,6 +317,8 @@ class LiveFeedPipelineRunner:
                         'result': publish_result,
                     },
                 )
+        
+        return redirect_slug
 
     def run(self):
         close_old_connections()
@@ -330,24 +352,88 @@ class LiveFeedPipelineRunner:
                     break
 
                 try:
-                    target = client.discover_latest_live_target()
+                    if self.pending_redirect_slug:
+                        from .pipelines import LiveTarget
+                        redirect_slug = self.pending_redirect_slug
+                        self.pending_redirect_slug = None
+                        
+                        try:
+                            self.manager.log(
+                                self.pipeline_id,
+                                event_type=LiveFeedPipelineLog.EventType.UPDATE,
+                                level=LiveFeedPipelineLog.LogLevel.INFO,
+                                message=f'Switching to redirected liveblog: {redirect_slug}',
+                            )
+                            parent_id, current_children = client.fetch_parent_and_children(
+                                slug=redirect_slug,
+                                fallback_post_id=None,
+                            )
+                            target = LiveTarget(
+                                slug=redirect_slug,
+                                link=f'https://www.aljazeera.com/news/liveblog/{redirect_slug}',
+                                post_id=parent_id,
+                            )
+                        except Exception as redirect_err:
+                            self.manager.log(
+                                self.pipeline_id,
+                                event_type=LiveFeedPipelineLog.EventType.UPDATE,
+                                level=LiveFeedPipelineLog.LogLevel.WARNING,
+                                message=f'Redirect liveblog not available: {redirect_slug}, retrying...',
+                                details={'error': str(redirect_err)},
+                            )
+                            self._set_status(LiveFeedPipeline.Status.RUNNING, error=f'Waiting for: {redirect_slug}')
+                            self.stop_event.wait(30.0)
+                            
+                            if self.stop_event.is_set():
+                                break
+                            
+                            try:
+                                parent_id, current_children = client.fetch_parent_and_children(
+                                    slug=redirect_slug,
+                                    fallback_post_id=None,
+                                )
+                                target = LiveTarget(
+                                    slug=redirect_slug,
+                                    link=f'https://www.aljazeera.com/news/liveblog/{redirect_slug}',
+                                    post_id=parent_id,
+                                )
+                            except Exception:
+                                self.manager.log(
+                                    self.pipeline_id,
+                                    event_type=LiveFeedPipelineLog.EventType.UPDATE,
+                                    level=LiveFeedPipelineLog.LogLevel.WARNING,
+                                    message='Redirect failed, falling back to discovery',
+                                )
+                                target = client.discover_latest_live_target()
+                                parent_id, current_children = client.fetch_parent_and_children(
+                                    slug=target.slug,
+                                    fallback_post_id=target.post_id,
+                                )
+                    else:
+                        target = client.discover_latest_live_target()
+                        parent_id, current_children = client.fetch_parent_and_children(
+                            slug=target.slug,
+                            fallback_post_id=target.post_id,
+                        )
+                    
                     if self.last_slug and self.last_slug != target.slug:
                         self.known_ids.clear()
                     self.last_slug = target.slug
-                    parent_id, current_children = client.fetch_parent_and_children(
-                        slug=target.slug,
-                        fallback_post_id=target.post_id,
-                    )
+                    
                     if not self.known_ids:
                         self.known_ids.update(current_children)
                     else:
-                        self._process_child_ids(
+                        redirect = self._process_child_ids(
                             client,
                             pipeline=pipeline,
                             child_ids=current_children,
                             category_id=int(pipeline.category_id),
+                            current_slug=target.slug,
                         )
                         self.known_ids.update(current_children)
+                        if redirect:
+                            self.pending_redirect_slug = redirect
+                            raise RestartPipelineLoop(redirect)
 
                     self.ws = client.connect_live_ws(post_id=parent_id)
                     reconnect_delay = RECONNECT_BASE_DELAY
@@ -382,13 +468,17 @@ class LiveFeedPipelineRunner:
                                 self.ws.send(json.dumps({'type': 'pong'}))
                             elif message_type == 'next':
                                 child_ids = extract_children_from_ws_message(message)
-                                self._process_child_ids(
+                                redirect = self._process_child_ids(
                                     client,
                                     pipeline=pipeline,
                                     child_ids=child_ids,
                                     category_id=int(pipeline.category_id),
+                                    current_slug=target.slug,
                                 )
                                 self.known_ids.update(child_ids)
+                                if redirect:
+                                    self.pending_redirect_slug = redirect
+                                    raise RestartPipelineLoop(redirect)
                             elif message_type == 'complete':
                                 raise RestartPipelineLoop()
                         except WebSocketTimeoutException:
@@ -397,28 +487,40 @@ class LiveFeedPipelineRunner:
                         now = time.time()
                         if now >= next_poll:
                             polled_children = client.fetch_children_only(slug=target.slug)
-                            self._process_child_ids(
+                            redirect = self._process_child_ids(
                                 client,
                                 pipeline=pipeline,
                                 child_ids=polled_children,
                                 category_id=int(pipeline.category_id),
+                                current_slug=target.slug,
                             )
                             self.known_ids.update(polled_children)
+                            if redirect:
+                                self.pending_redirect_slug = redirect
+                                raise RestartPipelineLoop(redirect)
                             next_poll = now + POLL_INTERVAL_SECONDS
 
                         if now >= next_discovery:
                             refreshed = client.discover_latest_live_target()
                             if refreshed.slug != target.slug:
-                                raise RestartPipelineLoop()
+                                self.pending_redirect_slug = refreshed.slug
+                                raise RestartPipelineLoop(refreshed.slug)
                             next_discovery = now + DISCOVERY_INTERVAL_SECONDS
 
-                except RestartPipelineLoop:
+                except RestartPipelineLoop as restart:
                     if self.ws is not None:
                         try:
                             self.ws.close()
                         except Exception:
                             pass
                         self.ws = None
+                    if restart.redirect_slug:
+                        self.manager.log(
+                            self.pipeline_id,
+                            event_type=LiveFeedPipelineLog.EventType.UPDATE,
+                            level=LiveFeedPipelineLog.LogLevel.INFO,
+                            message=f'Restarting with redirect to: {restart.redirect_slug}',
+                        )
                     continue
                 except Exception as exc:
                     self._set_status(LiveFeedPipeline.Status.ERROR, error=str(exc))

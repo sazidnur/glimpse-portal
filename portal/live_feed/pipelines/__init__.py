@@ -3,6 +3,7 @@ from __future__ import annotations
 from .aljazeera_live import (
     AlJazeeraLiveClient,
     build_translation_request,
+    detect_closing_with_redirect,
     extract_children_from_ws_message,
     get_source_definition,
 )

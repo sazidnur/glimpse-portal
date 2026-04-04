@@ -38,6 +38,47 @@ LIVEBLOG_LINK_RE = re.compile(
     re.IGNORECASE,
 )
 
+CLOSING_CONTENT_PATTERNS = [
+    "this live page is closing",
+    "this live page will be closing",
+    "this liveblog is closing",
+    "this liveblog will be closing",
+    "this live blog is closing",
+    "this live blog will be closing",
+]
+
+LIVEBLOG_HREF_RE = re.compile(
+    r'href=["\']?(/news/liveblog/\d{4}/\d{1,2}/\d{1,2}/[a-z0-9-]+)["\']?',
+    re.IGNORECASE,
+)
+
+
+def detect_closing_with_redirect(item: dict[str, Any], current_slug: str) -> str | None:
+    """
+    Check if item indicates the liveblog is closing and extract redirect URL.
+    Returns the new liveblog slug if found, otherwise None.
+    """
+    content = str(item.get("content") or "").casefold()
+    
+    is_closing = any(pattern in content for pattern in CLOSING_CONTENT_PATTERNS)
+    if not is_closing:
+        return None
+    
+    original_content = str(item.get("content") or "")
+    match = LIVEBLOG_HREF_RE.search(original_content)
+    if not match:
+        return None
+    
+    link = match.group(1)
+    parts = [p for p in link.split("/") if p]
+    new_slug = parts[-1] if parts else ""
+    
+    if new_slug and new_slug != current_slug:
+        return new_slug
+    
+    return None
+
+
 BREAKING_NEWS_QUERY = (
     "query ArchipelagoBreakingTickerQuery{"
     "breakingNews{post tickerTitle tickerText modified link}"
@@ -224,24 +265,29 @@ class AlJazeeraLiveClient(BasePipelineClient):
             variables={},
         )
         breaking = (payload.get("data") or {}).get("breakingNews") or {}
-        raw_link = str(breaking.get("link") or "").strip()
-        maybe_post_id = to_int(breaking.get("post"))
+        ticker_link = str(breaking.get("link") or "").strip()
+        ticker_post_id = to_int(breaking.get("post"))
 
-        if "/liveblog/" in raw_link:
-            link = self.normalize_liveblog_link(raw_link)
+        homepage_links = self.fetch_homepage_live_links()
+
+        if homepage_links:
+            link = homepage_links[0]
             slug = self.slug_from_link(link)
             if slug:
-                return LiveTarget(slug=slug, link=link, post_id=maybe_post_id)
+                post_id = None
+                if "/liveblog/" in ticker_link:
+                    ticker_slug = self.slug_from_link(self.normalize_liveblog_link(ticker_link))
+                    if ticker_slug == slug:
+                        post_id = ticker_post_id
+                return LiveTarget(slug=slug, link=link, post_id=post_id)
 
-        fallback_links = self.fetch_homepage_live_links()
-        if not fallback_links:
-            raise RuntimeError("Could not discover a liveblog link from breaking ticker or homepage.")
+        if "/liveblog/" in ticker_link:
+            link = self.normalize_liveblog_link(ticker_link)
+            slug = self.slug_from_link(link)
+            if slug:
+                return LiveTarget(slug=slug, link=link, post_id=ticker_post_id)
 
-        link = fallback_links[0]
-        slug = self.slug_from_link(link)
-        if not slug:
-            raise RuntimeError(f"Could not parse liveblog slug from link: {link}")
-        return LiveTarget(slug=slug, link=link, post_id=maybe_post_id)
+        raise RuntimeError("Could not discover a liveblog link from homepage or breaking ticker.")
 
     def fetch_parent_and_children(
         self,
