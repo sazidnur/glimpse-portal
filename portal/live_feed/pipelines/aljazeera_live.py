@@ -133,11 +133,11 @@ def get_source_definition() -> PipelineSourceDefinition:
 def build_translation_request(title: str) -> dict[str, Any]:
     return {
         'system_prompt': (
-            'You are a news editor. Translate into Bengali headline style (live update). Prioritize news and perspectives relevant to Muslim, Bangladeshi, and Palestinian communities.\n'
+            'You are a news editor. Translate into Bengali headline style. Prioritize news and perspectives relevant to Muslim, Bangladeshi, and Palestinian communities.\n'
             'Rules:\n'
-            '- Use concise, natural Bengali\n'
-            '- Maintain factual accuracy\n'
-            '- No extra words or explanation\n'
+            '- Use concise, natural Bengali.\n'
+            '- Maintain factual accuracy and proper information\n'
+            '- No extra words or explanation liek live, update etc.\n'
             '- Tone: urgent but neutral\n'
             'Return JSON only, strictly matching the provided schema.'
         ),
