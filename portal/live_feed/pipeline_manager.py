@@ -167,6 +167,28 @@ class LiveFeedPipelineRunner:
             raw_impact = fallback
         return max(0, min(2, int(raw_impact)))
 
+    def _current_pipeline_config(self, fallback: Any = None) -> dict[str, Any]:
+        row = LiveFeedPipeline.objects.filter(id=self.pipeline_id).values('config').first()
+        if row and isinstance(row.get('config'), dict):
+            return row['config']
+        return fallback if isinstance(fallback, dict) else {}
+
+    @staticmethod
+    def _resolve_only_breaking_news(config: Any, fallback: bool = True) -> bool:
+        if not isinstance(config, dict):
+            return bool(fallback)
+        raw = config.get('only_breaking_news', fallback)
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)):
+            return bool(raw)
+        text = str(raw or '').strip().lower()
+        if text in {'1', 'true', 'yes', 'on'}:
+            return True
+        if text in {'0', 'false', 'no', 'off'}:
+            return False
+        return bool(fallback)
+
     def _process_child_ids(
         self,
         client,
@@ -178,6 +200,8 @@ class LiveFeedPipelineRunner:
     ) -> str | None:
         """Process new child IDs. Returns redirect slug if closing item detected."""
         default_impact = self._current_default_impact()
+        runtime_config = self._current_pipeline_config(pipeline.config)
+        only_breaking_news = self._resolve_only_breaking_news(runtime_config, fallback=True)
         new_ids = [child_id for child_id in child_ids if child_id not in self.known_ids]
         if not new_ids:
             return None
@@ -206,7 +230,7 @@ class LiveFeedPipelineRunner:
                         details={'from_slug': current_slug, 'to_slug': redirect_slug, 'child_id': child_id},
                     )
 
-            if not is_breaking_item(item):
+            if only_breaking_news and not is_breaking_item(item):
                 continue
 
             title = str(item.get('title') or '').strip()
@@ -214,7 +238,7 @@ class LiveFeedPipelineRunner:
                 continue
 
             timestamp = item.get('date') or item.get('timestamp')
-            mode = resolve_pipeline_openai_mode(pipeline.source, pipeline_config=pipeline.config)
+            mode = resolve_pipeline_openai_mode(pipeline.source, pipeline_config=runtime_config)
             if mode != 'off' and openai_is_available():
                 try:
                     translation_request = build_pipeline_translation_request(
@@ -232,7 +256,7 @@ class LiveFeedPipelineRunner:
                         system_prompt=str(translation_request.get('system_prompt') or ''),
                         user_payload=translation_request.get('user_payload') or {},
                         response_schema=translation_request.get('response_schema') or {},
-                        pipeline_config=pipeline.config,
+                        pipeline_config=runtime_config,
                     )
                 except Exception as exc:
                     self.manager.log(
@@ -288,11 +312,12 @@ class LiveFeedPipelineRunner:
                     self.pipeline_id,
                     event_type=LiveFeedPipelineLog.EventType.PUBLISH,
                     level=LiveFeedPipelineLog.LogLevel.INFO,
-                    message=f'Published breaking title: "{title[:120]}"',
+                    message=f'Published title: "{title[:120]}"',
                     details={
                         'child_id': child_id,
                         'category_id': category_id,
                         'impact': max(0, min(2, int(default_impact))),
+                        'only_breaking_news': only_breaking_news,
                         'successful_hubs': successful_hubs,
                         'failed_hubs': failed_hubs,
                     },
@@ -310,10 +335,11 @@ class LiveFeedPipelineRunner:
                     self.pipeline_id,
                     event_type=LiveFeedPipelineLog.EventType.ERROR,
                     level=LiveFeedPipelineLog.LogLevel.ERROR,
-                    message='Failed to publish breaking title to hubs',
+                    message='Failed to publish title to hubs',
                     details={
                         'child_id': child_id,
                         'category_id': category_id,
+                        'only_breaking_news': only_breaking_news,
                         'result': publish_result,
                     },
                 )
