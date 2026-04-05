@@ -104,6 +104,7 @@ class HubConnection:
         self._reconnect_scheduled = False
         self.state.connected = False
         self.state.connecting = False
+        self.state.snapshot = None  # Clear snapshot to mimic user disconnect
         self.manager._update_hub_redis(self.hub, self.state)
         self.manager._release_hub_owner(self.hub)
         self.manager._log_event(
@@ -252,6 +253,9 @@ class HubConnection:
             self.state.live_users = data.get('live_users', 0)
             self.state.admin_users = data.get('admin_users', 0)
             self.manager._update_hub_redis(self.hub, self.state)
+            # Store initial fanout snapshot to Redis for API access
+            if self.state.snapshot:
+                self.manager._store_snapshot(self.hub, self.state.snapshot)
             self.manager._log_event(
                 self.hub, 'connect',
                 f"Connected (users={self.state.live_users}, admins={self.state.admin_users})",
@@ -799,7 +803,17 @@ class LiveFeedHubManager:
     def get_snapshot(self, hub: str) -> Optional[dict]:
         if hub not in self.connections:
             return None
-        return self.connections[hub].state.snapshot
+
+        snapshot = self.connections[hub].state.snapshot
+        if snapshot:
+            return snapshot
+
+        r = self._redis()
+        key = f"{REDIS_KEY_PREFIX}{hub}:snapshot"
+        data = r.get(key)
+        if data:
+            return json.loads(data)
+        return None
 
     def send_to_hub(self, hub: str, message: dict, _routed: bool = False) -> dict:
         if hub not in self.connections:
@@ -852,6 +866,18 @@ class LiveFeedHubManager:
         results = {}
         for hub in HUBS:
             results[hub] = self.send_to_hub(hub, message, _routed=_routed)
+        return results
+
+    def send_to_connected(self, message: dict) -> dict:
+        """Send message only to hubs that are already connected (no auto-connect)."""
+        results = {}
+        for hub in HUBS:
+            conn = self.connections.get(hub)
+            if conn and conn.state.connected:
+                success = conn.send(message)
+                results[hub] = {'success': success}
+            else:
+                results[hub] = {'success': False, 'error': 'Not connected', 'skipped': True}
         return results
 
     def request_live_users(self, hub: str = 'all') -> dict:
@@ -1043,9 +1069,11 @@ class LiveFeedHubManager:
                 message['snapshot'] = snapshot
 
         if hub == 'all':
-            results = self.send_to_all(message)
+            # Send only to connected hubs (no auto-connect)
+            results = self.send_to_connected(message)
             successful_hubs = [hub_name for hub_name, result in results.items() if result.get('success')]
-            failed_hubs = [hub_name for hub_name, result in results.items() if not result.get('success')]
+            skipped_hubs = [hub_name for hub_name, result in results.items() if result.get('skipped')]
+            failed_hubs = [hub_name for hub_name, result in results.items() if not result.get('success') and not result.get('skipped')]
             success = bool(successful_hubs)
             if success:
                 self._increment_cost('publishes')
@@ -1055,6 +1083,7 @@ class LiveFeedHubManager:
                     details={
                         'category_id': category_id,
                         'successful_hubs': successful_hubs,
+                        'skipped_hubs': skipped_hubs,
                         'failed_hubs': failed_hubs,
                         'fanout_updated': snapshot is not None if stored_item else False,
                     }
