@@ -73,12 +73,24 @@ def dashboard_view(request):
     except Exception:
         pass
 
-    categories = list(
-        Categories.objects
-        .filter(live_feed_type__gt=0)
-        .order_by('order', 'id')
-        .values('id', 'name', 'enabled', 'order', 'live_feed_type')
-    )
+    categories = [
+        {
+            'id': row['id'],
+            'name': row['name'],
+            'enabled': row['enabled'],
+            'order': row['order'],
+            'live_feed_type': row['live_feed_type'],
+            'source': str((row.get('config') or {}).get('source', '')).strip() if isinstance(row.get('config'), dict) else '',
+            'page_title': str((row.get('config') or {}).get('page_title', '')).strip() if isinstance(row.get('config'), dict) else '',
+            'page_tagline': str((row.get('config') or {}).get('page_tagline', '')).strip() if isinstance(row.get('config'), dict) else '',
+        }
+        for row in (
+            Categories.objects
+            .filter(live_feed_type__gt=0)
+            .order_by('order', 'id')
+            .values('id', 'name', 'enabled', 'order', 'live_feed_type', 'config')
+        )
+    ]
 
     context = {
         **admin.site.each_context(request),
@@ -318,12 +330,24 @@ def api_reset_costs(request):
 @staff_member_required
 @require_GET
 def api_categories(request):
-    categories = list(
-        Categories.objects
-        .filter(live_feed_type__gt=0)
-        .order_by('order', 'id')
-        .values('id', 'name', 'enabled', 'order', 'live_feed_type')
-    )
+    categories = [
+        {
+            'id': row['id'],
+            'name': row['name'],
+            'enabled': row['enabled'],
+            'order': row['order'],
+            'live_feed_type': row['live_feed_type'],
+            'source': str((row.get('config') or {}).get('source', '')).strip() if isinstance(row.get('config'), dict) else '',
+            'page_title': str((row.get('config') or {}).get('page_title', '')).strip() if isinstance(row.get('config'), dict) else '',
+            'page_tagline': str((row.get('config') or {}).get('page_tagline', '')).strip() if isinstance(row.get('config'), dict) else '',
+        }
+        for row in (
+            Categories.objects
+            .filter(live_feed_type__gt=0)
+            .order_by('order', 'id')
+            .values('id', 'name', 'enabled', 'order', 'live_feed_type', 'config')
+        )
+    ]
     return JsonResponse({'categories': categories})
 
 @staff_member_required

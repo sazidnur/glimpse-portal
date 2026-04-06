@@ -10,6 +10,7 @@ class Categories(models.Model):
 
     id = models.BigAutoField(primary_key=True)
     name = models.TextField(unique=True)
+    name_en = models.TextField(default='', blank=True)
     enabled = models.BooleanField(db_comment='should be visible to user as separate catory tab')
     order = models.IntegerField(blank=True, null=True, db_comment='app order')
     live_feed_type = models.IntegerField(default=0, db_comment='0=not live feed, 1+=live feed type ID')

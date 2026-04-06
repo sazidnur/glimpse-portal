@@ -54,17 +54,29 @@ class VideoDetailSerializer(serializers.ModelSerializer):
 
 class CategorySerializer(serializers.ModelSerializer):
     live_feed_type = serializers.SerializerMethodField()
-    is_live_feed = serializers.SerializerMethodField()
 
     class Meta:
         model = Categories
-        fields = ['id', 'name', 'enabled', 'order', 'live_feed_type', 'is_live_feed']
+        fields = ['id', 'name', 'name_en', 'enabled', 'order', 'live_feed_type']
 
     def get_live_feed_type(self, obj):
         return int(getattr(obj, 'live_feed_type', 0) or 0)
 
-    def get_is_live_feed(self, obj):
-        return self.get_live_feed_type(obj) != 0
+    def to_representation(self, obj):
+        data = super().to_representation(obj)
+        if self.get_live_feed_type(obj) > 0:
+            config = getattr(obj, 'config', None)
+            source = ''
+            page_title = ''
+            page_tagline = ''
+            if isinstance(config, dict):
+                source = str(config.get('source', '') or '').strip()
+                page_title = str(config.get('page_title', '') or '').strip()
+                page_tagline = str(config.get('page_tagline', '') or '').strip()
+            data['source'] = source
+            data['page_title'] = page_title
+            data['page_tagline'] = page_tagline
+        return data
 
 
 class TopicSerializer(serializers.ModelSerializer):
@@ -93,3 +105,4 @@ class SourceAliasSerializer(serializers.ModelSerializer):
     class Meta:
         model = Sourcealias
         fields = ['id', 'source', 'alias', 'alias_en']
+
