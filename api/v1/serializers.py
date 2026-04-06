@@ -69,13 +69,19 @@ class CategorySerializer(serializers.ModelSerializer):
             source = ''
             page_title = ''
             page_tagline = ''
+            image_url = ''
+            source_url = ''
             if isinstance(config, dict):
                 source = str(config.get('source', '') or '').strip()
                 page_title = str(config.get('page_title', '') or '').strip()
                 page_tagline = str(config.get('page_tagline', '') or '').strip()
+                image_url = str(config.get('image_url', '') or '').strip()
+                source_url = str(config.get('source_url', '') or '').strip()
             data['source'] = source
             data['page_title'] = page_title
             data['page_tagline'] = page_tagline
+            data['image_url'] = image_url
+            data['source_url'] = source_url
         return data
 
 
