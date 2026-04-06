@@ -8,8 +8,14 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, Any
 from dataclasses import dataclass
 
+import websocket
+from dateutil.parser import parse as parse_datetime
 from django.conf import settings
+from django.db import close_old_connections
 from django_redis import get_redis_connection
+
+from portal.models import Categories
+from .models import LiveFeedLog, LiveFeedPublishedItem
 
 logger = logging.getLogger(__name__)
 
@@ -142,8 +148,6 @@ class HubConnection:
         self.manager.last_global_activity = self.state.last_activity
 
     def _run_connection(self):
-        import websocket
-
         ws_url = self._get_ws_url()
         auth_token = self._get_auth_token()
 
@@ -670,8 +674,6 @@ class LiveFeedHubManager:
 
     def _log_event(self, hub: str, event_type: str, message: str,
                    level: str = 'info', details: dict = None):
-        from .models import LiveFeedLog
-
         level_map = {
             'debug': LiveFeedLog.LogLevel.DEBUG,
             'info': LiveFeedLog.LogLevel.INFO,
@@ -890,12 +892,9 @@ class LiveFeedHubManager:
         return {hub: self.send_to_hub(hub, message)}
 
     def _store_published_item(self, category_id: int, sequence_id: int, title: str,
-                               impact: int, timestamp: str, hub: str, payload: dict) -> Optional['LiveFeedPublishedItem']:
+                               impact: int, timestamp: str, hub: str, payload: dict) -> Optional[LiveFeedPublishedItem]:
         """Store a published item in the database."""
-        from .models import LiveFeedPublishedItem
-        from portal.models import Categories
-        from dateutil.parser import parse as parse_datetime
-
+        close_old_connections()
         try:
             category = Categories.objects.filter(id=category_id, live_feed_type__gt=0).first()
             if not category:
@@ -920,9 +919,7 @@ class LiveFeedHubManager:
 
     def _build_initial_fanout_snapshot(self, category_id: int, limit: Optional[int] = None) -> Optional[dict]:
         """Build the initial fanout snapshot for a category from recent published items."""
-        from .models import LiveFeedPublishedItem
-        from portal.models import Categories
-
+        close_old_connections()
         try:
             category = Categories.objects.filter(id=category_id, live_feed_type__gt=0).first()
             if not category:
