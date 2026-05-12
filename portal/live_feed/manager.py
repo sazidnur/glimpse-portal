@@ -1066,8 +1066,17 @@ class LiveFeedHubManager:
                 message['snapshot'] = snapshot
 
         if hub == 'all':
-            # Send only to connected hubs (no auto-connect)
-            results = self.send_to_connected(message)
+            # Send only to hubs that are connected in shared state. The live
+            # feed pipeline may run outside the process that owns the hub
+            # WebSocket, so route through send_to_hub instead of checking only
+            # this manager instance's local connections.
+            states = self.get_hub_states()
+            results = {}
+            for hub_name in HUBS:
+                if bool((states.get(hub_name) or {}).get('connected')):
+                    results[hub_name] = self.send_to_hub(hub_name, message)
+                else:
+                    results[hub_name] = {'success': False, 'error': 'Not connected', 'skipped': True}
             successful_hubs = [hub_name for hub_name, result in results.items() if result.get('success')]
             skipped_hubs = [hub_name for hub_name, result in results.items() if result.get('skipped')]
             failed_hubs = [hub_name for hub_name, result in results.items() if not result.get('success') and not result.get('skipped')]
