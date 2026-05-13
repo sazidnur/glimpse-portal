@@ -894,8 +894,9 @@ class LiveFeedHubManager:
                                impact: int, timestamp: str, hub: str, payload: dict) -> Optional[LiveFeedPublishedItem]:
         """Store a published item in the database."""
         try:
-            category = Categories.objects.filter(id=category_id, live_feed_type__gt=0).first()
+            category = Categories.objects.filter(id=category_id).first()
             if not category:
+                logger.error("Failed to store published item: Category not found")
                 return None
 
             ts = parse_datetime(timestamp) if timestamp else datetime.now(timezone.utc)
@@ -918,8 +919,9 @@ class LiveFeedHubManager:
     def _build_initial_fanout_snapshot(self, category_id: int, limit: Optional[int] = None) -> Optional[dict]:
         """Build the initial fanout snapshot for a category from recent published items."""
         try:
-            category = Categories.objects.filter(id=category_id, live_feed_type__gt=0).first()
+            category = Categories.objects.filter(id=category_id).first()
             if not category:
+                logger.error("Failed to build initial fanout snapshot: Category not found")
                 return None
 
             items = LiveFeedPublishedItem.get_initial_fanout_items(category, limit=limit)
