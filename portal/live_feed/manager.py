@@ -11,7 +11,6 @@ from dataclasses import dataclass
 import websocket
 from dateutil.parser import parse as parse_datetime
 from django.conf import settings
-from django.db import close_old_connections
 from django_redis import get_redis_connection
 
 from portal.models import Categories
@@ -894,7 +893,6 @@ class LiveFeedHubManager:
     def _store_published_item(self, category_id: int, sequence_id: int, title: str,
                                impact: int, timestamp: str, hub: str, payload: dict) -> Optional[LiveFeedPublishedItem]:
         """Store a published item in the database."""
-        close_old_connections()
         try:
             category = Categories.objects.filter(id=category_id, live_feed_type__gt=0).first()
             if not category:
@@ -919,7 +917,6 @@ class LiveFeedHubManager:
 
     def _build_initial_fanout_snapshot(self, category_id: int, limit: Optional[int] = None) -> Optional[dict]:
         """Build the initial fanout snapshot for a category from recent published items."""
-        close_old_connections()
         try:
             category = Categories.objects.filter(id=category_id, live_feed_type__gt=0).first()
             if not category:
