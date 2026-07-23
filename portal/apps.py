@@ -1,8 +1,5 @@
 from django.apps import AppConfig
 import logging
-import os
-import sys
-from django.conf import settings
 
 
 logger = logging.getLogger(__name__)
@@ -13,34 +10,6 @@ class PortalConfig(AppConfig):
     name = 'portal'
     label = 'data'
     verbose_name = 'Glimpse Data'
-
-    @staticmethod
-    def _should_start_pipeline_monitor() -> bool:
-        disable_flag = os.environ.get('DISABLE_LIVE_FEED_PIPELINES', '').strip().lower()
-        if disable_flag in {'1', 'true', 'yes', 'on'}:
-            return False
-
-        blocked_commands = {
-            'makemigrations',
-            'migrate',
-            'collectstatic',
-            'shell',
-            'dbshell',
-            'test',
-        }
-        if len(sys.argv) > 1 and sys.argv[1] in blocked_commands:
-            return False
-
-        argv_lower = [str(arg).strip().lower() for arg in sys.argv]
-        if any('celery' in arg for arg in argv_lower):
-            return False
-
-        if settings.DEBUG:
-            # In runserver autoreload, only start once in the serving process.
-            if len(sys.argv) > 1 and sys.argv[1] == 'runserver':
-                if os.environ.get('RUN_MAIN') != 'true':
-                    return False
-        return True
 
     def ready(self):
         from api.v1.signals import register_cache, register_invalidator
@@ -76,10 +45,6 @@ class PortalConfig(AppConfig):
         except Exception as exc:
             logger.warning("Metadata startup sync skipped: %s", exc)
 
-        if self._should_start_pipeline_monitor():
-            try:
-                from .live_feed.pipeline_manager import pipeline_manager
-                pipeline_manager.start_monitor()
-                logger.info("Live feed pipeline monitor started")
-            except Exception as exc:
-                logger.warning("Live feed pipeline monitor not started: %s", exc)
+        # Hub sockets and pipeline runners live exclusively in the
+        # `live_feed_service` process (see scripts/start_web.sh), never in
+        # gunicorn or celery workers.

@@ -1,4 +1,5 @@
 from portal.models import (
+    LiveFeedHub,
     LiveFeedLog,
     LiveFeedPipeline,
     LiveFeedPipelineLog,
@@ -8,6 +9,7 @@ from portal.models import (
 )
 
 __all__ = [
+    'LiveFeedHub',
     'LiveFeedLog',
     'LiveFeedPipeline',
     'LiveFeedPipelineLog',

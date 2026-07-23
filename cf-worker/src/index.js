@@ -829,6 +829,19 @@ export class LiveFeedRegionalHubV3 {
 
     await this.ensureInitialized(hubKey);
 
+    // Only one admin socket (the portal's live feed service) may exist per
+    // hub. Evicting the previous one makes reconnects idempotent and keeps
+    // admin_users from counting stale half-dead sockets.
+    if (role === "admin") {
+      for (const existing of this.state.getWebSockets("admin")) {
+        try {
+          existing.close(1000, "Replaced by new admin connection");
+        } catch {
+          continue;
+        }
+      }
+    }
+
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
 

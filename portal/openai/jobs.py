@@ -8,7 +8,7 @@ from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
-from ..live_feed.manager import hub_manager
+from ..live_feed import client as hub_client
 from ..models import LiveFeedPipeline, LiveFeedPipelineLog, OpenAIJob, OpenAIJobLog
 
 
@@ -255,32 +255,40 @@ def cancel_openai_job(job: OpenAIJob, *, reason: str) -> OpenAIJob:
     return job
 
 
-def publish_completed_job(job_id: int) -> bool:
+def publish_completed_job(job_id: int, *, final_attempt: bool = True) -> tuple[bool, bool]:
+    """Publish a translated job to the hubs.
+
+    Returns (published, retryable). The job is only marked PUBLISHED after
+    the live feed service confirmed a hub acknowledged the item. On failure,
+    the job stays COMPLETED (so the celery task can retry) unless this was
+    the final attempt, in which case it is marked FAILED.
+    """
     with transaction.atomic():
         job = OpenAIJob.objects.select_for_update().filter(id=job_id).first()
         if not job:
-            return False
+            return False, False
         if job.cancel_requested:
             job.status = OpenAIJob.Status.CANCELLED
             job.cancelled_at = timezone.now()
             job.save(update_fields=['status', 'cancelled_at', 'updated_at'])
             log_openai_job(job, 'Skipped publish because job was cancelled', level=OpenAIJobLog.Level.WARNING)
-            return False
+            return False, False
         if job.status != OpenAIJob.Status.COMPLETED:
-            return False
+            return False, False
         if not job.translated_title.strip():
             job.status = OpenAIJob.Status.FAILED
             job.error_message = 'No translated title to publish'
             job.save(update_fields=['status', 'error_message', 'updated_at'])
             log_openai_job(job, 'Publish failed: missing translated title', level=OpenAIJobLog.Level.ERROR)
-            return False
+            return False, False
 
-        publish_result = hub_manager.publish_item(
+        publish_result = hub_client.publish_item(
             hub=job.target_hub or 'all',
             category_id=int(job.category_id),
             title=job.translated_title.strip(),
             impact=int(job.impact),
             timestamp=(job.timestamp or None),
+            dedupe_key=f'openai-job-{job.id}',
         )
 
         if bool(publish_result.get('success')):
@@ -307,11 +315,22 @@ def publish_completed_job(job_id: int) -> bool:
                         },
                     )
             log_openai_job(job, 'Published translated title to hubs')
-            return True
+            return True, False
+
+        if not final_attempt:
+            job.publish_result = publish_result
+            job.save(update_fields=['publish_result', 'updated_at'])
+            log_openai_job(
+                job,
+                f'Publish attempt failed, will retry: {publish_result.get("error") or publish_result}',
+                level=OpenAIJobLog.Level.WARNING,
+                details=publish_result,
+            )
+            return False, True
 
         job.status = OpenAIJob.Status.FAILED
-        job.error_message = f'Publish failed: {publish_result}'
+        job.error_message = f'Publish failed: {publish_result.get("error") or publish_result}'
         job.publish_result = publish_result
         job.save(update_fields=['status', 'error_message', 'publish_result', 'updated_at'])
         log_openai_job(job, 'Publish failed after translation', level=OpenAIJobLog.Level.ERROR, details=publish_result)
-        return False
+        return False, False

@@ -22,7 +22,9 @@ services:
     container_name: glimpse-portal-dev-redis
     environment:
       TZ: ${TZ:-Europe/Helsinki}
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --maxmemory 256mb --maxmemory-policy volatile-ttl
+    ports:
+      - "6379:6379"
     volumes:
       - dev_redis_data:/data
     healthcheck:
@@ -60,6 +62,33 @@ services:
       - dev_media_data:/app/media
     command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
 
+  live-feed-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_DEV: "true"
+    container_name: glimpse-portal-dev-live-feed
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DEBUG: "True"
+      ALLOWED_HOSTS: "*"
+      CSRF_TRUSTED_ORIGINS: "*"
+      DJANGO_DB_HOST: db
+      DJANGO_DB_PORT: "5432"
+      TZ: ${TZ:-Europe/Helsinki}
+      REDIS_URL: redis://redis:6379/0
+      SKIP_STARTUP_TASKS: "1"
+    volumes:
+      - .:/app
+    command: ["python", "manage.py", "live_feed_service"]
+
   celery-worker:
     build:
       context: .
@@ -84,7 +113,6 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       SKIP_STARTUP_TASKS: "1"
-      DISABLE_LIVE_FEED_PIPELINES: "1"
     volumes:
       - .:/app
     command: ["celery", "-A", "config", "worker", "-l", "INFO"]
@@ -113,7 +141,6 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       SKIP_STARTUP_TASKS: "1"
-      DISABLE_LIVE_FEED_PIPELINES: "1"
     volumes:
       - .:/app
     command: ["celery", "-A", "config", "beat", "-l", "INFO"]

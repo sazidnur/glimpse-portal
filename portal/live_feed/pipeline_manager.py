@@ -12,11 +12,10 @@ from typing import Any
 
 from django.db import close_old_connections
 from django.db.models import F
-from django_redis import get_redis_connection
 from websocket import WebSocketTimeoutException
 
-from .manager import hub_manager
-from .models import LiveFeedPipeline, LiveFeedPipelineLog
+from . import client as hub_client
+from .models import LiveFeedHub, LiveFeedPipeline, LiveFeedPipelineLog
 from ..openai.jobs import enqueue_pipeline_translation_job, openai_is_available, resolve_pipeline_openai_mode
 from .pipelines import (
     build_pipeline_translation_request,
@@ -30,9 +29,6 @@ from .pipelines import (
 
 logger = logging.getLogger(__name__)
 
-PIPELINE_OWNER_PREFIX = 'live_feed:pipeline:'
-PIPELINE_OWNER_SUFFIX = ':owner'
-OWNER_TTL_SECONDS = 180
 MONITOR_INTERVAL_SECONDS = 3.0
 RECONNECT_BASE_DELAY = 2.0
 RECONNECT_MAX_DELAY = 45.0
@@ -87,20 +83,19 @@ class LiveFeedPipelineRunner:
     def _pipeline(self) -> LiveFeedPipeline | None:
         return LiveFeedPipeline.objects.filter(id=self.pipeline_id).select_related('category').first()
 
-    def _refresh_owner(self):
-        self.manager.refresh_owner(self.pipeline_id)
-
     def _check_should_run(self) -> bool:
         record = LiveFeedPipeline.objects.filter(id=self.pipeline_id).values('should_run').first()
         return bool(record and record['should_run'])
 
     @staticmethod
-    def _has_connected_hubs() -> bool:
+    def _any_hub_desired() -> bool:
+        """Whether the admin wants at least one hub connected. Transient
+        socket drops do not stop pipelines; only an intentional disconnect
+        of every hub does."""
         try:
-            states = hub_manager.get_hub_states()
+            return LiveFeedHub.objects.filter(should_connect=True).exists()
         except Exception:
             return True
-        return any(bool(data.get('connected')) for data in states.values())
 
     def _set_status(
         self,
@@ -289,12 +284,13 @@ class LiveFeedPipelineRunner:
                     )
                 continue
 
-            publish_result = hub_manager.publish_item(
+            publish_result = hub_client.publish_item(
                 hub='all',
                 category_id=category_id,
                 title=title,
                 impact=max(0, min(2, int(default_impact))),
                 timestamp=timestamp,
+                dedupe_key=f'pipeline-{self.pipeline_id}-item-{child_id}',
             )
             success = bool(publish_result.get('success'))
             result_map = publish_result.get('results') if isinstance(publish_result, dict) else {}
@@ -360,7 +356,6 @@ class LiveFeedPipelineRunner:
         try:
             while not self.stop_event.is_set():
                 close_old_connections()
-                self._refresh_owner()
 
                 if not self._check_should_run():
                     break
@@ -373,7 +368,7 @@ class LiveFeedPipelineRunner:
                 except ValueError as exc:
                     raise RuntimeError(str(exc)) from exc
 
-                if not self._has_connected_hubs():
+                if not self._any_hub_desired():
                     self._auto_stop('Auto-stopped: all hubs are disconnected')
                     break
 
@@ -476,10 +471,9 @@ class LiveFeedPipelineRunner:
                     next_discovery = time.time() + DISCOVERY_INTERVAL_SECONDS
 
                     while not self.stop_event.is_set():
-                        self._refresh_owner()
                         if not self._check_should_run():
                             return
-                        if not self._has_connected_hubs():
+                        if not self._any_hub_desired():
                             self._auto_stop('Auto-stopped: all hubs are disconnected')
                             return
 
@@ -575,7 +569,6 @@ class LiveFeedPipelineRunner:
                 error=preserved_error if not should_run else 'Pipeline stopped unexpectedly',
                 stopped=True,
             )
-            self.manager.release_owner(self.pipeline_id)
             self.manager.log(
                 self.pipeline_id,
                 event_type=LiveFeedPipelineLog.EventType.STOP,
@@ -607,22 +600,6 @@ class LiveFeedPipelineManager:
         self._runners: dict[int, LiveFeedPipelineRunner] = {}
         self._lock = threading.Lock()
 
-    @staticmethod
-    def _decode(value: Any) -> str:
-        if isinstance(value, bytes):
-            return value.decode('utf-8', errors='ignore')
-        if value is None:
-            return ''
-        return str(value)
-
-    @staticmethod
-    def _owner_key(pipeline_id: int) -> str:
-        return f"{PIPELINE_OWNER_PREFIX}{int(pipeline_id)}{PIPELINE_OWNER_SUFFIX}"
-
-    @staticmethod
-    def _redis():
-        return get_redis_connection('default')
-
     def start_monitor(self):
         if self._monitor_thread and self._monitor_thread.is_alive():
             return
@@ -640,45 +617,6 @@ class LiveFeedPipelineManager:
             runners = list(self._runners.values())
         for runner in runners:
             runner.stop()
-
-    def get_owner(self, pipeline_id: int) -> str:
-        key = self._owner_key(pipeline_id)
-        try:
-            return self._decode(self._redis().get(key)).strip()
-        except Exception:
-            return ''
-
-    def claim_owner(self, pipeline_id: int) -> bool:
-        key = self._owner_key(pipeline_id)
-        try:
-            redis = self._redis()
-            current = self._decode(redis.get(key)).strip()
-            if current == self.instance_id:
-                redis.expire(key, OWNER_TTL_SECONDS)
-                return True
-            return bool(redis.set(key, self.instance_id, nx=True, ex=OWNER_TTL_SECONDS))
-        except Exception:
-            return False
-
-    def refresh_owner(self, pipeline_id: int):
-        key = self._owner_key(pipeline_id)
-        try:
-            redis = self._redis()
-            current = self._decode(redis.get(key)).strip()
-            if current in ('', self.instance_id):
-                redis.set(key, self.instance_id, ex=OWNER_TTL_SECONDS)
-        except Exception:
-            pass
-
-    def release_owner(self, pipeline_id: int):
-        key = self._owner_key(pipeline_id)
-        try:
-            redis = self._redis()
-            current = self._decode(redis.get(key)).strip()
-            if current == self.instance_id:
-                redis.delete(key)
-        except Exception:
-            pass
 
     def log(self, pipeline_id: int, *, event_type: str, level: int, message: str, details: dict | None = None):
         pipeline = LiveFeedPipeline.objects.filter(id=pipeline_id).first()
@@ -732,13 +670,11 @@ class LiveFeedPipelineManager:
         for pipeline_id in sorted(running_ids - desired_ids):
             self.stop_local_runner(pipeline_id)
 
-        # start requested pipelines when this instance can own
+        # start requested pipelines that are not already running
         for pipeline_id in sorted(desired_ids):
             with self._lock:
                 if pipeline_id in self._runners and self._runners[pipeline_id].is_alive():
                     continue
-            if not self.claim_owner(pipeline_id):
-                continue
 
             LiveFeedPipeline.objects.filter(id=pipeline_id).update(
                 owner_instance=self.instance_id,

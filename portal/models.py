@@ -180,6 +180,30 @@ class Videos(models.Model):
         return self.title or self.videourl or f"Video {self.id}"
 
 
+class LiveFeedHub(models.Model):
+    """Desired connection state per hub. The live feed service reconciles
+    actual WebSocket connections against these rows, so admin intent
+    survives restarts and deploys."""
+
+    hub = models.CharField(max_length=20, unique=True)
+    should_connect = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'live_feed_hubs'
+
+    def __str__(self):
+        return f"{self.hub} ({'on' if self.should_connect else 'off'})"
+
+    @classmethod
+    def set_desired(cls, hub: str, should_connect: bool):
+        cls.objects.update_or_create(hub=hub, defaults={'should_connect': should_connect})
+
+    @classmethod
+    def desired_map(cls) -> dict:
+        return dict(cls.objects.values_list('hub', 'should_connect'))
+
+
 class LiveFeedLog(models.Model):
     class LogLevel(models.IntegerChoices):
         DEBUG = 0, 'Debug'
@@ -490,6 +514,13 @@ class LiveFeedPublishedItem(models.Model):
         default=dict,
         blank=True,
         db_comment='Full published payload including any extra fields'
+    )
+    dedupe_key = models.CharField(
+        max_length=160,
+        null=True,
+        blank=True,
+        unique=True,
+        db_comment='Idempotency key so publish retries never create duplicate items'
     )
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 

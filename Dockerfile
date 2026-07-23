@@ -38,9 +38,10 @@ COPY . .
 # Create directories
 RUN mkdir -p /app/staticfiles /app/media /app/static
 
-# Copy and set permissions for entrypoint
+# Copy and set permissions for entrypoint and web starter
 COPY scripts/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY scripts/start_web.sh /start_web.sh
+RUN chmod +x /entrypoint.sh /start_web.sh
 
 # Create non-root user
 RUN adduser --disabled-password --gecos '' appuser \
@@ -51,5 +52,5 @@ EXPOSE 8000
 
 ENTRYPOINT ["/entrypoint.sh"]
 
-# Run gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "config.wsgi:application"]
+# Run gunicorn + live feed service (celery containers override this command)
+CMD ["/start_web.sh"]

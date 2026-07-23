@@ -1,5 +1,4 @@
 import json
-import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -11,9 +10,9 @@ from django.contrib import admin
 from django.db import OperationalError, ProgrammingError
 
 from portal.models import Categories
-from .manager import hub_manager, HUBS
+from . import client as hub_client
+from .constants import HUBS
 from .models import LiveFeedLog, LiveFeedPipeline, LiveFeedPipelineLog, LiveFeedPublishedItem
-from .pipeline_manager import pipeline_manager
 from .pipelines import get_pipeline_sources, source_definition_map
 
 
@@ -67,12 +66,6 @@ def _pipeline_schema_error_response(exc: Exception) -> JsonResponse:
 @staff_member_required
 @require_GET
 def dashboard_view(request):
-    # Safety net: ensure monitor is active when live feed admin is visited.
-    try:
-        pipeline_manager.start_monitor()
-    except Exception:
-        pass
-
     categories = [
         {
             'id': row['id'],
@@ -121,11 +114,9 @@ def api_hubs(request):
     refresh = request.GET.get('refresh', '').strip().lower() in {'1', 'true', 'yes'}
     if refresh:
         hub = request.GET.get('hub', 'all')
-        hub_manager.request_live_users(hub)
-        # Give socket handlers a brief moment to process hub_users replies.
-        time.sleep(0.3)
+        hub_client.request_live_users(hub)
 
-    states = hub_manager.get_hub_states()
+    states = hub_client.get_hub_states()
     return JsonResponse({'hubs': states})
 
 @staff_member_required
@@ -139,10 +130,10 @@ def api_connect(request):
     hub = data.get('hub', 'all')
 
     if hub == 'all':
-        results = hub_manager.connect_all()
+        results = hub_client.connect_all()
         return JsonResponse({'success': True, 'results': results})
     else:
-        result = hub_manager.connect_hub(hub)
+        result = hub_client.connect_hub(hub)
         return JsonResponse(result)
 
 @staff_member_required
@@ -156,10 +147,10 @@ def api_disconnect(request):
     hub = data.get('hub', 'all')
 
     if hub == 'all':
-        results = hub_manager.disconnect_all()
+        results = hub_client.disconnect_all()
         return JsonResponse({'success': True, 'results': results})
     else:
-        result = hub_manager.disconnect_hub(hub)
+        result = hub_client.disconnect_hub(hub)
         return JsonResponse(result)
 
 @staff_member_required
@@ -195,7 +186,7 @@ def api_publish(request):
     if not category:
         return JsonResponse({'error': 'Category not found or not a live feed category'}, status=404)
 
-    result = hub_manager.publish_item(
+    result = hub_client.publish_item(
         hub=hub,
         category_id=category_id,
         title=title,
@@ -241,7 +232,7 @@ def api_fanout_reseed(request):
         if limit < 1 or limit > 500:
             return JsonResponse({'error': 'limit must be between 1 and 500'}, status=400)
 
-    result = hub_manager.set_initial_fanout_snapshot(
+    result = hub_client.set_initial_fanout_snapshot(
         category_id=category_id,
         hub=hub,
         limit=limit,
@@ -306,8 +297,8 @@ def api_stream(request):
     if hub not in HUBS:
         return JsonResponse({'error': 'Invalid hub'}, status=400)
 
-    items = hub_manager._get_feed_items(hub, limit)
-    snapshot = hub_manager.get_snapshot(hub)
+    items = hub_client.get_feed_items(hub, limit)
+    snapshot = hub_client.get_snapshot(hub)
 
     return JsonResponse({
         'hub': hub,
@@ -318,13 +309,13 @@ def api_stream(request):
 @staff_member_required
 @require_GET
 def api_costs(request):
-    costs = hub_manager.get_costs()
+    costs = hub_client.get_costs()
     return JsonResponse(costs)
 
 @staff_member_required
 @require_POST
 def api_reset_costs(request):
-    hub_manager.reset_costs()
+    hub_client.reset_costs()
     return JsonResponse({'success': True})
 
 @staff_member_required
@@ -514,7 +505,7 @@ def api_pipeline_run(request):
         },
     )
 
-    pipeline_manager.request_reconcile()
+    hub_client.nudge_pipelines()
 
     source_map = source_definition_map()
     return JsonResponse({'success': True, 'pipeline': _serialize_pipeline(pipeline, source_map)})
@@ -548,7 +539,7 @@ def api_pipeline_start(request, pipeline_id: int):
         level=LiveFeedPipelineLog.LogLevel.INFO,
         message='Pipeline requested to start',
     )
-    pipeline_manager.request_reconcile()
+    hub_client.nudge_pipelines()
     return JsonResponse({'success': True, 'pipeline': _serialize_pipeline(pipeline, source_map)})
 
 @staff_member_required
@@ -568,8 +559,7 @@ def api_pipeline_stop(request, pipeline_id: int):
         level=LiveFeedPipelineLog.LogLevel.INFO,
         message='Pipeline requested to stop',
     )
-    pipeline_manager.stop_local_runner(pipeline.id)
-    pipeline_manager.request_reconcile()
+    hub_client.nudge_pipelines()
     source_map = source_definition_map()
     return JsonResponse({'success': True, 'pipeline': _serialize_pipeline(pipeline, source_map)})
 
@@ -633,9 +623,8 @@ def api_pipeline_delete(request, pipeline_id: int):
     if pipeline.should_run:
         return JsonResponse({'error': 'Stop the pipeline before deleting it'}, status=400)
 
-    pipeline_manager.stop_local_runner(pipeline.id)
     pipeline.delete()
-    pipeline_manager.request_reconcile()
+    hub_client.nudge_pipelines()
     return JsonResponse({'success': True})
 
 

@@ -24,7 +24,10 @@ services:
     mem_limit: 256m
     environment:
       TZ: ${TZ:-Europe/Helsinki}
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # volatile-ttl: only keys with a TTL (caches, mirrors) can be evicted.
+    # Celery broker queues and live feed RPC requests have no TTL and are
+    # therefore never silently dropped under memory pressure.
+    command: redis-server --maxmemory 256mb --maxmemory-policy volatile-ttl
     volumes:
       - redis_data:/data
     healthcheck:
@@ -113,7 +116,6 @@ services:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       - SKIP_STARTUP_TASKS=1
-      - DISABLE_LIVE_FEED_PIPELINES=1
     command: ["celery", "-A", "config", "worker", "-l", "INFO"]
     networks:
       - default
@@ -148,7 +150,6 @@ services:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       - SKIP_STARTUP_TASKS=1
-      - DISABLE_LIVE_FEED_PIPELINES=1
     command: ["celery", "-A", "config", "beat", "-l", "INFO"]
     networks:
       - default

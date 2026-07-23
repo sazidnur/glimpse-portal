@@ -123,9 +123,22 @@ def openai_process_realtime_job(job_id: int):
         openai_publish_job.delay(updated.id)
 
 
-@shared_task(name='portal.tasks.openai_publish_job')
-def openai_publish_job(job_id: int):
-    publish_completed_job(int(job_id))
+PUBLISH_RETRY_COUNTDOWNS = (30, 60, 120, 300, 600)
+
+
+@shared_task(
+    bind=True,
+    name='portal.tasks.openai_publish_job',
+    max_retries=len(PUBLISH_RETRY_COUNTDOWNS),
+    acks_late=True,
+)
+def openai_publish_job(self, job_id: int):
+    attempt = int(self.request.retries or 0)
+    final_attempt = attempt >= self.max_retries
+    published, retryable = publish_completed_job(int(job_id), final_attempt=final_attempt)
+    if published or not retryable or final_attempt:
+        return
+    raise self.retry(countdown=PUBLISH_RETRY_COUNTDOWNS[attempt])
 
 
 @shared_task(name='portal.tasks.openai_submit_batch_jobs')
