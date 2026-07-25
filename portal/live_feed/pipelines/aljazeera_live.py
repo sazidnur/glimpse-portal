@@ -32,6 +32,9 @@ DEFAULT_USER_AGENT = (
 LIVEBLOG_PATH_RE = re.compile(
     r"/news/liveblog/\d{4}/\d{1,2}/\d{1,2}/([a-z0-9-]+)", re.IGNORECASE
 )
+LIVEBLOG_DATE_RE = re.compile(
+    r"/news/liveblog/(\d{4})/(\d{1,2})/(\d{1,2})/", re.IGNORECASE
+)
 LIVEBLOG_LINK_RE = re.compile(
     r"https://www\.aljazeera\.com/news/liveblog/\d{4}/\d{1,2}/\d{1,2}/[a-z0-9-]+"
     r"|/news/liveblog/\d{4}/\d{1,2}/\d{1,2}/[a-z0-9-]+",
@@ -235,6 +238,14 @@ class AlJazeeraLiveClient(BasePipelineClient):
         parts = [part for part in path.split("/") if part]
         return parts[-1] if parts else ""
 
+    @staticmethod
+    def date_from_link(link: str) -> tuple[int, int, int]:
+        path = urllib.parse.urlparse(link).path
+        match = LIVEBLOG_DATE_RE.search(path)
+        if not match:
+            return (0, 0, 0)
+        return tuple(int(part) for part in match.groups())
+
     def fetch_homepage_live_links(self) -> list[str]:
         request = urllib.request.Request(
             BASE_URL + "/",
@@ -260,9 +271,9 @@ class AlJazeeraLiveClient(BasePipelineClient):
 
     def discover_latest_live_target(self) -> LiveTarget:
         """
-        Breaking ticker is the source of truth - Al Jazeera editors update it
-        when switching to a new liveblog. Fall back to homepage only if ticker
-        doesn't point to a liveblog.
+        Compare the dated URLs from both sources because either Al Jazeera's
+        breaking ticker or homepage can briefly retain the previous liveblog.
+        Prefer the ticker when both sources point to the same date.
         """
         payload = self.graphql_get(
             operation_name="ArchipelagoBreakingTickerQuery",
@@ -273,18 +284,27 @@ class AlJazeeraLiveClient(BasePipelineClient):
         ticker_link = str(breaking.get("link") or "").strip()
         ticker_post_id = to_int(breaking.get("post"))
 
+        candidates: list[LiveTarget] = []
         if "/liveblog/" in ticker_link:
             link = self.normalize_liveblog_link(ticker_link)
             slug = self.slug_from_link(link)
             if slug:
-                return LiveTarget(slug=slug, link=link, post_id=ticker_post_id)
+                candidates.append(LiveTarget(slug=slug, link=link, post_id=ticker_post_id))
 
-        homepage_links = self.fetch_homepage_live_links()
-        if homepage_links:
-            link = homepage_links[0]
+        try:
+            homepage_links = self.fetch_homepage_live_links()
+        except Exception:
+            if candidates:
+                return candidates[0]
+            raise
+
+        for link in homepage_links:
             slug = self.slug_from_link(link)
             if slug:
-                return LiveTarget(slug=slug, link=link, post_id=None)
+                candidates.append(LiveTarget(slug=slug, link=link, post_id=None))
+
+        if candidates:
+            return max(candidates, key=lambda target: self.date_from_link(target.link))
 
         raise RuntimeError("Could not discover a liveblog link from breaking ticker or homepage.")
 
