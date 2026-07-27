@@ -10,6 +10,7 @@ Django admin portal for Glimpse App, backed by PostgreSQL and Redis.
 - Database: PostgreSQL for Django internals and business models
 - Cache: Redis for API/cache acceleration
 
+
 ## Quick Start
 
 ### 1. Setup Environment
