@@ -61,8 +61,10 @@ jobs:
             # Ensure traefik network exists
             docker network ls | grep -q traefik_proxy || docker network create traefik_proxy
 
-            # Build new image first (reduces downtime)
-            docker compose -f docker-compose.yml build django
+            # Build new images first (reduces downtime).
+            # The celery services build separately; without them here `up -d`
+            # reuses their stale images and keeps running old task code.
+            docker compose -f docker-compose.yml build django celery-worker celery-beat
 
             # Deploy with minimal downtime
             # --no-deps prevents recreating db when only django changed

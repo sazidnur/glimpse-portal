@@ -258,12 +258,7 @@ def _batch_row_error_message(row: dict[str, Any]) -> str:
 
 
 def _describe_batch_failure(batch: dict[str, Any]) -> str:
-    """Explain why a completed batch produced no output file.
-
-    A batch whose every request was rejected (for example an unsupported
-    parameter for the configured model) still reports status=completed, with the
-    per-request errors in the error file instead of an output file.
-    """
+    """Explain why a completed batch produced no output file."""
     parts: list[str] = []
 
     counts = batch.get('request_counts')

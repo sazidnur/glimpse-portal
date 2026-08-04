@@ -74,9 +74,7 @@ def _build_chat_completion_body(
     user_payload: dict[str, Any],
     response_schema: dict[str, Any],
 ) -> dict[str, Any]:
-    # No `temperature`: the gpt-5.5+/luna reasoning models reject any value other
-    # than the default 1 ("unsupported_value"), which fails every request in a
-    # batch and leaves the batch completed with only an error_file_id.
+    # No `temperature`: gpt-5.6 models only accept the default value.
     return {
         'model': model,
         'messages': [
