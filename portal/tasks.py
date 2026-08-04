@@ -245,6 +245,57 @@ def _handle_batch_timeouts():
         _queue_realtime_for_job(job, reason='Fallback from batch timeout')
 
 
+def _batch_row_error_message(row: dict[str, Any]) -> str:
+    response = row.get('response')
+    body = response.get('body') if isinstance(response, dict) else None
+    error = body.get('error') if isinstance(body, dict) else row.get('error')
+    if isinstance(error, dict):
+        message = str(error.get('message') or '').strip()
+        param = str(error.get('param') or '').strip()
+        if message:
+            return f'{param}: {message}' if param else message
+    return ''
+
+
+def _describe_batch_failure(batch: dict[str, Any]) -> str:
+    """Explain why a completed batch produced no output file.
+
+    A batch whose every request was rejected (for example an unsupported
+    parameter for the configured model) still reports status=completed, with the
+    per-request errors in the error file instead of an output file.
+    """
+    parts: list[str] = []
+
+    counts = batch.get('request_counts')
+    if isinstance(counts, dict):
+        parts.append(f'request_counts={counts}')
+
+    errors = batch.get('errors')
+    if isinstance(errors, dict) and errors.get('data'):
+        parts.append(f'batch_errors={str(errors["data"])[:300]}')
+
+    error_file_id = str(batch.get('error_file_id') or '')
+    if error_file_id:
+        try:
+            rows = fetch_batch_output_lines(error_file_id)
+        except Exception as exc:
+            parts.append(f'error_file_unreadable={exc}')
+        else:
+            messages: list[str] = []
+            for row in rows:
+                message = _batch_row_error_message(row)
+                if message and message not in messages:
+                    messages.append(message)
+                if len(messages) >= 3:
+                    break
+            if messages:
+                parts.append('request_errors=' + ' | '.join(messages))
+    else:
+        parts.append('no error_file_id')
+
+    return '; '.join(parts)[:800] or 'no details from provider'
+
+
 @shared_task(name='portal.tasks.openai_poll_batch_jobs')
 def openai_poll_batch_jobs():
     if not str(getattr(settings, 'OPENAI_API_KEY', '') or '').strip():
@@ -278,11 +329,12 @@ def openai_poll_batch_jobs():
         if batch_status == 'completed':
             output_file_id = str(batch.get('output_file_id') or '')
             if not output_file_id:
+                detail = _describe_batch_failure(batch)
                 for job in jobs:
-                    job.status = OpenAIJob.Status.FAILED
-                    job.error_message = 'Batch completed without output_file_id'
-                    job.save(update_fields=['status', 'error_message', 'updated_at'])
-                    log_openai_job(job, job.error_message, level=OpenAIJobLog.Level.ERROR)
+                    _queue_realtime_for_job(
+                        job,
+                        reason=f'Batch completed without output_file_id ({detail}); fallback to realtime',
+                    )
                 continue
 
             try:
