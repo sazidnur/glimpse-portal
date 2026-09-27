@@ -54,6 +54,11 @@ class DeviceRegistrationTests(TestCase):
         self.assertEqual(device.locale, 'en')
         self.assertEqual(device.topics, ['breaking_news'])
 
+    def test_accepts_null_previous_token_and_normalizes_locale(self):
+        self.assertEqual(self.register(previous_token=None, locale='en-US').status_code, 204)
+
+        self.assertEqual(PushDevice.objects.get().locale, 'en')
+
     def test_rotated_token_replaces_previous_row(self):
         self.register()
         self.register(token='b' * 64, previous_token='a' * 64)

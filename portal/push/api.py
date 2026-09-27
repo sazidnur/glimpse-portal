@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from rest_framework import serializers, status
@@ -17,6 +19,8 @@ PROVIDER_FOR_PLATFORM = {
     PushDevice.Platform.ANDROID: PushDevice.Provider.FCM,
     PushDevice.Platform.IOS: PushDevice.Provider.APNS,
 }
+logger = logging.getLogger(__name__)
+
 MAX_DEVICE_BODY_BYTES = 16 * 1024
 LIST_LIMIT = 50
 
@@ -41,9 +45,12 @@ class DeviceRegistrationSerializer(serializers.Serializer):
     environment = serializers.ChoiceField(PushDevice.Environment.choices)
     enabled = serializers.BooleanField()
     topics = serializers.ListField(child=serializers.CharField(max_length=64), max_length=16)
-    locale = serializers.ChoiceField(['bn', 'en'])
+    locale = serializers.CharField(max_length=16)
     app_version = serializers.CharField(max_length=32)
-    previous_token = serializers.CharField(max_length=4096, required=False, allow_blank=True)
+    previous_token = serializers.CharField(max_length=4096, required=False, allow_blank=True, allow_null=True)
+
+    def validate_locale(self, value):
+        return 'en' if value.lower().startswith('en') else 'bn'
 
     def validate_topics(self, value):
         return sorted(SUPPORTED_TOPICS.intersection(value))
@@ -59,7 +66,7 @@ class DeviceRegistrationSerializer(serializers.Serializer):
     def save(self):
         data = dict(self.validated_data)
         token = data.pop('token')
-        previous_token = data.pop('previous_token', '')
+        previous_token = data.pop('previous_token', None)
         if previous_token and previous_token != token:
             PushDevice.objects.filter(token=previous_token).delete()
         device, _ = PushDevice.objects.update_or_create(
@@ -122,7 +129,9 @@ class DeviceRegistrationView(APIView):
         if len(request.body) > MAX_DEVICE_BODY_BYTES:
             return Response({'error': 'Payload too large'}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
         serializer = DeviceRegistrationSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            logger.warning('Device registration rejected: %s', serializer.errors)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         serializer.save()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
