@@ -1,4 +1,6 @@
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils import timezone
 
 
 class Categories(models.Model):
@@ -567,3 +569,150 @@ class LiveFeedPublishedItem(models.Model):
             'impact': self.impact,
             'timestamp': self.timestamp.isoformat() if self.timestamp else '',
         }
+
+
+class PushDevice(models.Model):
+    class Platform(models.TextChoices):
+        ANDROID = 'android', 'Android'
+        IOS = 'ios', 'iOS'
+
+    class Provider(models.TextChoices):
+        FCM = 'fcm', 'FCM'
+        APNS = 'apns', 'APNs'
+
+    class Environment(models.TextChoices):
+        PRODUCTION = 'production', 'Production'
+        SANDBOX = 'sandbox', 'Sandbox'
+
+    id = models.BigAutoField(primary_key=True)
+    token = models.TextField(unique=True)
+    platform = models.CharField(max_length=16, choices=Platform.choices)
+    provider = models.CharField(max_length=16, choices=Provider.choices)
+    environment = models.CharField(max_length=16, choices=Environment.choices, default=Environment.PRODUCTION)
+    enabled = models.BooleanField(default=True)
+    topics = models.JSONField(default=list, blank=True)
+    locale = models.CharField(max_length=8, default='bn')
+    app_version = models.CharField(max_length=32, blank=True, default='')
+    last_error = models.CharField(max_length=64, blank=True, default='')
+    invalidated_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True, db_index=True)
+
+    class Meta:
+        db_table = 'push_devices'
+        ordering = ['-updated_at']
+        indexes = [
+            models.Index(fields=['platform', 'enabled', 'environment'], name='push_dev_send_idx'),
+            models.Index(fields=['invalidated_at'], name='push_dev_invalidated_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.get_platform_display()} {self.token[:12]}…"
+
+
+class PushNotification(models.Model):
+    class Target(models.TextChoices):
+        ALL = 'all', 'Android & iOS'
+        ANDROID = 'android', 'Android'
+        IOS = 'ios', 'iOS'
+
+    class Source(models.TextChoices):
+        NEWS = 'news', 'Existing news'
+        CUSTOM = 'custom', 'Custom message'
+
+    class Origin(models.TextChoices):
+        PORTAL = 'portal', 'Portal'
+        API = 'api', 'API'
+
+    class Status(models.TextChoices):
+        SCHEDULED = 'scheduled', 'Scheduled'
+        QUEUED = 'queued', 'Queued'
+        SENDING = 'sending', 'Sending'
+        SENT = 'sent', 'Sent'
+        PARTIAL = 'partial', 'Partially sent'
+        FAILED = 'failed', 'Failed'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    PENDING_STATUSES = (Status.SCHEDULED, Status.QUEUED)
+
+    id = models.BigAutoField(primary_key=True)
+    source = models.CharField(max_length=16, choices=Source.choices, default=Source.NEWS)
+    news = models.ForeignKey(News, models.SET_NULL, null=True, blank=True, related_name='push_notifications')
+    title = models.CharField(max_length=120, blank=True, help_text='Keep under ~65 characters to avoid truncation.')
+    body = models.CharField(max_length=300, blank=True, help_text='Keep under ~180 characters to avoid truncation.')
+    image_url = models.URLField(max_length=1000, blank=True, default='', help_text='HTTPS JPEG/PNG/GIF, a few hundred KB at most.')
+    target = models.CharField(max_length=16, choices=Target.choices, default=Target.ALL)
+    topic = models.CharField(max_length=64, default='breaking_news')
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED, db_index=True)
+    origin = models.CharField(max_length=16, choices=Origin.choices, default=Origin.PORTAL)
+    scheduled_at = models.DateTimeField(null=True, blank=True, db_index=True, help_text='Leave empty to send immediately.')
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    idempotency_key = models.CharField(max_length=128, null=True, blank=True, unique=True)
+    fcm_message_id = models.CharField(max_length=255, blank=True, default='')
+    fcm_error = models.TextField(blank=True, default='')
+    ios_sent = models.PositiveIntegerField(default=0)
+    ios_failed = models.PositiveIntegerField(default=0)
+    ios_invalidated = models.PositiveIntegerField(default=0)
+    ios_error = models.TextField(blank=True, default='')
+    created_by = models.ForeignKey('auth.User', models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'push_notifications'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'scheduled_at'], name='push_notif_due_idx'),
+        ]
+
+    def __str__(self):
+        return self.title
+
+    def clean(self):
+        errors = {}
+        if self.source == self.Source.NEWS:
+            if self.news_id:
+                self._fill_from_news()
+            else:
+                errors['news'] = 'Select the news story to push.'
+        else:
+            self.news = None
+        if not self.title.strip():
+            errors.setdefault('title', 'Title is required.')
+        if not self.body.strip():
+            errors.setdefault('body', 'Message is required.')
+        if self.image_url and not self.image_url.startswith('https://'):
+            errors['image_url'] = 'Image must be served over HTTPS.'
+        if self.scheduled_at and self.is_pending and self.scheduled_at <= timezone.now():
+            errors['scheduled_at'] = 'Schedule time must be in the future.'
+        if errors:
+            raise ValidationError(errors)
+
+    def _fill_from_news(self):
+        news = self.news
+        self.title = self.title.strip() or _truncate(news.title, 120)
+        self.body = self.body.strip() or _truncate(news.summary, 180)
+        if not self.image_url and (news.imageurl or '').startswith('https://'):
+            self.image_url = news.imageurl
+
+    @property
+    def includes_android(self) -> bool:
+        return self.target in (self.Target.ALL, self.Target.ANDROID)
+
+    @property
+    def includes_ios(self) -> bool:
+        return self.target in (self.Target.ALL, self.Target.IOS)
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status in self.PENDING_STATUSES
+
+    @property
+    def collapse_id(self) -> str:
+        return f"news_{self.news_id}" if self.news_id else f"push_{self.id}"
+
+
+def _truncate(text: str, limit: int) -> str:
+    text = ' '.join((text or '').split())
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + '…'

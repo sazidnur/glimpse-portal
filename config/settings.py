@@ -138,6 +138,23 @@ UNFOLD = {
                 ],
             },
             {
+                "title": _("Notifications"),
+                "separator": True,
+                "collapsible": False,
+                "items": [
+                    {
+                        "title": _("Push Notifications"),
+                        "icon": "notifications_active",
+                        "link": reverse_lazy("admin:data_pushnotification_changelist"),
+                    },
+                    {
+                        "title": _("Devices"),
+                        "icon": "devices",
+                        "link": reverse_lazy("admin:data_pushdevice_changelist"),
+                    },
+                ],
+            },
+            {
                 "title": _("Taxonomy"),
                 "separator": True,
                 "collapsible": False,
@@ -331,6 +348,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'anon': '100/hour',      # Anonymous users (shouldn't happen with token auth)
         'user': '1000/hour',     # Authenticated users (WordPress)
+        'push_devices': '30/minute',
     },
     'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
 }
@@ -351,6 +369,14 @@ LIVE_FEED_ADMIN_TOKEN = config('LIVE_FEED_ADMIN_TOKEN', default='')
 # OpenAI API key (required for AI features)
 # Model settings are configured per-pipeline via the Pipeline Manager UI
 OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
+
+# Push notifications
+FCM_PROJECT_ID = config('FCM_PROJECT_ID', default='')
+FCM_SERVICE_ACCOUNT_FILE = config('FCM_SERVICE_ACCOUNT_FILE', default=str(BASE_DIR / 'secrets' / 'fcm-service-account.json'))
+APNS_KEY_FILE = config('APNS_KEY_FILE', default=str(BASE_DIR / 'secrets' / 'apns-auth-key.p8'))
+APNS_KEY_ID = config('APNS_KEY_ID', default='')
+APNS_TEAM_ID = config('APNS_TEAM_ID', default='')
+APNS_TOPIC = config('APNS_TOPIC', default='com.glimpse.news.app')
 
 # ===========================================
 # Caching Configuration (Redis)
@@ -438,6 +464,9 @@ LOGGING = {
         'api_middleware': {
             'handlers': ['console'],
             'level': 'INFO',
+        },
+        'httpx': {
+            'level': 'WARNING',
         },
     },
     'root': {

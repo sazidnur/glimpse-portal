@@ -356,6 +356,34 @@ async function handleGetToken(request, env) {
   return corsJSON({ token, token_type: "Bearer", expires_in: TOKEN_EXPIRY }, 200, env);
 }
 
+async function handleDeviceRegistration(request, env) {
+  if (request.method !== "POST") {
+    return corsJSON({ error: "POST required" }, 405, env);
+  }
+
+  const authHeader = request.headers.get("Authorization") || "";
+  if (!authHeader.startsWith("Bearer ")) {
+    return corsJSON({ error: "Authorization: Bearer <token> required" }, 401, env);
+  }
+  const authResult = await verifyToken(authHeader.slice(7), env);
+  if (!authResult.valid) {
+    return corsJSON({ error: authResult.error }, 401, env);
+  }
+
+  const response = await fetch(`${env.ORIGIN_BASE}/api/v1/devices`, {
+    method: "POST",
+    headers: {
+      Authorization: `Token ${env.DRF_TOKEN}`,
+      "X-Origin-Secret": env.ORIGIN_PATH_SECRET,
+      "X-Client-IP": request.headers.get("CF-Connecting-IP") || "",
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: request.body,
+  });
+  return addCORS(response, env);
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -972,6 +1000,10 @@ export default {
 
     if (path === "/api/v1/warm") {
       return handleWarm(request, env);
+    }
+
+    if (path === "/api/v1/devices") {
+      return handleDeviceRegistration(request, env);
     }
 
     if (request.method !== "GET") {

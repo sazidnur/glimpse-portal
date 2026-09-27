@@ -10,6 +10,7 @@ This is a living document. It covers how things are built, why certain decisions
 - [REST API (v1)](#rest-api-v1)
 - [Admin Cache Dashboard](#admin-cache-dashboard)
 - [Architecture & Files](#architecture--files)
+- [Push Notifications](#push-notifications)
 - [Known Considerations](#known-considerations)
 - [Future Topics](#future-topics)
 
@@ -671,3 +672,82 @@ npx wrangler deploy
 
 For local dev: `npx wrangler dev` starts a server at `http://localhost:8787`.
 
+
+---
+
+<details open>
+<summary><h2>Push Notifications</h2></summary>
+
+### Overview
+
+Editors send pushes from **Notifications → Push Notifications** in the portal, or services trigger them through the internal API. Each push targets Android, iOS or both (default), is built from an existing news story or written by hand, and goes out immediately or at a scheduled time.
+
+| Platform | Transport | Audience |
+|----------|-----------|----------|
+| Android | FCM HTTP v1, **one** message to topic `breaking_news` | Devices subscribed client-side; no per-token fan-out |
+| iOS | APNs over HTTP/2, one request per token (50 concurrent) | `push_devices` rows: iOS, enabled, not invalidated, subscribed to the topic; routed to the sandbox or production host by `environment` |
+
+### Flow
+
+1. The admin form or API creates a `PushNotification`. `service.submit()` marks it `scheduled` (future `scheduled_at`) or `queued`, and enqueues `push_deliver` on commit.
+2. Celery beat runs `push_release_due` every 15 s and moves due `scheduled` rows to `queued`.
+3. `push_deliver` locks the row, sets it to `sending`, sends via FCM and/or APNs, then records the outcome: `sent`, `partial` or `failed`.
+4. APNs `410` / `BadDeviceToken` invalidates the device. `push_cleanup_devices` (daily at 03:30) deletes rows invalidated more than 7 days ago or not updated for 270 days.
+
+A news-based push takes its title, body (≤180 chars) and HTTPS image from the story unless you override them. The payload carries `news_id` (as a string) and `image`. iOS pushes with an image set `mutable-content: 1`. Re-sends for the same story share the collapse id `news_<id>`.
+
+On the News list, the **Push** row action opens the compose form with that story selected.
+
+### Device registration (app → backend)
+
+`POST https://glimpseapp.net/api/v1/devices` with `Authorization: Bearer <worker JWT>`. The Worker verifies the JWT and forwards the request to `/origin/api/v1/devices` with the DRF token and the client IP in `X-Client-IP` (the rate limit is 30/min per IP). The request body follows the app contract (`token`, `platform`, `provider`, `environment`, `enabled`, `topics`, `locale`, `app_version`, optional `previous_token`). Registration upserts by token, and a rotated `previous_token` row is deleted. Returns `204`.
+
+### Internal push API
+
+Base: `/portal/api/push/`, `Authorization: Token <drf token>`. The token's user needs the `data.add_pushnotification` permission (superusers have it).
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/portal/api/push/` | Create and send or schedule |
+| `GET` | `/portal/api/push/?status=sent` | 50 most recent |
+| `GET` | `/portal/api/push/<id>/` | Status and delivery report |
+| `POST` | `/portal/api/push/<id>/send-now/` | Send a scheduled push immediately |
+| `POST` | `/portal/api/push/<id>/cancel/` | Cancel a scheduled or queued push |
+
+```json
+{
+  "news_id": 12345,
+  "target": "all",
+  "title": "optional override",
+  "body": "optional override",
+  "image_url": "https://…",
+  "scheduled_at": "2026-10-01T08:00:00Z",
+  "idempotency_key": "breaking-12345"
+}
+```
+
+Omit `news_id` for a custom push, which then requires `title` and `body`. `target` is `all` | `android` | `ios`. Repeating an `idempotency_key` returns the existing push with `200` and sends nothing new.
+
+### Credentials
+
+Credential files live in `./secrets/`, which is git- and docker-ignored and mounted read-only into the `django` and `celery-worker` containers.
+
+| Setting | Default |
+|---------|---------|
+| `FCM_PROJECT_ID` | falls back to `project_id` in the service account |
+| `FCM_SERVICE_ACCOUNT_FILE` | `secrets/fcm-service-account.json` |
+| `APNS_KEY_FILE` | `secrets/apns-auth-key.p8` |
+| `APNS_KEY_ID` / `APNS_TEAM_ID` | `9T2H24ZR9G` / `Z5D7T9TAQB` |
+| `APNS_TOPIC` | `com.glimpse.news.app` |
+
+### Files
+
+| File | Role |
+|------|------|
+| `portal/push/service.py` | Submit, schedule, cancel, deliver, cleanup |
+| `portal/push/fcm.py` | FCM v1 client (service-account OAuth via PyJWT) and message builder |
+| `portal/push/apns.py` | Async HTTP/2 APNs client (ES256 provider token reused for 40 min) and payload builder |
+| `portal/push/api.py` | Device registration and internal push API |
+| `portal/admin.py` | `PushNotificationAdmin`, `PushDeviceAdmin`, News **Push** row action |
+
+</details>

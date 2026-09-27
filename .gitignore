@@ -143,6 +143,9 @@ Thumbs.db
 node_modules/
 .wrangler/
 
+# Push credentials
+secrets/
+
 # SSL certificates (keep structure, ignore actual certs)
 nginx/ssl/*.pem
 nginx/ssl/*.crt

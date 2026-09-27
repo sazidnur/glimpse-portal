@@ -5,11 +5,14 @@ from django.contrib.auth.models import Group, User
 from django import forms
 from django.urls import path, reverse
 from django.http import JsonResponse
+from django.shortcuts import get_object_or_404, redirect
 from django.utils.html import format_html
 from django.template.response import TemplateResponse
 from django.conf import settings
 from django.db.models import Q
 from unfold.admin import ModelAdmin
+from unfold.decorators import action, display
+from unfold.widgets import UnfoldAdminTextareaWidget
 from unfold.forms import AdminPasswordChangeForm, UserChangeForm, UserCreationForm
 from rest_framework.authtoken.admin import TokenAdmin as DRFTokenAdmin
 from rest_framework.authtoken.models import TokenProxy
@@ -23,6 +26,8 @@ from .models import (
     OpenAIJobLog,
     LiveFeedPublishedItem,
     News,
+    PushDevice,
+    PushNotification,
     Sourcealias,
     Timelines,
     Topics,
@@ -30,6 +35,7 @@ from .models import (
     Videos,
 )
 from .openai.jobs import cancel_openai_job
+from .push import service as push_service
 from .youtube import validate_youtube_shorts_url
 
 import json
@@ -361,6 +367,7 @@ admin.site.register(Videopublishers, VideopublishersAdmin)
 
 class NewsAdmin(ModelAdmin):
     list_display = ['id', 'title', 'source', 'timestamp', 'score']
+    actions_row = ['compose_push']
     list_per_page = 25
     search_fields = ['title', 'source', 'summary']
     list_filter = ['timestamp']
@@ -377,8 +384,186 @@ class NewsAdmin(ModelAdmin):
         }),
     )
 
+    @action(description='Push', icon='notifications_active', url_path='compose-push')
+    def compose_push(self, request, object_id):
+        url = reverse('admin:data_pushnotification_add')
+        return redirect(f'{url}?source={PushNotification.Source.NEWS}&news={object_id}')
+
 
 admin.site.register(News, NewsAdmin)
+
+
+PUSH_COMPOSE_FIELDS = ('target', 'source', 'news', 'title', 'body', 'image_url', 'scheduled_at')
+PUSH_REPORT_FIELDS = (
+    'status', 'origin', 'created_by', 'created_at', 'started_at', 'finished_at',
+    'fcm_message_id', 'fcm_error', 'ios_sent', 'ios_failed', 'ios_invalidated', 'ios_error',
+)
+PUSH_STATUS_COLORS = {
+    PushNotification.Status.SCHEDULED: 'info',
+    PushNotification.Status.QUEUED: 'info',
+    PushNotification.Status.SENDING: 'warning',
+    PushNotification.Status.SENT: 'success',
+    PushNotification.Status.PARTIAL: 'warning',
+    PushNotification.Status.FAILED: 'danger',
+}
+
+
+class PushNotificationForm(forms.ModelForm):
+    class Meta:
+        model = PushNotification
+        fields = PUSH_COMPOSE_FIELDS
+        widgets = {'body': UnfoldAdminTextareaWidget(attrs={'rows': 3})}
+        help_texts = {'scheduled_at': f'Leave empty to send immediately. Time zone: {settings.TIME_ZONE}.'}
+
+    def clean(self):
+        released = PushNotification.objects.filter(pk=self.instance.pk).exclude(status=PushNotification.Status.SCHEDULED)
+        if self.instance.pk and released.exists():
+            raise forms.ValidationError('This notification has already been released and can no longer be edited.')
+        return super().clean()
+
+
+@admin.register(PushNotification)
+class PushNotificationAdmin(ModelAdmin):
+    form = PushNotificationForm
+    list_display = ['title', 'display_target', 'display_status', 'display_when', 'display_delivery', 'origin']
+    list_filter = ['status', 'target', 'source', 'origin']
+    list_filter_submit = True
+    search_fields = ['title', 'body']
+    ordering = ['-created_at']
+    autocomplete_fields = ['news']
+    radio_fields = {'target': admin.HORIZONTAL, 'source': admin.HORIZONTAL}
+    conditional_fields = {'news': "source == 'news'"}
+    actions = ['cancel_selected']
+    actions_detail = ['send_now_detail', 'cancel_detail']
+
+    class Media:
+        js = ('admin/js/push_notification.js',)
+
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = [
+            ('Audience', {'fields': ('target',)}),
+            ('Content', {'fields': ('source', 'news', 'title', 'body', 'image_url')}),
+            ('Delivery', {'fields': ('scheduled_at',)}),
+        ]
+        if obj:
+            fieldsets.append(('Report', {'fields': PUSH_REPORT_FIELDS}))
+        return fieldsets
+
+    def get_readonly_fields(self, request, obj=None):
+        return PUSH_REPORT_FIELDS if obj else ()
+
+    def has_change_permission(self, request, obj=None):
+        allowed = super().has_change_permission(request, obj)
+        return allowed and (obj is None or obj.status == PushNotification.Status.SCHEDULED)
+
+    def has_send_push_permission(self, request, obj=None):
+        return request.user.has_perm('data.change_pushnotification')
+
+    def get_urls(self):
+        return [
+            path(
+                'news-preview/<int:news_id>/',
+                self.admin_site.admin_view(self.news_preview),
+                name='data_pushnotification_news_preview',
+            ),
+        ] + super().get_urls()
+
+    def news_preview(self, request, news_id):
+        candidate = PushNotification(source=PushNotification.Source.NEWS, news=get_object_or_404(News, pk=news_id))
+        candidate._fill_from_news()
+        return JsonResponse({'title': candidate.title, 'body': candidate.body, 'image_url': candidate.image_url})
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.created_by = request.user
+            obj.origin = PushNotification.Origin.PORTAL
+        push_service.submit(obj)
+        if obj.status == PushNotification.Status.SCHEDULED:
+            self.message_user(request, f'Scheduled for {obj.scheduled_at:%Y-%m-%d %H:%M} {settings.TIME_ZONE}.')
+        else:
+            self.message_user(request, f'Sending to {obj.get_target_display()}.')
+
+    @display(description='Target', label={'all': 'primary', 'android': 'success', 'ios': 'info'})
+    def display_target(self, obj):
+        return obj.target, obj.get_target_display()
+
+    @display(description='Status', label=PUSH_STATUS_COLORS)
+    def display_status(self, obj):
+        return obj.status, obj.get_status_display()
+
+    @display(description='When', ordering='scheduled_at')
+    def display_when(self, obj):
+        return obj.finished_at or obj.scheduled_at or obj.created_at
+
+    @display(description='Delivery')
+    def display_delivery(self, obj):
+        if not obj.finished_at or obj.status == PushNotification.Status.CANCELLED:
+            return '—'
+        parts = []
+        if obj.includes_android:
+            parts.append('Android ✓' if obj.fcm_message_id else 'Android ✗')
+        if obj.includes_ios:
+            parts.append(f'iOS {obj.ios_sent}/{obj.ios_sent + obj.ios_failed}')
+        return ' · '.join(parts)
+
+    @admin.action(description='Cancel selected scheduled notifications', permissions=['send_push'])
+    def cancel_selected(self, request, queryset):
+        cancelled = sum(push_service.cancel(notification) for notification in queryset)
+        self.message_user(request, f'Cancelled {cancelled} notification(s).')
+
+    @action(description='Send now', icon='send', permissions=['send_push'])
+    def send_now_detail(self, request, object_id):
+        notification = get_object_or_404(PushNotification, pk=object_id)
+        if push_service.send_now(notification):
+            self.message_user(request, 'Sending now.')
+        else:
+            self.message_user(request, 'Only scheduled notifications can be sent early.', level='warning')
+        return redirect(reverse('admin:data_pushnotification_change', args=[object_id]))
+
+    @action(description='Cancel', icon='cancel', permissions=['send_push'])
+    def cancel_detail(self, request, object_id):
+        notification = get_object_or_404(PushNotification, pk=object_id)
+        if push_service.cancel(notification):
+            self.message_user(request, 'Notification cancelled.')
+        else:
+            status = notification.get_status_display().lower()
+            self.message_user(request, f'A {status} notification cannot be cancelled.', level='warning')
+        return redirect(reverse('admin:data_pushnotification_change', args=[object_id]))
+
+
+@admin.register(PushDevice)
+class PushDeviceAdmin(ModelAdmin):
+    list_display = [
+        'display_token', 'display_platform', 'environment', 'enabled',
+        'locale', 'app_version', 'display_health', 'updated_at',
+    ]
+    list_filter = ['platform', 'environment', 'enabled', 'locale', ('invalidated_at', admin.EmptyFieldListFilter)]
+    list_filter_submit = True
+    search_fields = ['token', 'app_version']
+    ordering = ['-updated_at']
+    readonly_fields = [field.name for field in PushDevice._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    @display(description='Token')
+    def display_token(self, obj):
+        return f'{obj.token[:16]}…'
+
+    @display(description='Platform', label={'android': 'success', 'ios': 'info'})
+    def display_platform(self, obj):
+        return obj.platform, obj.get_platform_display()
+
+    @display(description='Health', label={'active': 'success', 'error': 'warning', 'invalid': 'danger'})
+    def display_health(self, obj):
+        if obj.invalidated_at:
+            return 'invalid', obj.last_error or 'Invalid'
+        if obj.last_error:
+            return 'error', obj.last_error
+        return 'active', 'Active'
 
 
 class PrettyJSONWidget(forms.Textarea):

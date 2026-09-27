@@ -21,6 +21,8 @@ django-unfold = "^0.83.1"
 websocket-client = "^1.8"
 celery = "5.6.2"
 openai = "2.29.0"
+httpx = {version = "^0.28", extras = ["http2"]}
+pyjwt = {version = "^2.10", extras = ["crypto"]}
 
 [tool.poetry.group.dev.dependencies]
 django-debug-toolbar = "^4.4"

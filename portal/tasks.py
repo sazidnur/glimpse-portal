@@ -17,6 +17,7 @@ from .openai.client import (
     retrieve_batch,
     run_realtime_translation,
 )
+from .push import service as push_service
 from .openai.jobs import (
     DEFAULT_BATCH_MAX_ITEMS,
     log_openai_job,
@@ -389,3 +390,18 @@ def openai_poll_batch_jobs():
                 job.error_message = 'Batch cancelled'
                 job.save(update_fields=['status', 'cancelled_at', 'error_message', 'updated_at'])
                 log_openai_job(job, 'Batch cancelled by provider', level=OpenAIJobLog.Level.WARNING)
+
+
+@shared_task(name='portal.tasks.push_deliver', acks_late=True)
+def push_deliver(notification_id: int):
+    push_service.deliver(int(notification_id))
+
+
+@shared_task(name='portal.tasks.push_release_due')
+def push_release_due():
+    return push_service.release_due()
+
+
+@shared_task(name='portal.tasks.push_cleanup_devices')
+def push_cleanup_devices():
+    return push_service.cleanup_devices()

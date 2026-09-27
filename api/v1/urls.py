@@ -1,4 +1,6 @@
-from django.urls import path
+from django.urls import path, re_path
+
+from portal.push.api import DeviceRegistrationView
 
 from .resources import (
     NewsListView,
@@ -34,4 +36,6 @@ urlpatterns = [
     path("videos/cache/flush/", VideoCacheFlushView.as_view(), name="video_cache_flush"),
 
     path("metadata/", MetadataListView.as_view(), name="metadata_list"),
+
+    re_path(r"^devices/?$", DeviceRegistrationView.as_view(), name="device_register"),
 ]
