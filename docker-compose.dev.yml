@@ -135,7 +135,7 @@ services:
       SKIP_STARTUP_TASKS: "1"
     volumes:
       - .:/app
-    command: ["celery", "-A", "config", "worker", "-l", "INFO"]
+    command: ["sh", "-c", "exec celery -A config worker -l INFO --concurrency=${CELERY_CONCURRENCY:-2}"]
 
   celery-beat:
     build:

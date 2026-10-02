@@ -791,9 +791,16 @@ Response header `X-SR` tells where results came from (numeric, like the Worker's
 | `News` saved (create API, admin) | `post_save` → on commit → `search_index_news` Celery task |
 | `News` deleted (delete API, admin, queryset delete) | `post_delete` → on commit → `search_remove_news` |
 | Deploy / container start | `search_reindex --if-needed` rebuilds when the document count differs from the database |
-| Nightly 04:15 | `search_reindex` task re-adds everything and removes orphans |
+| Nightly 04:15 | `search_reindex` task rebuilds (skipped if another reindex is active) |
+| Admin → Content → Search Index → **Start reindex** | Celery rebuild with live progress |
 
 Tasks wait for Meilisearch to confirm each write and retry with backoff (up to 8 times), so a Meilisearch outage heals on its own. Only `News` is indexed; categories, topics and divisions are stored as IDs and resolved by the app from metadata.
+
+### Rebuilds (zero downtime)
+
+Meilisearch has no aliases, so every rebuild writes into a fresh `news__rebuild_<job id>` index and atomically swaps it with `news` (`POST /swap-indexes`) when complete; the old data is then deleted. Search keeps serving the previous index until the swap. While a rebuild runs, save/delete signals write to both indexes, and stories deleted mid-run are removed before the swap.
+
+Every rebuild (manual, deploy, nightly) is a `SearchReindexJob` row. A partial unique constraint allows only one active job (queued / running / cancelling), so a second start is refused until the first finishes, fails or is cancelled. In the admin, **Cancel** on a queued job cancels it immediately; on a running job it asks the worker to stop after the current batch (status *cancelling*); cancelling again force-stops a job whose worker died. The list page refreshes every 3 seconds while a job is active.
 
 ### Operations
 

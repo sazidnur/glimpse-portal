@@ -135,6 +135,11 @@ UNFOLD = {
                         "icon": "category",
                         "link": reverse_lazy("admin:data_categories_changelist"),
                     },
+                    {
+                        "title": _("Search Index"),
+                        "icon": "manage_search",
+                        "link": reverse_lazy("admin:data_searchreindexjob_changelist"),
+                    },
                 ],
             },
             {

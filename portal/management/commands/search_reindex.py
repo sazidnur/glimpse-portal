@@ -2,13 +2,13 @@ import time
 
 from django.core.management.base import BaseCommand, CommandError
 
-from portal.models import News
-from portal.search import news_index
+from portal.models import News, SearchReindexJob
+from portal.search import news_index, reindex
 from portal.search.client import MeiliError, get_client
 
 
 class Command(BaseCommand):
-    help = 'Rebuild the Meilisearch news index from the database.'
+    help = 'Rebuild the Meilisearch news index from the database (zero downtime, via index swap).'
 
     def add_arguments(self, parser):
         parser.add_argument('--if-needed', action='store_true', help='Skip when the index already matches the database.')
@@ -26,7 +26,16 @@ class Command(BaseCommand):
             if if_needed and news_index.document_count() == News.objects.count():
                 self.stdout.write('Search index up to date, skipping reindex')
                 return
-            result = news_index.reindex()
         except MeiliError as exc:
-            raise CommandError(f'Search reindex failed: {exc}') from exc
-        self.stdout.write(f"Search index rebuilt: {result['indexed']} indexed, {result['removed']} removed")
+            raise CommandError(f'Search index check failed: {exc}') from exc
+
+        try:
+            job = reindex.create_job(reindex.Trigger.DEPLOY)
+        except reindex.ReindexAlreadyRunning as exc:
+            self.stdout.write(f'Skipping: {exc}')
+            return
+        reindex.run(job.id)
+        job.refresh_from_db()
+        if job.status != SearchReindexJob.Status.SUCCEEDED:
+            raise CommandError(f'Search reindex #{job.id} {job.status}: {job.error}')
+        self.stdout.write(f'Search index rebuilt: {job.indexed} indexed, {job.removed} removed')

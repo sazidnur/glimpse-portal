@@ -28,6 +28,7 @@ from .models import (
     News,
     PushDevice,
     PushNotification,
+    SearchReindexJob,
     Sourcealias,
     Timelines,
     Topics,
@@ -36,6 +37,7 @@ from .models import (
 )
 from .openai.jobs import cancel_openai_job
 from .push import service as push_service
+from .search import reindex
 from .youtube import validate_youtube_shorts_url
 
 import json
@@ -817,6 +819,74 @@ class OpenAIJobLogAdmin(ModelAdmin):
 
 admin.site.register(OpenAIJob, OpenAIJobAdmin)
 admin.site.register(OpenAIJobLog, OpenAIJobLogAdmin)
+
+
+REINDEX_STATUS_COLORS = {
+    SearchReindexJob.Status.QUEUED: 'info',
+    SearchReindexJob.Status.RUNNING: 'warning',
+    SearchReindexJob.Status.CANCELLING: 'warning',
+    SearchReindexJob.Status.SUCCEEDED: 'success',
+    SearchReindexJob.Status.FAILED: 'danger',
+}
+
+
+@admin.register(SearchReindexJob)
+class SearchReindexJobAdmin(ModelAdmin):
+    list_display = [
+        'id', 'display_status', 'trigger', 'display_progress', 'removed',
+        'created_by', 'started_at', 'display_duration', 'error',
+    ]
+    list_filter = ['status', 'trigger']
+    ordering = ['-created_at']
+    actions_list = ['start_reindex']
+    actions_row = ['cancel_reindex']
+    list_before_template = 'admin/search/reindex_status.html'
+    readonly_fields = [field.name for field in SearchReindexJob._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_reindex_permission(self, request, obj=None):
+        return request.user.has_perm('data.add_searchreindexjob')
+
+    def changelist_view(self, request, extra_context=None):
+        extra_context = {**(extra_context or {}), 'active_reindex': reindex.active_job()}
+        return super().changelist_view(request, extra_context)
+
+    @action(description='Start reindex', icon='sync', permissions=['reindex'])
+    def start_reindex(self, request):
+        try:
+            job = reindex.start(user=request.user)
+        except reindex.ReindexAlreadyRunning as exc:
+            self.message_user(request, f'{exc}. Wait for it to finish or cancel it first.', level='warning')
+        else:
+            self.message_user(request, f'Reindex #{job.id} queued.')
+        return redirect(reverse('admin:data_searchreindexjob_changelist'))
+
+    @action(description='Cancel', icon='cancel', permissions=['reindex'])
+    def cancel_reindex(self, request, object_id):
+        self.message_user(request, reindex.cancel(get_object_or_404(SearchReindexJob, pk=object_id)))
+        return redirect(reverse('admin:data_searchreindexjob_changelist'))
+
+    @display(description='Status', label=REINDEX_STATUS_COLORS)
+    def display_status(self, obj):
+        return obj.status, obj.get_status_display()
+
+    @display(description='Progress')
+    def display_progress(self, obj):
+        if not obj.total:
+            return '—'
+        return f'{obj.indexed:,} / {obj.total:,} ({obj.progress_percent}%)'
+
+    @display(description='Duration')
+    def display_duration(self, obj):
+        if not obj.started_at:
+            return '—'
+        seconds = int(((obj.finished_at or datetime.now(timezone.utc)) - obj.started_at).total_seconds())
+        return f'{seconds // 60}m {seconds % 60}s' if seconds >= 60 else f'{seconds}s'
 
 
 for model in (User, Group):

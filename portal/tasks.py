@@ -18,7 +18,7 @@ from .openai.client import (
     run_realtime_translation,
 )
 from .push import service as push_service
-from .search import news_index
+from .search import news_index, reindex
 from .openai.jobs import (
     DEFAULT_BATCH_MAX_ITEMS,
     log_openai_job,
@@ -426,6 +426,15 @@ def search_remove_news(news_ids: list[int]):
     news_index.remove(news_ids)
 
 
+@shared_task(name='portal.tasks.search_reindex_job')
+def search_reindex_job(job_id: int):
+    reindex.run(int(job_id))
+
+
 @shared_task(name='portal.tasks.search_reindex')
 def search_reindex():
-    return news_index.reindex()
+    try:
+        job = reindex.create_job(reindex.Trigger.NIGHTLY)
+    except reindex.ReindexAlreadyRunning:
+        return 'skipped: another reindex is active'
+    reindex.run(job.id)

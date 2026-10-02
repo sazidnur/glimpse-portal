@@ -713,6 +713,59 @@ class PushNotification(models.Model):
         return f"news_{self.news_id}" if self.news_id else f"push_{self.id}"
 
 
+
+class SearchReindexJob(models.Model):
+    class Status(models.TextChoices):
+        QUEUED = 'queued', 'Queued'
+        RUNNING = 'running', 'Running'
+        CANCELLING = 'cancelling', 'Cancelling'
+        SUCCEEDED = 'succeeded', 'Succeeded'
+        FAILED = 'failed', 'Failed'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    class Trigger(models.TextChoices):
+        MANUAL = 'manual', 'Manual'
+        DEPLOY = 'deploy', 'Deploy'
+        NIGHTLY = 'nightly', 'Nightly'
+
+    ACTIVE_STATUSES = (Status.QUEUED, Status.RUNNING, Status.CANCELLING)
+
+    id = models.BigAutoField(primary_key=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED, db_index=True)
+    is_active = models.BooleanField(default=True, editable=False)
+    trigger = models.CharField(max_length=16, choices=Trigger.choices, default=Trigger.MANUAL)
+    total = models.PositiveIntegerField(default=0)
+    indexed = models.PositiveIntegerField(default=0)
+    removed = models.PositiveIntegerField(default=0)
+    error = models.TextField(blank=True, default='')
+    celery_task_id = models.CharField(max_length=64, blank=True, default='')
+    created_by = models.ForeignKey('auth.User', models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'search_reindex_jobs'
+        ordering = ['-created_at']
+        verbose_name = 'Search reindex'
+        verbose_name_plural = 'Search reindex'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['is_active'],
+                condition=models.Q(is_active=True),
+                name='search_reindex_single_active',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Reindex #{self.id} ({self.get_status_display()})'
+
+    @property
+    def progress_percent(self) -> int:
+        return round(self.indexed * 100 / self.total) if self.total else 0
+
+
 def _truncate(text: str, limit: int) -> str:
     text = ' '.join((text or '').split())
     return text if len(text) <= limit else text[:limit - 1].rstrip() + '…'

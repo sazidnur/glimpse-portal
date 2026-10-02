@@ -142,7 +142,7 @@ services:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       - SKIP_STARTUP_TASKS=1
-    command: ["celery", "-A", "config", "worker", "-l", "INFO"]
+    command: ["sh", "-c", "exec celery -A config worker -l INFO --concurrency=${CELERY_CONCURRENCY:-2}"]
     volumes:
       - ./secrets:/app/secrets:ro
     networks:

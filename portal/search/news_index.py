@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from django.conf import settings
 from django.db.models import Q
 
 from api.v1.resources import _news_serializer
-from portal.models import News
+from portal.models import News, SearchReindexJob
 
 from .client import MeiliError, get_client
 
@@ -33,8 +33,16 @@ MAX_QUERY_LENGTH = 100
 MIN_QUERY_LENGTH = 2
 
 
+class RebuildCancelled(Exception):
+    pass
+
+
 def index_uid() -> str:
     return settings.MEILI_NEWS_INDEX
+
+
+def rebuild_index_uid(job_id: int) -> str:
+    return f'{index_uid()}__rebuild_{job_id}'
 
 
 def to_document(news: News) -> dict:
@@ -44,69 +52,105 @@ def to_document(news: News) -> dict:
     }
 
 
-def ensure_index() -> None:
+def ensure_index(uid: str | None = None) -> None:
+    uid = uid or index_uid()
     client = get_client()
-    index = client.request('GET', f'/indexes/{index_uid()}', missing_ok=True)
+    index = client.request('GET', f'/indexes/{uid}', missing_ok=True)
     if index is None:
-        client.wait_for_task(client.request('POST', '/indexes', json={'uid': index_uid(), 'primaryKey': PRIMARY_KEY}))
+        client.wait_for_task(client.request('POST', '/indexes', json={'uid': uid, 'primaryKey': PRIMARY_KEY}))
     elif index.get('primaryKey') != PRIMARY_KEY:
-        client.wait_for_task(client.request('PATCH', f'/indexes/{index_uid()}', json={'primaryKey': PRIMARY_KEY}))
-    client.wait_for_task(client.request('PATCH', f'/indexes/{index_uid()}/settings', json=INDEX_SETTINGS))
+        client.wait_for_task(client.request('PATCH', f'/indexes/{uid}', json={'primaryKey': PRIMARY_KEY}))
+    client.wait_for_task(client.request('PATCH', f'/indexes/{uid}/settings', json=INDEX_SETTINGS))
 
 
-def add_documents(documents: list[dict]) -> None:
+def delete_index(uid: str) -> None:
+    client = get_client()
+    if client.request('GET', f'/indexes/{uid}', missing_ok=True) is not None:
+        client.wait_for_task(client.request('DELETE', f'/indexes/{uid}'))
+
+
+def add_documents(documents: list[dict], uid: str | None = None) -> None:
     client = get_client()
     client.wait_for_task(
         client.request(
             'POST',
-            f'/indexes/{index_uid()}/documents',
+            f'/indexes/{uid or index_uid()}/documents',
             json=documents,
             params={'primaryKey': PRIMARY_KEY},
         )
     )
 
 
+def delete_documents(ids: list[int], uid: str | None = None) -> None:
+    client = get_client()
+    client.wait_for_task(client.request('POST', f'/indexes/{uid or index_uid()}/documents/delete-batch', json=ids))
+
+
+def write_targets() -> list[str]:
+    targets = [index_uid()]
+    running = SearchReindexJob.objects.filter(status=SearchReindexJob.Status.RUNNING).values_list('id', flat=True)
+    targets.extend(rebuild_index_uid(job_id) for job_id in running)
+    return targets
+
+
 def upsert(news_ids: Iterable[int]) -> int:
     documents = [to_document(news) for news in News.objects.filter(id__in=list(news_ids))]
     if documents:
-        add_documents(documents)
+        for uid in write_targets():
+            add_documents(documents, uid)
     return len(documents)
 
 
 def remove(news_ids: Iterable[int]) -> None:
     ids = list(news_ids)
     if ids:
-        client = get_client()
-        client.wait_for_task(client.request('POST', f'/indexes/{index_uid()}/documents/delete-batch', json=ids))
+        for uid in write_targets():
+            delete_documents(ids, uid)
 
 
-def document_count() -> int:
-    stats = get_client().request('GET', f'/indexes/{index_uid()}/stats', missing_ok=True)
+def document_count(uid: str | None = None) -> int:
+    stats = get_client().request('GET', f'/indexes/{uid or index_uid()}/stats', missing_ok=True)
     return int((stats or {}).get('numberOfDocuments', 0))
 
 
-def reindex() -> dict:
-    client = get_client()
-    ensure_index()
-    indexed = 0
-    db_ids: set[int] = set()
-    queryset = News.objects.order_by('id')
-    for start in range(0, queryset.count(), BATCH_SIZE):
-        batch = list(queryset[start:start + BATCH_SIZE])
-        db_ids.update(news.id for news in batch)
-        add_documents([to_document(news) for news in batch])
-        indexed += len(batch)
+def rebuild(
+    job_id: int,
+    *,
+    on_progress: Callable[[int, int], None] = lambda indexed, total: None,
+    should_stop: Callable[[], bool] = lambda: False,
+) -> dict:
+    target = rebuild_index_uid(job_id)
+    delete_index(target)
+    ensure_index(target)
 
-    orphans = [doc_id for doc_id in _indexed_ids() if doc_id not in db_ids]
+    queryset = News.objects.order_by('id')
+    total = queryset.count()
+    indexed = 0
+    on_progress(indexed, total)
+    for start in range(0, total, BATCH_SIZE):
+        if should_stop():
+            raise RebuildCancelled
+        batch = list(queryset[start:start + BATCH_SIZE])
+        add_documents([to_document(news) for news in batch], target)
+        indexed += len(batch)
+        on_progress(indexed, total)
+
+    current_ids = set(News.objects.values_list('id', flat=True))
+    orphans = [doc_id for doc_id in indexed_ids(target) if doc_id not in current_ids]
     for start in range(0, len(orphans), BATCH_SIZE):
-        client.wait_for_task(
-            client.request(
-                'POST',
-                f'/indexes/{index_uid()}/documents/delete-batch',
-                json=orphans[start:start + BATCH_SIZE],
-            )
-        )
+        delete_documents(orphans[start:start + BATCH_SIZE], target)
+
+    if should_stop():
+        raise RebuildCancelled
+    ensure_index()
+    client = get_client()
+    client.wait_for_task(client.request('POST', '/swap-indexes', json=[{'indexes': [index_uid(), target]}]))
+    delete_index(target)
     return {'indexed': indexed, 'removed': len(orphans)}
+
+
+def discard_rebuild(job_id: int) -> None:
+    delete_index(rebuild_index_uid(job_id))
 
 
 def search(query: str, *, page: int, limit: int) -> dict:
@@ -148,14 +192,14 @@ def search_with_fallback(query: str, *, page: int, limit: int) -> tuple[dict, st
         return search_database(query, page=page, limit=limit), SOURCE_DATABASE
 
 
-def _indexed_ids() -> list[int]:
+def indexed_ids(uid: str | None = None) -> list[int]:
     client = get_client()
     ids: list[int] = []
     offset = 0
     while True:
         page = client.request(
             'GET',
-            f'/indexes/{index_uid()}/documents',
+            f'/indexes/{uid or index_uid()}/documents',
             params={'fields': 'id', 'limit': BATCH_SIZE, 'offset': offset},
         )
         ids.extend(int(doc['id']) for doc in page['results'])
