@@ -159,7 +159,7 @@ const LIVE_FEED_EUROPE_COUNTRIES = new Set([
   "XK",
 ]);
 
-const _counts = { WORKER: 0, CDN: 0, ORIGIN: 0 };
+const _counts = { WORKER: 0, CDN: 0, ORIGIN: 0, SEARCH: 0 };
 let _lastFlush = Date.now();
 const ANALYTICS_FLUSH_INTERVAL = 60_000;
 
@@ -172,15 +172,16 @@ function normalizePath(pathname) {
 function maybeFlushAnalytics(env) {
   const now = Date.now();
   if (now - _lastFlush < ANALYTICS_FLUSH_INTERVAL) return;
-  const total = _counts.WORKER + _counts.CDN + _counts.ORIGIN;
+  const total = _counts.WORKER + _counts.CDN + _counts.ORIGIN + _counts.SEARCH;
   if (total === 0) return;
   env.ANALYTICS?.writeDataPoint({
-    doubles: [_counts.WORKER, _counts.CDN, _counts.ORIGIN],
+    doubles: [_counts.WORKER, _counts.CDN, _counts.ORIGIN, _counts.SEARCH],
     indexes: ["cache"],
   });
   _counts.WORKER = 0;
   _counts.CDN = 0;
   _counts.ORIGIN = 0;
+  _counts.SEARCH = 0;
   _lastFlush = now;
 }
 
@@ -1047,6 +1048,8 @@ export default {
     const layer = isCDNHitStatus(cfCacheStatus) ? X_CACHE_CDN : X_CACHE_ORIGIN;
     if (layer === X_CACHE_CDN) {
       _counts.CDN++;
+    } else if (isSearchRequest(url)) {
+      _counts.SEARCH++;
     } else {
       _counts.ORIGIN++;
     }

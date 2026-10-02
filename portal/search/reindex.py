@@ -65,6 +65,7 @@ def run(job_id: int) -> None:
         _finish(job_id, Status.FAILED, error=f'{type(exc).__name__}: {exc}'[:2000])
     else:
         _finish(job_id, Status.SUCCEEDED, indexed=result['indexed'], removed=result['removed'])
+        _discard(job_id)
 
 
 def cancel(job: SearchReindexJob) -> str:

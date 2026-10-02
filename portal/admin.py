@@ -969,7 +969,8 @@ def cf_analytics_data_json(request):
         f" toStartOfInterval(timestamp, INTERVAL {bucket_interval}) AS ts,"
         " SUM(double1) AS worker_hits,"
         " SUM(double2) AS cdn_hits,"
-        " SUM(double3) AS origin_hits"
+        " SUM(double3) AS origin_hits,"
+        " SUM(double4) AS search_hits"
         " FROM cache_analytics"
         f" WHERE timestamp >= NOW() - INTERVAL {where_interval}"
         " GROUP BY ts ORDER BY ts ASC"
@@ -1005,7 +1006,7 @@ def cf_analytics_data_json(request):
         now = datetime.now(timezone.utc)
         return JsonResponse({
             "series": [],
-            "totals": {"worker": 0, "cdn": 0, "origin": 0, "total": 0},
+            "totals": {"worker": 0, "cdn": 0, "origin": 0, "search": 0, "total": 0},
             "unit": unit,
             "range": range_key,
             "from": "",
@@ -1023,12 +1024,14 @@ def cf_analytics_data_json(request):
             "worker": int(float(row.get("worker_hits") or 0)),
             "cdn":    int(float(row.get("cdn_hits")    or 0)),
             "origin": int(float(row.get("origin_hits") or 0)),
+            "search": int(float(row.get("search_hits") or 0)),
         })
 
     total_worker = sum(s["worker"] for s in series)
     total_cdn    = sum(s["cdn"]    for s in series)
     total_origin = sum(s["origin"] for s in series)
-    total_all    = total_worker + total_cdn + total_origin
+    total_search = sum(s["search"] for s in series)
+    total_all    = total_worker + total_cdn + total_origin + total_search
 
     now = datetime.now(timezone.utc)
     return JsonResponse({
@@ -1037,6 +1040,7 @@ def cf_analytics_data_json(request):
             "worker": total_worker,
             "cdn":    total_cdn,
             "origin": total_origin,
+            "search": total_search,
             "total":  total_all,
         },
         "unit":  unit,

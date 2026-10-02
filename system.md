@@ -784,6 +784,8 @@ Response header `X-SR` tells where results came from (numeric, like the Worker's
 | `1` | Meilisearch |
 | `2` | Postgres fallback (Meilisearch unreachable; no typo tolerance, newest first) |
 
+Analytics: the Worker counts searches that reach the server separately (Analytics Engine `double4`), so the CF Analytics dashboard shows them as an orange **Search → Server** series and the red **Origin** series covers only news/feed/metadata requests. Search hits served from the Worker or CDN cache stay in those layers.
+
 ### Keeping the index in sync
 
 | Trigger | What happens |

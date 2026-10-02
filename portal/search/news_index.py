@@ -145,7 +145,6 @@ def rebuild(
     ensure_index()
     client = get_client()
     client.wait_for_task(client.request('POST', '/swap-indexes', json=[{'indexes': [index_uid(), target]}]))
-    delete_index(target)
     return {'indexed': indexed, 'removed': len(orphans)}
 
 
