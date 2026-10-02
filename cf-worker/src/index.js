@@ -3,6 +3,7 @@ const WORKER_SWR = 600;
 const CDN_CACHE_TTL = 1800-60;
 const METADATA_CDN_TTL = 1800-60;
 const NEWS_ALL_CDN_TTL = 86400-60;
+const SEARCH_CACHE_TTL = 120;
 // Dedicated Worker microcache name.
 const MICROCACHE_NAME = "worker-microcache";
 const TOKEN_EXPIRY = 7200;
@@ -295,8 +296,13 @@ function handlePreflight(env) {
   return new Response(null, { status: 204, headers: getCORSHeaders(env) });
 }
 
+function isSearchRequest(url) {
+  return url.pathname.replace(/\/+$/, "") === "/api/v1/news/search";
+}
+
 function getCDNTTL(url) {
   const pathNormalized = url.pathname.replace(/\/+$/, "");
+  if (isSearchRequest(url)) return SEARCH_CACHE_TTL;
   const isMetadata = pathNormalized === "/api/v1/metadata";
   const isNewsAll = pathNormalized === "/api/v1/news" && url.searchParams.get("all")?.toLowerCase() === "true";
   if (isMetadata) return METADATA_CDN_TTL;
@@ -1046,7 +1052,8 @@ export default {
     }
 
     const toClient = new Response(response.body, response);
-    toClient.headers.set("Cache-Control", `s-maxage=${WORKER_CACHE_TTL}, stale-while-revalidate=${WORKER_SWR}`);
+    const workerTtl = isSearchRequest(url) ? SEARCH_CACHE_TTL : WORKER_CACHE_TTL;
+    toClient.headers.set("Cache-Control", `s-maxage=${workerTtl}, stale-while-revalidate=${WORKER_SWR}`);
     toClient.headers.set("X-Cache", layer);
     for (const [k, v] of Object.entries(getCORSHeaders(env))) toClient.headers.set(k, v);
     ctx.waitUntil(

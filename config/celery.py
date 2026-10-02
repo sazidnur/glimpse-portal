@@ -25,6 +25,10 @@ app.conf.beat_schedule = {
         'task': 'portal.tasks.push_release_due',
         'schedule': 15.0,
     },
+    'search-reindex-news': {
+        'task': 'portal.tasks.search_reindex',
+        'schedule': crontab(hour=4, minute=15),
+    },
     'push-cleanup-devices': {
         'task': 'portal.tasks.push_cleanup_devices',
         'schedule': crontab(hour=3, minute=30),

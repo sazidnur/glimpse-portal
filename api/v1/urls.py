@@ -2,6 +2,8 @@ from django.urls import path, re_path
 
 from portal.push.api import DeviceRegistrationView
 
+from .search import NewsSearchView
+
 from .resources import (
     NewsListView,
     NewsCreateView,
@@ -20,6 +22,7 @@ from .resources import (
 
 urlpatterns = [
     path("news/", NewsListView.as_view(), name="news_list"),
+    re_path(r"^news/search/?$", NewsSearchView.as_view(), name="news_search"),
     path("news/create/", NewsCreateView.as_view(), name="news_create"),
     path("news/<int:pk>/delete/", NewsDeleteView.as_view(), name="news_delete"),
     path("news/delete/", NewsDeleteView.as_view(), name="news_delete_batch"),

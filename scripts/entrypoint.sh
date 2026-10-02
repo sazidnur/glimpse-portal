@@ -16,6 +16,9 @@ if [ "${SKIP_STARTUP_TASKS:-0}" != "1" ]; then
 
   echo "🔥 Warming Redis caches..."
   python manage.py warm_cache || echo "Cache warm failed, will lazy-warm on first request"
+
+  echo "🔎 Syncing search index..."
+  python manage.py search_reindex --if-needed || echo "Search index sync failed, search falls back to the database"
 else
   echo "Skipping startup tasks (SKIP_STARTUP_TASKS=1)"
 fi

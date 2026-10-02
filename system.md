@@ -11,6 +11,7 @@ This is a living document. It covers how things are built, why certain decisions
 - [Admin Cache Dashboard](#admin-cache-dashboard)
 - [Architecture & Files](#architecture--files)
 - [Push Notifications](#push-notifications)
+- [News Search](#news-search)
 - [Known Considerations](#known-considerations)
 - [Future Topics](#future-topics)
 
@@ -749,5 +750,72 @@ Credential files live in `./secrets/`, which is git- and docker-ignored and moun
 | `portal/push/apns.py` | Async HTTP/2 APNs client (ES256 provider token reused for 40 min) and payload builder |
 | `portal/push/api.py` | Device registration and internal push API |
 | `portal/admin.py` | `PushNotificationAdmin`, `PushDeviceAdmin`, News **Push** row action |
+
+</details>
+
+---
+
+<details open>
+<summary><h2>News Search</h2></summary>
+
+### Overview
+
+The app searches all news on the server. Meilisearch runs as an internal container (not exposed publicly, 512 MB cap) and only `title` and `summary` are searchable; every other field is stored for display. Results come back in the same shape as `/api/v1/news` items, so the app reuses its `News` model.
+
+```
+App ── GET /api/v1/news/search?q=…&page=&limit= (Bearer JWT)
+   → Cloudflare Worker (JWT check, 120 s edge cache per query)
+   → Django /origin/api/v1/news/search
+   → Meilisearch (fallback: Postgres icontains if Meilisearch is down)
+```
+
+| Param | Rules |
+|-------|-------|
+| `q` | required, 2–100 characters, whitespace collapsed |
+| `page` | default 1, max 50 |
+| `limit` | default 20, max 50 |
+
+Response: `{"items": [...], "total": 41, "page": 1, "limit": 20, "pages": 3}`. Ranking: words → typo → proximity → attribute → exactness → newest first.
+
+Response header `X-SR` tells where results came from (numeric, like the Worker's `X-Cache`):
+
+| `X-SR` | Source |
+|--------|--------|
+| `1` | Meilisearch |
+| `2` | Postgres fallback (Meilisearch unreachable; no typo tolerance, newest first) |
+
+### Keeping the index in sync
+
+| Trigger | What happens |
+|---------|--------------|
+| `News` saved (create API, admin) | `post_save` → on commit → `search_index_news` Celery task |
+| `News` deleted (delete API, admin, queryset delete) | `post_delete` → on commit → `search_remove_news` |
+| Deploy / container start | `search_reindex --if-needed` rebuilds when the document count differs from the database |
+| Nightly 04:15 | `search_reindex` task re-adds everything and removes orphans |
+
+Tasks wait for Meilisearch to confirm each write and retry with backoff (up to 8 times), so a Meilisearch outage heals on its own. Only `News` is indexed; categories, topics and divisions are stored as IDs and resolved by the app from metadata.
+
+### Operations
+
+```bash
+docker compose exec django python manage.py search_reindex        # full rebuild
+docker compose exec django python manage.py search_reindex --if-needed
+```
+
+| Setting | Default |
+|---------|---------|
+| `MEILI_URL` | `http://meilisearch:7700` |
+| `MEILI_MASTER_KEY` | required in production (min 16 bytes) |
+| `MEILI_NEWS_INDEX` | `news` |
+
+### Files
+
+| File | Role |
+|------|------|
+| `portal/search/client.py` | Thin httpx client for Meilisearch |
+| `portal/search/news_index.py` | Index settings, document shape, upsert/remove/reindex, search + DB fallback |
+| `portal/search/signals.py` | News save/delete → Celery tasks |
+| `api/v1/search.py` | `GET /api/v1/news/search` |
+| `portal/management/commands/search_reindex.py` | Rebuild command run on deploy |
 
 </details>

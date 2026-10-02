@@ -13,6 +13,7 @@ class PortalConfig(AppConfig):
 
     def ready(self):
         from api.v1.signals import register_cache, register_invalidator
+        from .search import signals as search_signals
         from api.v1.resources import news_cache, video_cache, rebuild_metadata_cache
         from .models import (
             News,
@@ -26,6 +27,7 @@ class PortalConfig(AppConfig):
 
         register_cache(News, news_cache)
         register_cache(Videos, video_cache)
+        search_signals.connect()
 
         metadata_models = (
             Categories,

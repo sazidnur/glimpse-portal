@@ -378,6 +378,11 @@ APNS_KEY_ID = config('APNS_KEY_ID', default='')
 APNS_TEAM_ID = config('APNS_TEAM_ID', default='')
 APNS_TOPIC = config('APNS_TOPIC', default='com.glimpse.news.app')
 
+# Meilisearch
+MEILI_URL = config('MEILI_URL', default='http://meilisearch:7700')
+MEILI_MASTER_KEY = config('MEILI_MASTER_KEY', default='')
+MEILI_NEWS_INDEX = config('MEILI_NEWS_INDEX', default='news')
+
 # ===========================================
 # Caching Configuration (Redis)
 # ===========================================

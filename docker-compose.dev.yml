@@ -33,6 +33,20 @@ services:
       timeout: 5s
       retries: 5
 
+  meilisearch:
+    image: getmeili/meilisearch:v1.54.3
+    container_name: glimpse-portal-dev-meilisearch
+    environment:
+      TZ: ${TZ:-Europe/Helsinki}
+      MEILI_ENV: development
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-dev-master-key-change-me}
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_MAX_INDEXING_MEMORY: 256Mb
+    ports:
+      - "7700:7700"
+    volumes:
+      - dev_meili_data:/meili_data
+
   django:
     build:
       context: .
@@ -54,6 +68,8 @@ services:
       DJANGO_DB_PORT: "5432"
       TZ: ${TZ:-Europe/Helsinki}
       REDIS_URL: redis://redis:6379/0
+      MEILI_URL: http://meilisearch:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-dev-master-key-change-me}
     ports:
       - "8000:8000"
     volumes:
@@ -84,6 +100,8 @@ services:
       DJANGO_DB_PORT: "5432"
       TZ: ${TZ:-Europe/Helsinki}
       REDIS_URL: redis://redis:6379/0
+      MEILI_URL: http://meilisearch:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-dev-master-key-change-me}
       SKIP_STARTUP_TASKS: "1"
     volumes:
       - .:/app
@@ -110,6 +128,8 @@ services:
       DJANGO_DB_PORT: "5432"
       TZ: ${TZ:-Europe/Helsinki}
       REDIS_URL: redis://redis:6379/0
+      MEILI_URL: http://meilisearch:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-dev-master-key-change-me}
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       SKIP_STARTUP_TASKS: "1"
@@ -138,6 +158,8 @@ services:
       DJANGO_DB_PORT: "5432"
       TZ: ${TZ:-Europe/Helsinki}
       REDIS_URL: redis://redis:6379/0
+      MEILI_URL: http://meilisearch:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-dev-master-key-change-me}
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       SKIP_STARTUP_TASKS: "1"
@@ -147,6 +169,7 @@ services:
 
 volumes:
   dev_db_data:
+  dev_meili_data:
   dev_redis_data:
   dev_static_data:
   dev_media_data:

@@ -18,6 +18,7 @@ from .openai.client import (
     run_realtime_translation,
 )
 from .push import service as push_service
+from .search import news_index
 from .openai.jobs import (
     DEFAULT_BATCH_MAX_ITEMS,
     log_openai_job,
@@ -405,3 +406,26 @@ def push_release_due():
 @shared_task(name='portal.tasks.push_cleanup_devices')
 def push_cleanup_devices():
     return push_service.cleanup_devices()
+
+
+SEARCH_TASK_OPTIONS = {
+    'autoretry_for': (Exception,),
+    'retry_backoff': 5,
+    'retry_backoff_max': 300,
+    'max_retries': 8,
+}
+
+
+@shared_task(name='portal.tasks.search_index_news', **SEARCH_TASK_OPTIONS)
+def search_index_news(news_ids: list[int]):
+    return news_index.upsert(news_ids)
+
+
+@shared_task(name='portal.tasks.search_remove_news', **SEARCH_TASK_OPTIONS)
+def search_remove_news(news_ids: list[int]):
+    news_index.remove(news_ids)
+
+
+@shared_task(name='portal.tasks.search_reindex')
+def search_reindex():
+    return news_index.reindex()
