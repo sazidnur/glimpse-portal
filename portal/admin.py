@@ -51,8 +51,8 @@ logger = logging.getLogger(__name__)
 
 
 CACHE_REGISTRY = [
-    {"key": "news", "label": "News", "cache": news_cache, "model": News},
-    {"key": "video", "label": "Videos", "cache": video_cache, "model": Videos},
+    {"key": "news", "label": "News", "cache": news_cache},
+    {"key": "video", "label": "Videos", "cache": video_cache},
 ]
 
 
@@ -80,7 +80,7 @@ def cache_stats_json(request, key):
         return JsonResponse({'error': 'Unknown cache key'}, status=404)
     try:
         stats = entry["cache"].stats()
-        stats['db_total'] = entry["model"].objects.count()
+        stats['db_total'] = entry["cache"].queryset().count()
         return JsonResponse(stats)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
@@ -614,8 +614,8 @@ class CategoryForm(forms.ModelForm):
 
 class CategoriesAdmin(ModelAdmin):
     form = CategoryForm
-    list_display = ['id', 'name', 'enabled', 'order', 'live_feed_type', 'live_feed_badge', 'has_config']
-    list_editable = ['enabled', 'order', 'live_feed_type']
+    list_display = ['id', 'name', 'enabled', 'order', 'live_feed_type', 'separate_feed', 'live_feed_badge', 'has_config']
+    list_editable = ['enabled', 'order', 'live_feed_type', 'separate_feed']
     list_per_page = 50
     search_fields = ['name']
     list_filter = ['enabled', 'live_feed_type']
@@ -624,7 +624,7 @@ class CategoriesAdmin(ModelAdmin):
 
     def get_fieldsets(self, request, obj=None):
         return (
-            (None, {'fields': ('name', 'enabled', 'order', 'live_feed_type')}),
+            (None, {'fields': ('name', 'enabled', 'order', 'live_feed_type', 'separate_feed')}),
             ('Configuration', {
                 'fields': ('config',),
                 'description': 'JSON configuration. For live feed categories: "initial_fanout_limit" (default: 50), "initial_fanout_data" (dict).',

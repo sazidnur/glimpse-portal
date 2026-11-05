@@ -52,7 +52,7 @@ def get_cache_status():
     # News cache
     try:
         news_stats = news_cache.stats()
-        news_db_total = News.objects.count()
+        news_db_total = news_cache.queryset().count()
         caches.append({
             "key": "news",
             "label": "News",

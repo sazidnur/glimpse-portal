@@ -8,6 +8,7 @@ This is a living document. It covers how things are built, why certain decisions
 
 - [Redis Caching Layer](#redis-caching-layer)
 - [REST API (v1)](#rest-api-v1)
+- [Separate Feeds (Fact Check, Divisions)](#separate-feeds-fact-check-divisions)
 - [Admin Cache Dashboard](#admin-cache-dashboard)
 - [Architecture & Files](#architecture--files)
 - [Push Notifications](#push-notifications)
@@ -110,6 +111,7 @@ Query parameters:
 - `page` (int, default: 1) -- 1-based page number
 - `limit` (int, default: 10, max: 100) -- items per page
 - `all` (bool, default: false) -- returns all items (capped at 10,000)
+- `category` / `division` (int, news only) -- that category's or division's news, read from the DB (see [Separate Feeds](#separate-feeds-fact-check-divisions))
 
 Response:
 ```json
@@ -227,6 +229,7 @@ Wipes all cached data. Next read triggers automatic re-warm.
 | `score` | float | no | |
 | `topic` | int | no | FK |
 | `categoryid` | int | no | FK |
+| `divisionid` | int | no | FK; set only for division news |
 
 ### Video Fields
 
@@ -239,6 +242,26 @@ Wipes all cached data. Next read triggers automatic re-warm.
 | `timestamp` | datetime | no | Defaults to now |
 | `score` | float | no | |
 | `thumbnailurl` | string | no | |
+
+</details>
+
+---
+
+<details open>
+<summary><h2>Separate Feeds (Fact Check, Divisions)</h2></summary>
+
+Some news must not show in the main feed or the regular category tabs, only in their own tab:
+
+| News | Marked by | App reads it from |
+|------|-----------|-------------------|
+| Fact checks (and any future category like it) | `categoryid` is a category with `separate_feed = true` | `GET /api/v1/news/?category=<id>&page=&limit=` when the tab opens |
+| Division news | `divisionid` is set (`categoryid` stays null) | `GET /api/v1/news/divisions?limit=10` (latest 10 per division, one call) when the Divisions tab opens; `GET /api/v1/news/?division=<id>&page=` for more |
+
+`main_feed_news()` in `api/v1/resources.py` defines the main feed. The `news` sorted-set cache, its DB fallback and `?all=true` all serve that queryset, so separate-feed news never enters `news:all`. Saving a news item re-checks it against the queryset, so moving an item into a separate feed drops it from the cache.
+
+The filtered reads go to the DB (indexed FK filter, small result) instead of extra sorted sets. They are only requested when a tab opens and the Worker caches each URL at the edge for 30 minutes, so the DB sees roughly one query per URL per cache period.
+
+`separate_feed` is exposed on categories in `/api/v1/metadata` and `/portal/api/categories/`. Migration `0013` sets it on the category named `ফ্যাক্ট চেক`. After toggling it on a category that already has news, flush and warm the News cache from the cache dashboard.
 
 </details>
 
@@ -281,10 +304,10 @@ Add one entry to `CACHE_REGISTRY` in `portal/admin.py`:
 
 ```python
 CACHE_REGISTRY = [
-    {"key": "news", "label": "News", "cache": news_cache, "model": "News"},
-    {"key": "video", "label": "Videos", "cache": video_cache, "model": "Videos"},
+    {"key": "news", "label": "News", "cache": news_cache},
+    {"key": "video", "label": "Videos", "cache": video_cache},
     # Add here:
-    {"key": "events", "label": "Events", "cache": event_cache, "model": "Events"},
+    {"key": "events", "label": "Events", "cache": event_cache},
 ]
 ```
 

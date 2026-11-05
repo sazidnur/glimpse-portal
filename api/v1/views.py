@@ -8,6 +8,9 @@ logger = logging.getLogger(__name__)
 
 MAX_LIMIT = 100
 MAX_ALL = 10000
+# s-maxage=1800 tells CF to cache for 30 min; stale-while-revalidate=120 gives a 2 min grace
+# period while revalidating. Works alongside cf.cacheTtl=1800 set in the Worker's fetchOriginGET.
+LIST_CACHE_CONTROL = "s-maxage=1800, stale-while-revalidate=120"
 
 
 def _parse_int(value, default=1, min_val=None, max_val=None):
@@ -26,7 +29,6 @@ class CachedListView(APIView):
     # Require DRF token auth for reads as well as writes.
     permission_classes = [IsAuthenticated]
     cache = None
-    serializer_class = None
     model = None
 
     def get(self, request):
@@ -40,24 +42,22 @@ class CachedListView(APIView):
                 result = self.cache.get_paginated(page=page, limit=limit)
                 response = Response(result)
 
-            # CDN cache directive: s-maxage=1800 tells CF to cache for 30 min.
-            # stale-while-revalidate=120 gives CF a 2 min grace period to serve stale
-            # while revalidating in background. This works alongside cf.cacheTtl=1800
-            # set in the Worker's fetchOriginGET cf options.
-            response["Cache-Control"] = "s-maxage=1800, stale-while-revalidate=120"
+            response["Cache-Control"] = LIST_CACHE_CONTROL
             return response
 
         except Exception:
             logger.exception("%s list failed, falling back to DB", self.model.__name__)
             return self._fallback(request)
 
-    def _fallback(self, request):
+    def _fallback(self, request, qs=None):
         try:
             page = _parse_int(request.query_params.get("page"), default=1, min_val=1)
             limit = _parse_int(request.query_params.get("limit"), default=10, min_val=1, max_val=MAX_LIMIT)
             get_all = request.query_params.get("all", "").lower() == "true"
 
-            qs = self.model.objects.order_by("-timestamp")
+            if qs is None:
+                qs = self.cache.queryset()
+            qs = qs.order_by("-timestamp", "-id")
             total = qs.count()
 
             if get_all:
@@ -66,9 +66,8 @@ class CachedListView(APIView):
                 start = (page - 1) * limit
                 qs = qs[start:start + limit]
 
-            data = self.serializer_class(qs, many=True).data
             return Response({
-                "items": data,
+                "items": [self.cache.serialize_fn(obj) for obj in qs],
                 "total": total,
                 "page": page,
                 "limit": limit,

@@ -57,7 +57,7 @@ class CategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Categories
-        fields = ['id', 'name', 'name_en', 'enabled', 'order', 'live_feed_type']
+        fields = ['id', 'name', 'name_en', 'enabled', 'order', 'live_feed_type', 'separate_feed']
 
     def get_live_feed_type(self, obj):
         return int(getattr(obj, 'live_feed_type', 0) or 0)

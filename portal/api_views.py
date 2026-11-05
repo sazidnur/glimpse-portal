@@ -88,7 +88,7 @@ def categories_data(request):
     qs = (
         Categories.objects
         .filter(enabled=True)
-        .only('id', 'name', 'name_en', 'enabled', 'order', 'live_feed_type')
+        .only('id', 'name', 'name_en', 'enabled', 'order', 'live_feed_type', 'separate_feed')
         .order_by('order', 'id')
     )
 
@@ -115,6 +115,7 @@ def categories_data(request):
             'enabled': bool(category.enabled),
             'order': int(category.order or 0),
             'live_feed_type': int(getattr(category, 'live_feed_type', 0) or 0),
+            'separate_feed': category.separate_feed,
         }
         for category in qs
     ]

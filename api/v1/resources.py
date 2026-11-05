@@ -1,5 +1,7 @@
 import logging
 
+from django.db.models import F, Window
+from django.db.models.functions import RowNumber
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -14,6 +16,9 @@ from .serializers import (
     SourceAliasSerializer,
 )
 from .views import (
+    LIST_CACHE_CONTROL,
+    MAX_LIMIT,
+    _parse_int,
     CachedListView,
     CachedCreateView,
     CachedDeleteView,
@@ -53,7 +58,12 @@ def _video_serializer(obj):
     }
 
 
-news_cache = SortedSetCache(prefix="news", model=News, serialize_fn=_news_serializer)
+def main_feed_news():
+    """News for the main feed: division news and separate-feed categories have their own feeds."""
+    return News.objects.filter(divisionid__isnull=True).exclude(categoryid__separate_feed=True)
+
+
+news_cache = SortedSetCache(prefix="news", model=News, serialize_fn=_news_serializer, queryset=main_feed_news)
 video_cache = SortedSetCache(prefix="video", model=Videos, serialize_fn=_video_serializer)
 metadata_cache = MetadataCache()
 
@@ -92,8 +102,42 @@ def rebuild_metadata_cache():
 
 class NewsListView(CachedListView):
     cache = news_cache
-    serializer_class = NewsDetailSerializer
     model = News
+
+    def get(self, request):
+        filters = {}
+        for param, field in (("category", "categoryid"), ("division", "divisionid")):
+            raw = request.query_params.get(param)
+            if raw is None:
+                continue
+            if not raw.isdigit():
+                return Response({"error": f"{param} must be an integer"}, status=400)
+            filters[field] = int(raw)
+
+        if not filters:
+            return super().get(request)
+
+        response = self._fallback(request, News.objects.filter(**filters))
+        response["Cache-Control"] = LIST_CACHE_CONTROL
+        return response
+
+
+class NewsByDivisionView(APIView):
+    """Latest `limit` news of every division in one call, for the Divisions tab."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        limit = _parse_int(request.query_params.get("limit"), default=10, min_val=1, max_val=MAX_LIMIT)
+        latest_first = [F("timestamp").desc(), F("id").desc()]
+        qs = (
+            News.objects.filter(divisionid__isnull=False)
+            .annotate(rank=Window(RowNumber(), partition_by=F("divisionid"), order_by=latest_first))
+            .filter(rank__lte=limit)
+            .order_by(*latest_first)
+        )
+        response = Response({"items": [_news_serializer(obj) for obj in qs]})
+        response["Cache-Control"] = LIST_CACHE_CONTROL
+        return response
 
 
 class NewsCreateView(CachedCreateView):
@@ -120,7 +164,6 @@ class NewsCacheFlushView(CacheFlushView):
 
 class VideoListView(CachedListView):
     cache = video_cache
-    serializer_class = VideoDetailSerializer
     model = Videos
 
 

@@ -6,6 +6,7 @@ from .search import NewsSearchView
 
 from .resources import (
     NewsListView,
+    NewsByDivisionView,
     NewsCreateView,
     NewsDeleteView,
     NewsCacheStatsView,
@@ -23,6 +24,7 @@ from .resources import (
 urlpatterns = [
     path("news/", NewsListView.as_view(), name="news_list"),
     re_path(r"^news/search/?$", NewsSearchView.as_view(), name="news_search"),
+    re_path(r"^news/divisions/?$", NewsByDivisionView.as_view(), name="news_by_division"),
     path("news/create/", NewsCreateView.as_view(), name="news_create"),
     path("news/<int:pk>/delete/", NewsDeleteView.as_view(), name="news_delete"),
     path("news/delete/", NewsDeleteView.as_view(), name="news_delete_batch"),

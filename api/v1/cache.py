@@ -9,11 +9,12 @@ logger = logging.getLogger(__name__)
 
 class SortedSetCache:
 
-    def __init__(self, prefix, model, serialize_fn, ttl=60 * 60 * 24 * 7):
+    def __init__(self, prefix, model, serialize_fn, ttl=60 * 60 * 24 * 7, queryset=None):
         self.sorted_set_key = f"{prefix}:all"
         self.obj_key_prefix = f"{prefix}:obj:"
         self.member_prefix = prefix
         self.model = model
+        self.queryset = queryset or model.objects.all
         self.serialize_fn = serialize_fn
         self.ttl = ttl
         self._populated = False  # avoids redundant ZCARD on every request
@@ -51,7 +52,7 @@ class SortedSetCache:
 
     def warm(self):
         r = self._redis()
-        qs = self.model.objects.all().order_by("-timestamp")
+        qs = self.queryset().order_by("-timestamp")
         count = 0
         pipe = r.pipeline()
 
@@ -94,7 +95,7 @@ class SortedSetCache:
         if missing_ids:
             logger.warning("Backfilling %d missing %s objects from DB", len(missing_ids), self.member_prefix)
             pipe = r.pipeline()
-            for obj in self.model.objects.filter(id__in=missing_ids):
+            for obj in self.queryset().filter(id__in=missing_ids):
                 data = self._serialize(obj)
                 pipe.set(self._obj_key(obj.id), data, ex=self.ttl)
                 items.append(self._deserialize(data))
@@ -148,6 +149,9 @@ class SortedSetCache:
         return {"items": items, "total": total}
 
     def add(self, obj):
+        if not self.queryset().filter(pk=obj.pk).exists():
+            self.delete(obj.id)
+            return
         r = self._redis()
         pipe = r.pipeline()
         pipe.zadd(self.sorted_set_key, {self._member_key(obj.id): self._score(obj)})
