@@ -625,6 +625,7 @@ class PushNotification(models.Model):
     class Origin(models.TextChoices):
         PORTAL = 'portal', 'Portal'
         API = 'api', 'API'
+        DIGEST = 'digest', 'AI digest'
 
     class Status(models.TextChoices):
         SCHEDULED = 'scheduled', 'Scheduled'

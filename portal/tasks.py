@@ -410,6 +410,13 @@ def push_release_due():
     return push_service.release_due()
 
 
+@shared_task(name='portal.tasks.push_schedule_digest')
+def push_schedule_digest():
+    from .push import digest
+
+    digest.schedule_digest()
+
+
 @shared_task(name='portal.tasks.push_cleanup_devices')
 def push_cleanup_devices():
     return push_service.cleanup_devices()

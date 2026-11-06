@@ -722,6 +722,12 @@ A news-based push takes its title, body (≤180 chars) and HTTPS image from the 
 
 On the News list, the **Push** row action opens the compose form with that story selected.
 
+### AI digest (7:00 and 19:00 Bangladesh time)
+
+Celery beat runs `push_schedule_digest` at 06:30 and 18:30 Bangladesh time (`00:30` / `12:30` UTC; Bangladesh has no DST). `portal/push/digest.py` offers the AI (`gpt-6-luna`, flex first, standard priority if flex fails) up to 60 main-feed stories from the last 12 hours that were never pushed. It picks 2 different stories most readers would open (direct impact first, then big developing stories, then honest hooks; no graphic crime, party statements or gossip) and writes a Bengali push title (≤60 chars) and body (≤160 chars) from the story's own facts. The ids are bound to the candidate list, so it cannot invent a story.
+
+The two pushes are created like any news push (image from the story, both platforms) with origin `digest`, scheduled for 7:00/19:00 and 7:05/19:05. They sit in **Notifications → Push Notifications** as *scheduled* for 30 minutes, so an editor can edit or cancel them. Idempotency keys `digest-<yyyymmddhh>-<n>` keep a re-run from scheduling or paying twice.
+
 ### Device registration (app → backend)
 
 `POST https://glimpseapp.net/api/v1/devices` with `Authorization: Bearer <worker JWT>`. The Worker verifies the JWT and forwards the request to `/origin/api/v1/devices` with the DRF token and the client IP in `X-Client-IP` (the rate limit is 30/min per IP). The request body follows the app contract (`token`, `platform`, `provider`, `environment`, `enabled`, `topics`, `locale`, `app_version`, optional `previous_token`). Registration upserts by token, and a rotated `previous_token` row is deleted. Returns `204`.
