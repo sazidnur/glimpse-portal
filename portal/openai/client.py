@@ -8,6 +8,9 @@ from typing import Any
 from django.conf import settings
 from openai import OpenAI
 
+# Flex runs inside the 2 shared Celery workers (push, search); a slow flex call goes to batch instead of blocking them.
+FLEX_TIMEOUT_SECONDS = 60
+
 
 def _client() -> OpenAI:
     api_key = str(getattr(settings, 'OPENAI_API_KEY', '') or '').strip()
@@ -98,6 +101,7 @@ def run_realtime_translation(
     system_prompt: str,
     user_payload: dict[str, Any],
     response_schema: dict[str, Any],
+    flex: bool = False,
 ) -> tuple[dict[str, Any], str, dict[str, Any]]:
     client = _client()
     body = _build_chat_completion_body(
@@ -106,6 +110,9 @@ def run_realtime_translation(
         user_payload=user_payload,
         response_schema=response_schema,
     )
+    if flex:
+        client = client.with_options(timeout=FLEX_TIMEOUT_SECONDS, max_retries=0)
+        body['service_tier'] = 'flex'
     response = client.chat.completions.create(**body)
     raw = _to_dict(response)
     parsed = _extract_structured_output_from_chat_body(raw)

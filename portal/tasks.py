@@ -54,7 +54,7 @@ def _queue_realtime_for_job(job: OpenAIJob, *, reason: str):
 
 
 @shared_task(name='portal.tasks.openai_process_realtime_job')
-def openai_process_realtime_job(job_id: int):
+def openai_process_realtime_job(job_id: int, flex: bool = False):
     with transaction.atomic():
         job = OpenAIJob.objects.select_for_update().filter(id=job_id).first()
         if not job or _terminal(job.status):
@@ -76,11 +76,18 @@ def openai_process_realtime_job(job_id: int):
             system_prompt=str(job.system_prompt or ''),
             user_payload=job.user_payload or {},
             response_schema=job.response_schema or {},
+            flex=flex,
         )
     except Exception as exc:
         with transaction.atomic():
             failed = OpenAIJob.objects.select_for_update().filter(id=job_id).first()
             if not failed or _terminal(failed.status):
+                return
+            if flex and not failed.cancel_requested:
+                failed.status = OpenAIJob.Status.BATCH_QUEUED
+                failed.error_message = f'Flex failed, queued for batch: {exc}'
+                failed.save(update_fields=['status', 'error_message', 'updated_at'])
+                log_openai_job(failed, failed.error_message, level=OpenAIJobLog.Level.WARNING)
                 return
             failed.status = OpenAIJob.Status.FAILED
             failed.error_message = f'Realtime translation failed: {exc}'

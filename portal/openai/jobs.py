@@ -12,8 +12,8 @@ from ..live_feed import client as hub_client
 from ..models import LiveFeedPipeline, LiveFeedPipelineLog, OpenAIJob, OpenAIJobLog
 
 
-VALID_OPENAI_MODES = {'off', 'realtime', 'batch'}
-DEFAULT_OPENAI_MODE = 'batch'
+VALID_OPENAI_MODES = {'off', 'flex', 'realtime', 'batch'}
+DEFAULT_OPENAI_MODE = 'flex'
 DEFAULT_REALTIME_MODEL = 'gpt-5.4-mini'
 DEFAULT_BATCH_MODEL = 'gpt-5.4-mini'
 DEFAULT_BATCH_TIMEOUT_MINUTES = 30
@@ -137,7 +137,7 @@ def enqueue_pipeline_translation_job(
     if resolved_mode == 'off' or not openai_is_available():
         return None, False
 
-    requested_mode = OpenAIJob.Mode.BATCH if resolved_mode == 'batch' else OpenAIJob.Mode.REALTIME
+    requested_mode = OpenAIJob.Mode(resolved_mode)
     initial_status = (
         OpenAIJob.Status.BATCH_QUEUED
         if requested_mode == OpenAIJob.Mode.BATCH
@@ -179,10 +179,10 @@ def enqueue_pipeline_translation_job(
         details={'status': initial_status, 'source_item_id': source_item_id, 'provider_request': provider_request},
     )
 
-    if requested_mode == OpenAIJob.Mode.REALTIME:
+    if requested_mode != OpenAIJob.Mode.BATCH:
         from ..tasks import openai_process_realtime_job
 
-        async_result = openai_process_realtime_job.delay(job.id)
+        async_result = openai_process_realtime_job.delay(job.id, flex=requested_mode == OpenAIJob.Mode.FLEX)
         OpenAIJob.objects.filter(id=job.id).update(celery_task_id=async_result.id)
 
     return job, True

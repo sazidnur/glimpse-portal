@@ -382,6 +382,7 @@ class LiveFeedPipelineLog(models.Model):
 class OpenAIJob(models.Model):
     class Mode(models.TextChoices):
         REALTIME = 'realtime', 'Realtime'
+        FLEX = 'flex', 'Flex'
         BATCH = 'batch', 'Batch'
 
     class Status(models.TextChoices):
