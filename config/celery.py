@@ -29,10 +29,10 @@ app.conf.beat_schedule = {
         'task': 'portal.tasks.search_reindex',
         'schedule': crontab(hour=4, minute=15),
     },
-    # 06:30 and 18:30 Bangladesh time (UTC+6, no DST): schedules the 7:00 and 19:00 digest pushes.
+    # Picks the stories of any AI digest slot (set in the admin) due within 30 minutes; a no-op otherwise.
     'push-schedule-digest': {
         'task': 'portal.tasks.push_schedule_digest',
-        'schedule': crontab(hour='0,12', minute=30),
+        'schedule': crontab(minute='*/5'),
     },
     'push-cleanup-devices': {
         'task': 'portal.tasks.push_cleanup_devices',

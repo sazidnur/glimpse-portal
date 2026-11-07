@@ -1,4 +1,5 @@
 from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
 
@@ -571,6 +572,23 @@ class LiveFeedPublishedItem(models.Model):
             'impact': self.impact,
             'timestamp': self.timestamp.isoformat() if self.timestamp else '',
         }
+
+
+class PushDigestSlot(models.Model):
+    send_time = models.TimeField(unique=True, help_text='Bangladesh time. The AI picks the stories 30 minutes earlier, so editors can edit or cancel them.')
+    pushes = models.PositiveSmallIntegerField(default=2, validators=[MinValueValidator(1), MaxValueValidator(5)],
+                                              help_text='How many different stories to push in this slot.')
+    gap_minutes = models.PositiveSmallIntegerField(default=5, validators=[MinValueValidator(1), MaxValueValidator(60)],
+                                                   help_text='Minutes between the pushes of this slot.')
+    enabled = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'push_digest_slots'
+        ordering = ['send_time']
+        verbose_name = 'AI digest slot'
+
+    def __str__(self):
+        return f'{self.send_time:%H:%M}'
 
 
 class PushDevice(models.Model):

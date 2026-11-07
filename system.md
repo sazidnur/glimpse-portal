@@ -722,11 +722,13 @@ A news-based push takes its title, body (≤180 chars) and HTTPS image from the 
 
 On the News list, the **Push** row action opens the compose form with that story selected.
 
-### AI digest (7:00 and 19:00 Bangladesh time)
+### AI digest (scheduled in the admin)
 
-Celery beat runs `push_schedule_digest` at 06:30 and 18:30 Bangladesh time (`00:30` / `12:30` UTC; Bangladesh has no DST). `portal/push/digest.py` offers the AI (`gpt-6-luna`, flex first, standard priority if flex fails) up to 60 main-feed stories from the last 12 hours that were never pushed. It picks 2 different stories most readers would open (direct impact first, then big developing stories, then honest hooks; no graphic crime, party statements or gossip) and writes a Bengali push title (≤60 chars) and body (≤160 chars) from the story's own facts. The ids are bound to the candidate list, so it cannot invent a story.
+**Notifications → AI Digest Schedule** lists the send times (Bangladesh time), how many stories each one pushes (1–5) and the minutes between them. Editors can add, edit, disable or delete slots there; changes apply to the next run. The defaults are 7:00 and 19:00, 2 pushes 5 minutes apart.
 
-The two pushes are created like any news push (image from the story, both platforms) with origin `digest`, scheduled for 7:00/19:00 and 7:05/19:05. They sit in **Notifications → Push Notifications** as *scheduled* for 30 minutes, so an editor can edit or cancel them. Idempotency keys `digest-<yyyymmddhh>-<n>` keep a re-run from scheduling or paying twice.
+Celery beat runs `push_schedule_digest` every 5 minutes. It reads the enabled slots (one small query) and does nothing unless a slot sends within the next 30 minutes. For a due slot, `portal/push/digest.py` offers the AI (`gpt-6-luna`, flex first, standard priority if flex fails) up to 60 main-feed stories from the last 12 hours that were never pushed. It picks that many different stories most readers would open (direct impact first, then big developing stories, then honest hooks; no graphic crime, party statements or gossip) and writes a Bengali push title (≤60 chars) and body (≤160 chars) from the story's own facts. Slots before noon get the morning brief, later ones the evening brief. The ids are bound to the candidate list, so it cannot invent a story.
+
+The pushes are created like any news push (image from the story, both platforms) with origin `digest`, at the slot time plus the gap for each next one. They sit in **Notifications → Push Notifications** as *scheduled* for about 30 minutes, so an editor can edit or cancel them. Idempotency keys `digest-<yyyymmddhhmm>-<n>` keep a re-run from scheduling or paying twice. Moving a slot's time inside its last 30 minutes schedules a new set; cancel the old one by hand.
 
 ### Device registration (app → backend)
 

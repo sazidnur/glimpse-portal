@@ -27,6 +27,7 @@ from .models import (
     LiveFeedPublishedItem,
     News,
     PushDevice,
+    PushDigestSlot,
     PushNotification,
     SearchReindexJob,
     Sourcealias,
@@ -43,7 +44,7 @@ from .youtube import validate_youtube_shorts_url
 import json
 import urllib.request
 import urllib.error
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 
 
@@ -531,6 +532,18 @@ class PushNotificationAdmin(ModelAdmin):
             status = notification.get_status_display().lower()
             self.message_user(request, f'A {status} notification cannot be cancelled.', level='warning')
         return redirect(reverse('admin:data_pushnotification_change', args=[object_id]))
+
+
+@admin.register(PushDigestSlot)
+class PushDigestSlotAdmin(ModelAdmin):
+    list_display = ['send_time', 'pushes', 'gap_minutes', 'enabled', 'display_sends']
+    list_display_links = ['send_time']
+    list_editable = ['pushes', 'gap_minutes', 'enabled']
+
+    @display(description='Sends at (Bangladesh)')
+    def display_sends(self, obj):
+        start = datetime.combine(datetime.min, obj.send_time)
+        return ', '.join(f'{start + timedelta(minutes=obj.gap_minutes * i):%H:%M}' for i in range(obj.pushes))
 
 
 @admin.register(PushDevice)

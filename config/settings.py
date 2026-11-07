@@ -153,6 +153,11 @@ UNFOLD = {
                         "link": reverse_lazy("admin:data_pushnotification_changelist"),
                     },
                     {
+                        "title": _("AI Digest Schedule"),
+                        "icon": "schedule_send",
+                        "link": reverse_lazy("admin:data_pushdigestslot_changelist"),
+                    },
+                    {
                         "title": _("Devices"),
                         "icon": "devices",
                         "link": reverse_lazy("admin:data_pushdevice_changelist"),
