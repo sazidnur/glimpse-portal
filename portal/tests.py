@@ -46,3 +46,13 @@ class AlJazeeraLiveDiscoveryTests(TestCase):
 
         self.assertEqual(target.slug, 'today')
         self.assertEqual(target.post_id, 456)
+
+
+class LiveItemTimestampTests(TestCase):
+    def test_zoneless_source_date_becomes_utc_iso(self):
+        from portal.live_feed.service import iso_utc
+
+        self.assertEqual(iso_utc('2026-11-08T03:57:12'), '2026-11-08T03:57:12+00:00')
+        self.assertEqual(iso_utc('2026-11-08T09:57:12+06:00'), '2026-11-08T09:57:12+06:00')
+        self.assertTrue(iso_utc('').endswith('+00:00'))
+        self.assertTrue(iso_utc('not a date').endswith('+00:00'))

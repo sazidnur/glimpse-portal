@@ -54,6 +54,23 @@ LIVE_USERS_TIMEOUT_SECONDS = 5.0
 INACTIVITY_TIMEOUT_SECONDS = 12 * 60 * 60
 
 
+def iso_utc(raw) -> str:
+    """ISO 8601 with an offset, which the apps need to show an item's age.
+
+    Sources send their own formats, often without a zone (Al Jazeera's `date`); those are UTC,
+    as the database already assumed when storing them.
+    """
+    try:
+        ts = parse_datetime(str(raw)) if raw else None
+    except (ValueError, OverflowError):
+        ts = None
+    if ts is None:
+        ts = datetime.now(timezone.utc)
+    elif ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.isoformat()
+
+
 class AckTimeout(Exception):
     pass
 
@@ -586,7 +603,7 @@ class LiveFeedService:
         category_id = int(payload.get('category_id') or 0)
         title = str(payload.get('title') or '').strip()
         impact = max(0, min(2, int(payload.get('impact') or 0)))
-        timestamp = str(payload.get('timestamp') or '') or datetime.now(timezone.utc).isoformat()
+        timestamp = iso_utc(payload.get('timestamp'))
         dedupe_key = str(payload.get('dedupe_key') or '')
         if not category_id or not title:
             return {'success': False, 'error': 'category_id and title are required'}
