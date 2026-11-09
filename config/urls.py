@@ -1,11 +1,11 @@
 from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
-from django.conf.urls.static import static
 from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 from django.views.generic import RedirectView
 
 from portal.live_feed import views
+from portal.media import serve_media
 
 portal_prefix = settings.PORTAL_URL_PREFIX
 
@@ -30,8 +30,7 @@ if settings.DEBUG:
     except ImportError:
         pass
 
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+urlpatterns.append(path(f'{portal_prefix}/media/<path:path>', serve_media, name='media'))
 
 urlpatterns.append(path(f'{portal_prefix}/live-feed/', include('portal.live_feed.urls')))
 urlpatterns.append(path(f'{portal_prefix}/published-items/', views.published_items_view, name='published_items_standalone'))

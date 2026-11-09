@@ -1,18 +1,20 @@
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
 
 from portal.models import (
-    News, Videos, Categories, Topics, Divisions, Videopublishers, Sourcealias,
+    News, NewsArticle, Videos, Categories, Topics, Divisions, Videopublishers, Sourcealias,
 )
 
 
 class NewsDetailSerializer(serializers.ModelSerializer):
+    original_news = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = News
         fields = [
             'id', 'title', 'summary', 'source', 'imageurl',
-            'timestamp', 'score', 'topic', 'categoryid', 'divisionid',
+            'timestamp', 'score', 'topic', 'categoryid', 'divisionid', 'original_news',
         ]
         extra_kwargs = {
             'imageurl': {'required': False},
@@ -24,9 +26,14 @@ class NewsDetailSerializer(serializers.ModelSerializer):
         }
 
     def create(self, validated_data):
+        article = validated_data.pop('original_news', '').strip()
         if 'timestamp' not in validated_data or validated_data['timestamp'] is None:
             validated_data['timestamp'] = timezone.now()
-        return News.objects.create(**validated_data)
+        with transaction.atomic():
+            news = News.objects.create(**validated_data)
+            if article:
+                NewsArticle.objects.create(news=news, text=article)
+        return news
 
 
 class VideoDetailSerializer(serializers.ModelSerializer):

@@ -165,6 +165,23 @@ UNFOLD = {
                 ],
             },
             {
+                "title": _("Videos"),
+                "separator": True,
+                "collapsible": False,
+                "items": [
+                    {
+                        "title": _("News Videos"),
+                        "icon": "movie",
+                        "link": reverse_lazy("admin:data_newsvideo_changelist"),
+                    },
+                    {
+                        "title": _("Video Series"),
+                        "icon": "video_settings",
+                        "link": reverse_lazy("admin:data_videoseries_changelist"),
+                    },
+                ],
+            },
+            {
                 "title": _("Taxonomy"),
                 "separator": True,
                 "collapsible": False,
@@ -379,6 +396,15 @@ LIVE_FEED_ADMIN_TOKEN = config('LIVE_FEED_ADMIN_TOKEN', default='')
 # OpenAI API key (required for AI features)
 # Model settings are configured per-pipeline via the Pipeline Manager UI
 OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
+
+# News videos: voice, publishing, and the public address the renderer downloads media from
+ELEVENLABS_API_KEY = config('ELEVENLABS_API_KEY', default='')
+FACEBOOK_PAGE_ID = config('FACEBOOK_PAGE_ID', default='')
+FACEBOOK_PAGE_TOKEN = config('FACEBOOK_PAGE_TOKEN', default='')
+YOUTUBE_CLIENT_ID = config('YOUTUBE_CLIENT_ID', default='')
+YOUTUBE_CLIENT_SECRET = config('YOUTUBE_CLIENT_SECRET', default='')
+YOUTUBE_REFRESH_TOKEN = config('YOUTUBE_REFRESH_TOKEN', default='')
+SITE_URL = config('SITE_URL', default='https://glimpseapp.net')
 
 # Push notifications
 FCM_PROJECT_ID = config('FCM_PROJECT_ID', default='')

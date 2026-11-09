@@ -144,6 +144,7 @@ services:
       - SKIP_STARTUP_TASKS=1
     command: ["sh", "-c", "exec celery -A config worker -l INFO --concurrency=${CELERY_CONCURRENCY:-2}"]
     volumes:
+      - media_data:/app/media
       - ./secrets:/app/secrets:ro
     networks:
       - default
@@ -182,6 +183,22 @@ services:
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       - SKIP_STARTUP_TASKS=1
     command: ["celery", "-A", "config", "beat", "-l", "INFO"]
+    networks:
+      - default
+
+  # Renders news videos with the Remotion template in renderer/template. Off until started with:
+  #   docker compose --profile renderer up -d --build renderer
+  renderer:
+    build: ./renderer
+    container_name: glimpse-portal-renderer
+    profiles: ["renderer"]
+    restart: unless-stopped
+    cpus: 1.0
+    mem_limit: 2g
+    shm_size: 1g
+    environment:
+      - PORTAL_URL=${RENDERER_PORTAL_URL:-https://glimpseapp.net/portal}
+      - RENDERER_TOKEN=${RENDERER_TOKEN}
     networks:
       - default
 

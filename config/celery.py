@@ -38,4 +38,17 @@ app.conf.beat_schedule = {
         'task': 'portal.tasks.push_cleanup_devices',
         'schedule': crontab(hour=3, minute=30),
     },
+    # Starts the videos of enabled series due within their lead time, and requeues lost steps; a no-op otherwise.
+    'video-schedule': {
+        'task': 'portal.tasks.video_schedule',
+        'schedule': crontab(minute='*/5'),
+    },
+    'video-publish-due': {
+        'task': 'portal.tasks.video_publish_due',
+        'schedule': 60.0,
+    },
+    'video-delete-old-files': {
+        'task': 'portal.tasks.video_delete_old_files',
+        'schedule': crontab(hour=3, minute=45),
+    },
 }

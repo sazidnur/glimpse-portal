@@ -6,13 +6,14 @@ from django import forms
 from django.urls import path, reverse
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect
-from django.utils.html import format_html
+from django.utils import timezone as django_timezone
+from django.utils.html import format_html, format_html_join
 from django.template.response import TemplateResponse
 from django.conf import settings
 from django.db.models import Q
 from unfold.admin import ModelAdmin
 from unfold.decorators import action, display
-from unfold.widgets import UnfoldAdminTextareaWidget
+from unfold.widgets import UnfoldAdminCheckboxSelectMultipleWidget, UnfoldAdminTextareaWidget
 from unfold.forms import AdminPasswordChangeForm, UserChangeForm, UserCreationForm
 from rest_framework.authtoken.admin import TokenAdmin as DRFTokenAdmin
 from rest_framework.authtoken.models import TokenProxy
@@ -26,6 +27,7 @@ from .models import (
     OpenAIJobLog,
     LiveFeedPublishedItem,
     News,
+    NewsVideo,
     PushDevice,
     PushDigestSlot,
     PushNotification,
@@ -33,12 +35,17 @@ from .models import (
     Sourcealias,
     Timelines,
     Topics,
+    VideoSeries,
     Videopublishers,
     Videos,
 )
 from .openai.jobs import cancel_openai_job
 from .push import service as push_service
+from .push.digest import BANGLADESH
 from .search import reindex
+from .tasks import video_continue
+from .video import pipeline as video_pipeline, social as video_social
+from .video.pipeline import source_name as video_source_name
 from .youtube import validate_youtube_shorts_url
 
 import json
@@ -841,6 +848,230 @@ REINDEX_STATUS_COLORS = {
     SearchReindexJob.Status.SUCCEEDED: 'success',
     SearchReindexJob.Status.FAILED: 'danger',
 }
+
+
+class VideoSeriesForm(forms.ModelForm):
+    weekdays = forms.TypedMultipleChoiceField(
+        choices=VideoSeries.WEEKDAYS, coerce=int, required=False,
+        widget=UnfoldAdminCheckboxSelectMultipleWidget, help_text='None ticked: every day.')
+
+    class Meta:
+        model = VideoSeries
+        fields = '__all__'
+        widgets = {
+            'pick_prompt': UnfoldAdminTextareaWidget(attrs={'rows': 14}),
+            'script_prompt': UnfoldAdminTextareaWidget(attrs={'rows': 14}),
+            'review_prompt': UnfoldAdminTextareaWidget(attrs={'rows': 10}),
+            'template_props': PrettyJSONWidget(attrs={'rows': 6}),
+        }
+
+
+@admin.register(VideoSeries)
+class VideoSeriesAdmin(ModelAdmin):
+    form = VideoSeriesForm
+    list_display = ['name', 'enabled', 'publish_times', 'display_days', 'story_count', 'auto_approve',
+                    'ai_review', 'display_publishing', 'display_setup']
+    readonly_fields = ['display_setup']
+    actions_detail = ['make_now']
+    fieldsets = [
+        (None, {'fields': ('name', 'enabled', 'template', 'display_setup')}),
+        ('Schedule', {'fields': ('publish_times', 'weekdays', 'lead_minutes')}),
+        ('Stories', {'fields': ('category', 'candidate_hours', 'story_count')}),
+        ('Script', {'fields': ('model', 'target_words', 'pick_prompt', 'script_prompt')}),
+        ('AI editor', {'fields': ('ai_review', 'review_prompt')}),
+        ('Approval and publishing', {'fields': ('auto_approve', 'publish_facebook', 'publish_youtube')}),
+        ('Voice', {'fields': ('voice_id', 'voice_model', 'voice_speed')}),
+        ('Branding', {'fields': ('music', 'music_volume', 'logo', 'template_props')}),
+    ]
+
+    def has_make_video_permission(self, request, obj=None):
+        return request.user.has_perm('data.add_newsvideo')
+
+    @display(description='Days')
+    def display_days(self, obj):
+        return ', '.join(label for day, label in VideoSeries.WEEKDAYS if day in obj.weekdays) or 'Every day'
+
+    @display(description='Publishes to')
+    def display_publishing(self, obj):
+        platforms = ((obj.publish_facebook, 'Facebook'), (obj.publish_youtube, 'YouTube'))
+        return ', '.join(name for on, name in platforms if on) or '—'
+
+    @display(description='Setup')
+    def display_setup(self, obj):
+        if not obj.pk:
+            return '—'
+        missing = video_social.missing_settings(obj) + ([] if obj.voice_id else ['a voice ID'])
+        return f'Missing: {", ".join(missing)}' if missing else 'Ready'
+
+    @action(description='Make a video now', icon='movie', permissions=['make_video'])
+    def make_now(self, request, object_id):
+        series = get_object_or_404(VideoSeries, pk=object_id)
+        video = NewsVideo.objects.create(series=series, publish_at=django_timezone.now().replace(microsecond=0),
+                                         status=NewsVideo.Status.DRAFTING)
+        video_continue(video)
+        self.message_user(request, 'Writing the script now.')
+        return redirect(reverse('admin:data_newsvideo_change', args=[video.pk]))
+
+
+VIDEO_STATUS_COLORS = {
+    NewsVideo.Status.DRAFTING: 'info',
+    NewsVideo.Status.REVIEW: 'warning',
+    NewsVideo.Status.VOICING: 'info',
+    NewsVideo.Status.QUEUED: 'info',
+    NewsVideo.Status.RENDERING: 'info',
+    NewsVideo.Status.RENDERED: 'primary',
+    NewsVideo.Status.PUBLISHING: 'info',
+    NewsVideo.Status.PUBLISHED: 'success',
+    NewsVideo.Status.FAILED: 'danger',
+}
+SCRIPT_EDITABLE = (NewsVideo.Status.REVIEW, NewsVideo.Status.FAILED, NewsVideo.Status.SKIPPED, NewsVideo.Status.CANCELLED)
+
+
+class NewsVideoForm(forms.ModelForm):
+    class Meta:
+        model = NewsVideo
+        fields = ['script']
+        widgets = {'script': PrettyJSONWidget(attrs={'rows': 24})}
+
+    def clean_script(self):
+        script = self.cleaned_data['script']
+        news_ids = set(self.instance.news.values_list('id', flat=True))
+        scenes = script.get('scenes') if isinstance(script, dict) else None
+        if not (isinstance(script, dict) and isinstance(script.get('title'), str)
+                and isinstance(script.get('description'), str) and isinstance(scenes, list) and scenes):
+            raise forms.ValidationError('The script needs "title", "description" and a non-empty "scenes" list.')
+        for number, scene in enumerate(scenes, 1):
+            if not (isinstance(scene, dict) and str(scene.get('narration', '')).strip()
+                    and isinstance(scene.get('caption'), str) and isinstance(scene.get('news_ids'), list)):
+                raise forms.ValidationError(f'Scene {number} needs "narration", "caption" and "news_ids".')
+            if not set(scene['news_ids']) <= news_ids:
+                raise forms.ValidationError(f'Scene {number} uses news not in this video. Use: {sorted(news_ids)}.')
+        return script
+
+
+@admin.register(NewsVideo)
+class NewsVideoAdmin(ModelAdmin):
+    form = NewsVideoForm
+    list_display = ['display_title', 'series', 'display_publish_at', 'display_status', 'display_issues']
+    list_filter = ['status', 'series']
+    list_filter_submit = True
+    ordering = ['-publish_at']
+    actions_detail = ['approve', 'retry', 'publish_now', 'cancel']
+    fieldsets = [
+        ('Video', {'fields': ('display_preview', 'series', 'display_publish_at', 'display_status', 'error')}),
+        ('Script', {'fields': ('display_issues_detail', 'script', 'display_stories')}),
+        ('Published', {'fields': ('display_links', 'published_at', 'approved_by')}),
+    ]
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = ['display_preview', 'series', 'display_publish_at', 'display_status', 'error',
+                  'display_issues_detail', 'display_stories', 'display_links', 'published_at', 'approved_by']
+        return fields if obj and obj.status in SCRIPT_EDITABLE else fields + ['script']
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_video_permission(self, request, obj=None):
+        return request.user.has_perm('data.change_newsvideo')
+
+    def save_model(self, request, obj, form, change):
+        if 'script' in form.changed_data:
+            for field in (obj.audio, obj.video, obj.thumbnail):
+                if field:
+                    field.delete(save=False)
+            obj.timings = {}
+        super().save_model(request, obj, form, change)
+
+    @display(description='Title')
+    def display_title(self, obj):
+        return obj.script.get('title') or str(obj.series)
+
+    @display(description='Publish (Bangladesh)', ordering='publish_at')
+    def display_publish_at(self, obj):
+        return f'{obj.publish_at.astimezone(BANGLADESH):%Y-%m-%d %H:%M}'
+
+    @display(description='Status', label=VIDEO_STATUS_COLORS)
+    def display_status(self, obj):
+        return obj.status, obj.get_status_display()
+
+    @display(description='AI review')
+    def display_issues(self, obj):
+        return f'{len(obj.issues)} issue(s)' if obj.issues else '—'
+
+    @display(description='AI review')
+    def display_issues_detail(self, obj):
+        if not obj.issues:
+            return 'No issues found.' if obj.script else '—'
+        return format_html('<ul class="list-disc pl-5">{}</ul>', format_html_join(
+            '', '<li>Scene {}: {}</li>', ((issue['scene'], issue['problem']) for issue in obj.issues)))
+
+    @display(description='Preview')
+    def display_preview(self, obj):
+        if not obj.video:
+            return '—'
+        return format_html(
+            '<video src="{}" poster="{}" controls preload="metadata" '
+            'style="max-height:640px;aspect-ratio:9/16;border-radius:8px"></video>'
+            '<a href="{}" download class="block mt-2 underline">Download MP4</a>',
+            obj.video.url, obj.thumbnail.url if obj.thumbnail else '', obj.video.url)
+
+    @display(description='Stories')
+    def display_stories(self, obj):
+        aliases = list(Sourcealias.objects.all())
+        return format_html('<ul class="list-disc pl-5">{}</ul>', format_html_join(
+            '', '<li>#{} <a href="{}" target="_blank" class="underline">{}</a> · {}</li>',
+            ((news.id, news.source, news.title, video_source_name(news.source, aliases)) for news in obj.news.all()),
+        )) if obj.pk and obj.news.exists() else '—'
+
+    @display(description='Links')
+    def display_links(self, obj):
+        links = []
+        if obj.facebook_id:
+            links.append((f'https://www.facebook.com/reel/{obj.facebook_id}', 'Facebook'))
+        if obj.youtube_id:
+            links.append((f'https://www.youtube.com/shorts/{obj.youtube_id}', 'YouTube'))
+        return format_html_join(' · ', '<a href="{}" target="_blank" class="underline">{}</a>', links) if links else '—'
+
+    @action(description='Approve', icon='check', permissions=['video'])
+    def approve(self, request, object_id):
+        video = get_object_or_404(NewsVideo, pk=object_id)
+        if video_pipeline.approve(video, request.user):
+            video_continue(video)
+            self.message_user(request, 'Approved. Recording the voice, then it goes to the renderer.')
+        else:
+            self.message_user(request, 'Only videos that need review can be approved.', level='warning')
+        return redirect(reverse('admin:data_newsvideo_change', args=[object_id]))
+
+    @action(description='Retry', icon='replay', permissions=['video'])
+    def retry(self, request, object_id):
+        video = get_object_or_404(NewsVideo, pk=object_id)
+        if video_pipeline.retry(video):
+            video_continue(video)
+            self.message_user(request, f'Continuing: {video.get_status_display().lower()}.')
+        else:
+            self.message_user(request, 'Only failed, skipped or cancelled videos can be retried.', level='warning')
+        return redirect(reverse('admin:data_newsvideo_change', args=[object_id]))
+
+    @action(description='Publish now', icon='publish', permissions=['video'])
+    def publish_now(self, request, object_id):
+        video = get_object_or_404(NewsVideo.objects.select_related('series'), pk=object_id)
+        if not (video.series.publish_facebook or video.series.publish_youtube):
+            self.message_user(request, 'Turn on Facebook or YouTube publishing on the series first.', level='warning')
+        elif video_pipeline.publish(video):
+            video.refresh_from_db()
+            level = 'error' if video.status == NewsVideo.Status.FAILED else 'success'
+            self.message_user(request, video.error or 'Published.', level=level)
+        else:
+            self.message_user(request, 'Only ready videos can be published.', level='warning')
+        return redirect(reverse('admin:data_newsvideo_change', args=[object_id]))
+
+    @action(description='Cancel', icon='cancel', permissions=['video'])
+    def cancel(self, request, object_id):
+        if video_pipeline.cancel(get_object_or_404(NewsVideo, pk=object_id)):
+            self.message_user(request, 'Video cancelled.')
+        else:
+            self.message_user(request, 'Published videos cannot be cancelled.', level='warning')
+        return redirect(reverse('admin:data_newsvideo_change', args=[object_id]))
 
 
 @admin.register(SearchReindexJob)

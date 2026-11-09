@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import timedelta
 from typing import Any
@@ -9,7 +10,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from .models import OpenAIJob, OpenAIJobLog
+from .models import NewsVideo, OpenAIJob, OpenAIJobLog
 from .openai.client import (
     create_batch,
     extract_structured_output_from_batch_row,
@@ -27,6 +28,8 @@ from .openai.jobs import (
     resolve_job_batch_timeout_minutes,
     resolve_job_realtime_model,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _terminal(status: str) -> bool:
@@ -452,3 +455,61 @@ def search_reindex():
     except reindex.ReindexAlreadyRunning:
         return 'skipped: another reindex is active'
     reindex.run(job.id)
+
+
+@shared_task(name='portal.tasks.video_schedule')
+def video_schedule():
+    from .video import pipeline
+
+    for video in pipeline.schedule() + pipeline.stuck():
+        video_continue(video)
+
+
+@shared_task(name='portal.tasks.video_draft')
+def video_draft(video_id: int):
+    from .video import pipeline
+
+    _video_step(video_id, NewsVideo.Status.DRAFTING, pipeline.draft)
+
+
+@shared_task(name='portal.tasks.video_voice')
+def video_voice(video_id: int):
+    from .video import voice
+
+    _video_step(video_id, NewsVideo.Status.VOICING, voice.record)
+
+
+@shared_task(name='portal.tasks.video_publish_due')
+def video_publish_due():
+    from .video import pipeline
+
+    return pipeline.publish_due()
+
+
+@shared_task(name='portal.tasks.video_delete_old_files')
+def video_delete_old_files():
+    from .video import pipeline
+
+    return pipeline.delete_old_files()
+
+
+def video_continue(video: NewsVideo) -> None:
+    """Queues the step the video waits for. The renderer and video_publish_due pick up the later steps."""
+    task = {NewsVideo.Status.DRAFTING: video_draft, NewsVideo.Status.VOICING: video_voice}.get(video.status)
+    if task:
+        transaction.on_commit(lambda: task.delay(video.id))
+
+
+def _video_step(video_id: int, status: str, step) -> None:
+    from .video import pipeline
+
+    video = NewsVideo.objects.select_related('series').filter(pk=video_id, status=status).first()
+    if not video:
+        return
+    try:
+        step(video)
+    except Exception as exc:
+        logger.exception('News video %s failed while %s', video_id, status)
+        pipeline.fail(video_id, str(exc) or type(exc).__name__)
+        return
+    video_continue(video)

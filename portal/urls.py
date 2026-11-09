@@ -16,6 +16,7 @@ from .push.api import (
     PushNotificationListCreateView,
     PushNotificationSendNowView,
 )
+from .video.api import RenderClaimView, RenderResultView
 
 urlpatterns = [
     path('health/', health_check, name='api_health'),
@@ -29,4 +30,6 @@ urlpatterns = [
     path('push/<int:pk>/', PushNotificationDetailView.as_view(), name='api_push_detail'),
     path('push/<int:pk>/cancel/', PushNotificationCancelView.as_view(), name='api_push_cancel'),
     path('push/<int:pk>/send-now/', PushNotificationSendNowView.as_view(), name='api_push_send_now'),
+    path('video-renders/claim/', RenderClaimView.as_view(), name='api_video_render_claim'),
+    path('video-renders/<int:pk>/', RenderResultView.as_view(), name='api_video_render_result'),
 ]

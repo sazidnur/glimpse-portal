@@ -1,3 +1,5 @@
+from datetime import time
+
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
@@ -104,6 +106,14 @@ class News(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class NewsArticle(models.Model):
+    news = models.OneToOneField(News, models.CASCADE, primary_key=True, related_name='article')
+    text = models.TextField()
+
+    class Meta:
+        db_table = 'news_articles'
 
 
 class Sourcealias(models.Model):
@@ -785,6 +795,107 @@ class SearchReindexJob(models.Model):
     @property
     def progress_percent(self) -> int:
         return round(self.indexed * 100 / self.total) if self.total else 0
+
+
+class VideoSeries(models.Model):
+    WEEKDAYS = [(0, 'Mon'), (1, 'Tue'), (2, 'Wed'), (3, 'Thu'), (4, 'Fri'), (5, 'Sat'), (6, 'Sun')]
+
+    name = models.CharField(max_length=64, unique=True)
+    enabled = models.BooleanField(default=False)
+    template = models.CharField(max_length=64, help_text='Remotion composition ID that renders this series.')
+    category = models.ForeignKey(Categories, models.SET_NULL, null=True, blank=True,
+                                 help_text='Pick stories from this category only. Empty: the main feed.')
+    publish_times = models.CharField(max_length=200, help_text='Bangladesh time, comma separated, e.g. 08:00, 20:00.')
+    weekdays = models.JSONField(default=list, blank=True, help_text='Empty: every day.')
+    lead_minutes = models.PositiveSmallIntegerField(
+        default=90, validators=[MinValueValidator(30), MaxValueValidator(720)],
+        help_text='Start writing this many minutes before the publish time, so there is time to review and render.')
+    candidate_hours = models.PositiveSmallIntegerField(
+        default=24, validators=[MinValueValidator(1), MaxValueValidator(168)],
+        help_text='How far back to look for stories.')
+    story_count = models.PositiveSmallIntegerField(
+        default=1, validators=[MinValueValidator(1), MaxValueValidator(10)], help_text='Most stories in one video.')
+    target_words = models.PositiveSmallIntegerField(
+        default=80, validators=[MinValueValidator(20), MaxValueValidator(250)],
+        help_text='Length of the narration. Bengali narration runs about 2 words a second.')
+    model = models.CharField(max_length=64, default='gpt-6-luna', help_text='OpenAI model for picking, writing and review.')
+    pick_prompt = models.TextField(help_text='How the AI picks stories and finds other sources covering them.')
+    script_prompt = models.TextField(help_text='How the AI writes the narration.')
+    ai_review = models.BooleanField(default=True, help_text='A second AI checks the script against the sources.')
+    review_prompt = models.TextField(blank=True)
+    auto_approve = models.BooleanField(
+        default=False, help_text='Voice and render without an editor, unless the AI review finds issues.')
+    publish_facebook = models.BooleanField(default=False, help_text='Publish to the Facebook Page as a Reel.')
+    publish_youtube = models.BooleanField(default=False, help_text='Publish to the YouTube channel as a Short.')
+    voice_id = models.CharField(max_length=64, blank=True, help_text='ElevenLabs voice ID.')
+    voice_model = models.CharField(max_length=64, default='eleven_v3',
+                                   help_text='ElevenLabs model. Bengali needs eleven_v3 or eleven_v4.')
+    voice_speed = models.FloatField(default=1.0, validators=[MinValueValidator(0.7), MaxValueValidator(1.2)])
+    music = models.FileField(upload_to='video/music/', blank=True)
+    music_volume = models.FloatField(default=0.15, validators=[MinValueValidator(0), MaxValueValidator(1)])
+    logo = models.FileField(upload_to='video/logo/', blank=True)
+    template_props = models.JSONField(default=dict, blank=True,
+                                      help_text='Extra inputs for the template, such as colours or intro text.')
+
+    class Meta:
+        db_table = 'video_series'
+        verbose_name_plural = 'Video series'
+
+    def __str__(self):
+        return self.name
+
+    def clean(self):
+        try:
+            self.times()
+        except ValueError:
+            raise ValidationError({'publish_times': 'Use 24-hour times separated by commas, e.g. 08:00, 20:00.'})
+        if self.enabled and not self.times():
+            raise ValidationError({'publish_times': 'Add at least one publish time.'})
+
+    def times(self) -> list[time]:
+        return sorted({time.fromisoformat(part.strip()) for part in self.publish_times.split(',') if part.strip()})
+
+
+class NewsVideo(models.Model):
+    class Status(models.TextChoices):
+        DRAFTING = 'drafting', 'Writing script'
+        REVIEW = 'review', 'Needs review'
+        VOICING = 'voicing', 'Recording voice'
+        QUEUED = 'queued', 'Waiting for renderer'
+        RENDERING = 'rendering', 'Rendering'
+        RENDERED = 'rendered', 'Ready'
+        PUBLISHING = 'publishing', 'Publishing'
+        PUBLISHED = 'published', 'Published'
+        SKIPPED = 'skipped', 'Skipped'
+        FAILED = 'failed', 'Failed'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    series = models.ForeignKey(VideoSeries, models.PROTECT, related_name='videos')
+    publish_at = models.DateTimeField()
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFTING, db_index=True)
+    news = models.ManyToManyField(News, blank=True, related_name='videos')
+    script = models.JSONField(default=dict, blank=True)
+    issues = models.JSONField(default=list, blank=True)
+    error = models.TextField(blank=True, default='')
+    audio = models.FileField(upload_to='video/audio/', blank=True)
+    timings = models.JSONField(default=dict, blank=True)
+    video = models.FileField(upload_to='video/render/', blank=True)
+    thumbnail = models.FileField(upload_to='video/render/', blank=True)
+    render_started_at = models.DateTimeField(null=True, blank=True)
+    facebook_id = models.CharField(max_length=64, blank=True, default='')
+    youtube_id = models.CharField(max_length=64, blank=True, default='')
+    approved_by = models.ForeignKey('auth.User', models.SET_NULL, null=True, blank=True, related_name='+')
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'news_videos'
+        ordering = ['-publish_at']
+        constraints = [models.UniqueConstraint(fields=['series', 'publish_at'], name='news_video_slot_unique')]
+
+    def __str__(self):
+        return f'{self.series} {timezone.localtime(self.publish_at):%Y-%m-%d %H:%M}'
 
 
 def _truncate(text: str, limit: int) -> str:
