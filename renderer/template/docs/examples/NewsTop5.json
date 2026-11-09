@@ -1,0 +1,39 @@
+{
+  "composition": "NewsTop5",
+  "series": {
+    "id": "top5",
+    "name": "টপ ডেইলি ৫",
+    "intro": "আজকের সেরা ৫ খবর",
+    "date": "৯ নভেম্বর ২০২৬"
+  },
+  "scenes": [
+    {
+      "title": "ঢাকায় মেট্রোরেলের নতুন রুট চালু",
+      "label": "বাংলাদেশ",
+      "image": "news/demo/metro.jpg"
+    },
+    {
+      "title": "ডলারের দাম আবার বাড়ল",
+      "label": "অর্থনীতি",
+      "image": "news/demo/dollar.jpg"
+    },
+    {
+      "title": "বিশ্বকাপ বাছাইয়ে বাংলাদেশের জয়",
+      "label": "খেলা",
+      "image": "news/demo/cricket.jpg"
+    },
+    {
+      "title": "চট্টগ্রামে ভারী বৃষ্টির সতর্কতা",
+      "label": "আবহাওয়া",
+      "image": "news/demo/rain.jpg"
+    },
+    {
+      "title": "নতুন শিক্ষাক্রম নিয়ে সিদ্ধান্ত",
+      "label": "শিক্ষা",
+      "image": "news/demo/school.jpg"
+    }
+  ],
+  "outro": {
+    "source": "সূত্র: প্রথম আলো, বাসস, ডেইলি স্টার"
+  }
+}

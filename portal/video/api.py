@@ -84,10 +84,17 @@ def render_props(video: NewsVideo) -> dict:
     scenes = []
     for scene, timing in zip(video.script.get('scenes', []), timings.get('scenes', [])):
         ids = [i for i in scene['news_ids'] if i in news]
+        images = []
+        for i in ids:
+            url = news[i].imageurl or ''
+            if url.startswith('https://') and url not in (image['url'] for image in images):
+                images.append({'url': url, 'source': source_name(news[i].source, aliases)})
         scenes.append({
             'narration': scene['narration'],
             'caption': scene['caption'],
-            'imageUrl': next((news[i].imageurl for i in ids if (news[i].imageurl or '').startswith('https://')), None),
+            'imageUrl': images[0]['url'] if images else None,
+            'imageSource': images[0]['source'] if images else None,
+            'images': images,
             'sources': list(dict.fromkeys(source_name(news[i].source, aliases) for i in ids)),
             'start': timing['start'],
             'end': timing['end'],
@@ -96,6 +103,8 @@ def render_props(video: NewsVideo) -> dict:
         **series.template_props,
         'series': series.name,
         'title': video.script.get('title', ''),
+        'publishAt': video.publish_at.isoformat(),
+        'verdict': video.script.get('verdict', 'none'),
         'durationInSeconds': timings.get('duration', 0),
         'audioUrl': _url(video.audio),
         'musicUrl': _url(series.music),

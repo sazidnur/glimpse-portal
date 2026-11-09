@@ -1,0 +1,296 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "series": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "top5",
+            "rumor",
+            "division",
+            "generic"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "intro": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "introSeconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "brand": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "logo": {
+          "type": "string"
+        },
+        "appIcon": {
+          "type": "string"
+        },
+        "website": {
+          "type": "string"
+        },
+        "showWatermark": {
+          "type": "boolean"
+        },
+        "colors": {
+          "type": "object",
+          "properties": {
+            "hero": {
+              "type": "string"
+            },
+            "heroDeep": {
+              "type": "string"
+            },
+            "heroDark": {
+              "type": "string"
+            },
+            "ink": {
+              "type": "string"
+            },
+            "paper": {
+              "type": "string"
+            },
+            "highlight": {
+              "type": "string"
+            },
+            "white": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "badges": {
+          "type": "object",
+          "properties": {
+            "playStore": {
+              "type": "string"
+            },
+            "appStore": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "scenes": {
+      "minItems": 1,
+      "maxItems": 12,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "story",
+              "list",
+              "verdict"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string"
+          },
+          "imageCredit": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "true",
+              "false",
+              "misleading",
+              "unverified"
+            ]
+          },
+          "verdictText": {
+            "type": "string"
+          },
+          "durationSeconds": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "voice": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "src": {
+              "type": "string"
+            },
+            "words": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "startMs": {
+                    "type": "number"
+                  },
+                  "endMs": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "text",
+                  "startMs",
+                  "endMs"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "volume": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "durationMs": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "startAtSeconds": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "src"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "music": {
+      "type": "object",
+      "properties": {
+        "src": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "volume": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "loop": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "sfx": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "volume": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "captions": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "position": {
+          "type": "string",
+          "enum": [
+            "low",
+            "mid"
+          ]
+        },
+        "maxWordsPerPage": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        }
+      },
+      "additionalProperties": false
+    },
+    "outro": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "cta": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "showBadges": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "series",
+    "scenes"
+  ],
+  "additionalProperties": false,
+  "title": "NewsShort props",
+  "description": "Payload for the Glimpse NewsShort Remotion compositions (NewsTop5, NewsRumorCheck, NewsDivision, NewsGeneric). Pass as --props / inputProps. Omitted fields take the defaults in src/news/schema.ts."
+}

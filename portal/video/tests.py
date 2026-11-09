@@ -200,11 +200,18 @@ class VoiceTests(MediaTestCase):
         self.assertEqual([w['text'] for w in timings['words']], ['এক', 'দুই', 'তিন'])
         self.assertEqual((timings['words'][1]['start'], timings['words'][1]['end']), (0.3, 0.6))
 
+    def test_audio_tags_steer_the_voice_but_are_not_caption_words(self):
+        text = '[serious] এক [brief pause] দুই'
+        alignment = {'characters': list(text),
+                     'character_start_times_seconds': [i * 0.1 for i in range(len(text))],
+                     'character_end_times_seconds': [i * 0.1 + 0.1 for i in range(len(text))]}
+        self.assertEqual([w['text'] for w in voice.align(alignment, [text])['words']], ['এক', 'দুই'])
+
     @override_settings(ELEVENLABS_API_KEY='key')
     def test_records_the_narration_and_queues_the_render(self):
         news = create_news('fuel')
-        video = NewsVideo.objects.create(series=create_series(), publish_at=timezone.now(), status=Status.VOICING,
-                                         script=script(news.id))
+        video = NewsVideo.objects.create(series=create_series(voice_id='voice-a, voice-b'), publish_at=timezone.now(),
+                                         status=Status.VOICING, script=script(news.id))
         spoken = 'প্রথম দৃশ্য।\nদ্বিতীয় দৃশ্য।'
         reply = {'audio_base64': base64.b64encode(b'mp3').decode(), 'alignment': {
             'characters': list(spoken), 'character_start_times_seconds': [0.1] * len(spoken),
@@ -214,10 +221,14 @@ class VoiceTests(MediaTestCase):
             post.return_value.json.return_value = reply
             voice.record(video)
         self.assertEqual(post.call_args.kwargs['json']['text'], spoken)
+        self.assertEqual(post.call_args.kwargs['json']['language_code'], 'bn')
+        used = post.call_args.args[0].split('/')[-2]
+        self.assertIn(used, ('voice-a', 'voice-b'))
         self.assertEqual(post.call_args.kwargs['headers'], {'xi-api-key': 'key'})
         video.refresh_from_db()
         self.assertEqual(video.status, Status.QUEUED)
         self.assertEqual(video.audio.read(), b'mp3')
+        self.assertEqual(video.timings['voice'], used)
 
     @override_settings(ELEVENLABS_API_KEY='')
     def test_says_what_is_missing_without_a_key(self):
@@ -252,6 +263,10 @@ class RendererApiTests(MediaTestCase):
         self.assertTrue(props['audioUrl'].startswith('https://glimpseapp.net/portal/media/video/audio/'))
         self.assertEqual((props['accent'], props['musicVolume'], props['durationInSeconds']), ('#c33', 0.2, 4.0))
         self.assertEqual(props['scenes'][1]['imageUrl'], self.news.imageurl)
+        self.assertEqual(props['scenes'][1]['imageSource'], 'prothomalo.com')
+        self.assertEqual(props['scenes'][1]['images'], [{'url': self.news.imageurl, 'source': 'prothomalo.com'}])
+        self.assertEqual(props['verdict'], 'none')
+        self.assertTrue(props['publishAt'])
         self.assertEqual(props['scenes'][1]['start'], 1.5)
         self.assertEqual(self.claim().status_code, 204)
 
@@ -407,6 +422,7 @@ class VideoAdminTests(MediaTestCase):
                                               issues=[{'scene': 2, 'problem': 'Unsupported number', 'fixed': False}])
         self.video.news.set([self.news])
 
+    @override_settings(OPENAI_API_KEY='')
     def test_pages_show_the_series_setup_and_the_review(self):
         self.assertContains(self.client.get(reverse('admin:data_videoseries_changelist')), 'Missing:')
         page = self.client.get(reverse('admin:data_newsvideo_change', args=[self.video.pk]))

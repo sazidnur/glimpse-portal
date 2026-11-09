@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import random
 import uuid
 
 import httpx
@@ -21,18 +22,19 @@ def record(video: NewsVideo) -> None:
     if not series.voice_id:
         raise RuntimeError(f'Set an ElevenLabs voice ID on the "{series}" series.')
 
+    voice_id = random.choice([v.strip() for v in series.voice_id.split(',') if v.strip()])
     narrations = [scene['narration'].strip() for scene in video.script['scenes']]
-    body = {'text': '\n'.join(narrations), 'model_id': series.voice_model}
+    body = {'text': '\n'.join(narrations), 'model_id': series.voice_model, 'language_code': 'bn'}
     if series.voice_speed != 1:
         body['voice_settings'] = {'speed': series.voice_speed}
-    response = httpx.post(API_URL.format(voice_id=series.voice_id), json=body,
+    response = httpx.post(API_URL.format(voice_id=voice_id), json=body,
                           headers={'xi-api-key': api_key}, timeout=180)
     if response.status_code >= 400:
         raise RuntimeError(f'ElevenLabs HTTP {response.status_code}: {response.text[:300]}')
     data = response.json()
 
     video.audio.save(f'{uuid.uuid4().hex}.mp3', ContentFile(base64.b64decode(data['audio_base64'])), save=False)
-    video.timings = align(data['alignment'], narrations)
+    video.timings = {**align(data['alignment'], narrations), 'voice': voice_id}
     video.status = NewsVideo.Status.QUEUED
     video.error = ''
     video.save(update_fields=['audio', 'timings', 'status', 'error', 'updated_at'])
@@ -49,9 +51,13 @@ def align(alignment: dict, narrations: list[str]) -> dict:
     spoken = ''.join(chars)
     duration = round(ends[-1], 3) if ends else 0.0
 
-    words, current = [], None
+    words, current, in_tag = [], None, False
     for char, start, end in zip(chars, starts, ends):
-        if char.isspace():
+        # Audio tags such as [serious] steer the voice but are not spoken, so they never become caption words.
+        if char in '[]' or in_tag:
+            in_tag = char != ']' and (in_tag or char == '[')
+            current = None
+        elif char.isspace():
             current = None
         elif current is None:
             current = {'text': char, 'start': round(start, 3), 'end': round(end, 3)}

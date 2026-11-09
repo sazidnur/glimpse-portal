@@ -1,0 +1,24 @@
+{
+  "composition": "NewsGeneric",
+  "series": {
+    "id": "generic",
+    "name": "Glimpse News",
+    "intro": "সংক্ষেপে খবর"
+  },
+  "scenes": [
+    {
+      "title": "বাংলাদেশ–জাপান নতুন বাণিজ্য চুক্তি",
+      "text": "আগামী বছর থেকে কার্যকর হবে",
+      "label": "রাজনীতি",
+      "image": "news/demo/handshake.jpg"
+    },
+    {
+      "title": "কী বদলাবে সাধারণ মানুষের জন্য?",
+      "label": "বিশ্লেষণ",
+      "image": "news/demo/market.jpg"
+    }
+  ],
+  "outro": {
+    "source": "সূত্র: বাসস"
+  }
+}

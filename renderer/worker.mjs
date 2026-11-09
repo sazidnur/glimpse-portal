@@ -1,11 +1,13 @@
 // Claims queued news videos from the portal, renders them with the Remotion template, and uploads the MP4 and thumbnail.
 import {bundle} from '@remotion/bundler';
 import {renderMedia, renderStill, selectComposition} from '@remotion/renderer';
+import {execFile} from 'node:child_process';
 import {openAsBlob} from 'node:fs';
 import {mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {setTimeout as sleep} from 'node:timers/promises';
+import {promisify} from 'node:util';
 
 const portal = process.env.PORTAL_URL.replace(/\/$/, '');
 const headers = {Authorization: `Token ${process.env.RENDERER_TOKEN}`};
@@ -55,11 +57,15 @@ async function render({id, composition: compositionId, props}) {
         }
       },
     });
+    // Voices differ in loudness, so every video is levelled to the -14 LUFS that Facebook and YouTube play at.
+    const levelled = path.join(dir, 'levelled.mp4');
+    await promisify(execFile)('npx', ['remotion', 'ffmpeg', '-v', 'error', '-y', '-i', video,
+      '-af', 'loudnorm=I=-14:TP=-1.5:LRA=11', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', levelled]);
     await renderStill({
       composition, serveUrl, output: thumbnail, inputProps: props, imageFormat: 'jpeg',
       frame: Math.min(composition.fps * 2, composition.durationInFrames - 1),
     });
-    result.append('video', await openAsBlob(video), 'video.mp4');
+    result.append('video', await openAsBlob(levelled), 'video.mp4');
     result.append('thumbnail', await openAsBlob(thumbnail), 'thumbnail.jpg');
   } catch (error) {
     console.error(`Video ${id} failed:`, error);

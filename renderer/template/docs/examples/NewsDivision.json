@@ -1,0 +1,26 @@
+{
+  "composition": "NewsDivision",
+  "series": {
+    "id": "division",
+    "name": "বিভাগের খবর",
+    "intro": "চট্টগ্রাম বিভাগ",
+    "date": "৯ নভেম্বর ২০২৬"
+  },
+  "scenes": [
+    {
+      "title": "কর্ণফুলী টানেলে যান চলাচল বাড়ছে",
+      "label": "চট্টগ্রাম",
+      "image": "news/demo/tunnel.jpg"
+    },
+    {
+      "title": "কক্সবাজারে পর্যটকের ঢল",
+      "label": "কক্সবাজার",
+      "image": "news/demo/beach.jpg"
+    },
+    {
+      "title": "কুমিল্লায় নতুন হাসপাতাল উদ্বোধন",
+      "label": "কুমিল্লা",
+      "image": "news/demo/clinic.jpg"
+    }
+  ]
+}

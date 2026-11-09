@@ -275,10 +275,11 @@ def _story(news: News, articles: dict[int, str]) -> dict:
 
 def _script_schema(news_ids: list[int]) -> dict:
     return {
-        'type': 'object', 'additionalProperties': False, 'required': ['title', 'description', 'scenes'],
+        'type': 'object', 'additionalProperties': False, 'required': ['title', 'description', 'verdict', 'scenes'],
         'properties': {
             'title': {'type': 'string'},
             'description': {'type': 'string'},
+            'verdict': {'type': 'string', 'enum': ['false', 'misleading', 'true', 'none']},
             'scenes': {'type': 'array', 'items': {
                 'type': 'object', 'additionalProperties': False, 'required': ['narration', 'caption', 'news_ids'],
                 'properties': {

@@ -1,0 +1,30 @@
+{
+  "composition": "NewsRumorCheck",
+  "series": {
+    "id": "rumor",
+    "name": "গুজব না সত্য?",
+    "intro": "ভাইরাল দাবি যাচাই",
+    "date": "৯ নভেম্বর ২০২৬"
+  },
+  "scenes": [
+    {
+      "title": "“সোমবার সব স্কুল বন্ধ ঘোষণা”",
+      "text": "ফেসবুকে ছড়িয়ে পড়া একটি পোস্টের দাবি",
+      "label": "দাবি",
+      "image": "news/demo/school2.jpg",
+      "verdict": "false",
+      "verdictText": "গুজব"
+    },
+    {
+      "title": "“ঢাকায় ডেঙ্গু রোগী দ্বিগুণ”",
+      "text": "স্বাস্থ্য অধিদপ্তরের সাপ্তাহিক প্রতিবেদন",
+      "label": "দাবি",
+      "image": "news/demo/hospital.jpg",
+      "verdict": "true",
+      "verdictText": "সত্য"
+    }
+  ],
+  "outro": {
+    "source": "যাচাই: গ্লিম্পস ফ্যাক্ট চেক টিম"
+  }
+}

@@ -4,19 +4,29 @@ Renders the news videos the portal writes and voices (admin: Videos). It asks th
 
 ## The template
 
-Put the Remotion project in `renderer/template/` (its `package.json` and `src/index.ts` at the top). It needs:
+`renderer/template/` is the Remotion project (Saad's Glimpse News Shorts). Its compositions `DailyFive`
+(আজকের পাঁচ খবর), `FactCheck` (গুজব না সত্য?) and `Pocket` (আপনার পকেট), the IDs in each series' **Template**
+field, take the portal's props below and turn them into the NewsShort template's props (`src/news/portal.tsx`):
 
-- One composition per series, with the ID set in the series' **Template** field: `DailyFive` (আজকের ৫ খবর), `FactCheck` (গুজব না সত্য), `Pocket` (আপনার পকেটে).
-- 1080×1920 at 30 fps, and `calculateMetadata` that sets the length from `durationInSeconds`.
-- Everything below read from props, nothing hard-coded. The series' **Template props** (JSON in the admin) are merged in at the top level, for colours, intro text and the like.
-- Its own fonts (Noto Serif Bengali / Noto Sans Bengali), loaded from the project.
+- the script's first scene, the spoken greeting, plays over the intro card with the series name, the video title
+  and the date; its last scene, the sign-off, plays over the outro with the app badges and the sources;
+- every other scene is a story: its caption as the headline, its image, its sources as the label, and its exact
+  voice timing. Daily stories get a rank badge; a fact-check's first story gets the verdict stamp;
+- music is the series' upload in the admin, or else the template's own bed for that series
+  (`public/assets/audio/music/`, see the licence there);
+- the series' **Template props** (JSON in the admin) can override `brand` (colours, logo), `captions` and `sfx`.
+
+The template's own `NewsTop5`, `NewsRumorCheck`, `NewsDivision` and `NewsGeneric` compositions remain for
+Remotion Studio and Saad's `scripts/make-news.mjs`.
 
 Props for every video:
 
 ```json
 {
-  "series": "আজকের ৫ খবর",
+  "series": "আজকের পাঁচ খবর",
   "title": "Video title",
+  "publishAt": "2026-11-09T14:00:00+00:00",
+  "verdict": "none",
   "durationInSeconds": 64.2,
   "audioUrl": "https://glimpseapp.net/portal/media/video/audio/….mp3",
   "musicUrl": "https://glimpseapp.net/portal/media/video/music/….mp3",
@@ -27,6 +37,7 @@ Props for every video:
       "narration": "What the voice says",
       "caption": "On-screen text, up to 6 words",
       "imageUrl": "https://… or null",
+      "imageSource": "প্রথম আলো",
       "sources": ["প্রথম আলো", "দ্য বিজনেস স্ট্যান্ডার্ড"],
       "start": 0.0,
       "end": 4.8
@@ -36,7 +47,9 @@ Props for every video:
 }
 ```
 
-`musicUrl`, `logoUrl` and `imageUrl` can be null. Scenes run back to back from 0 to `durationInSeconds`; `words` gives each spoken word's time for word-by-word captions.
+`verdict` is `false`, `misleading` or `true` for a fact-check and `none` otherwise. `musicUrl`, `logoUrl`,
+`imageUrl` and `imageSource` can be null. Scenes run back to back from 0 to `durationInSeconds`; `words` gives
+each spoken word's time for the word-by-word captions.
 
 To test the template with a real video's props in Remotion Studio, fetch them with the renderer token:
 

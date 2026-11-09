@@ -827,8 +827,10 @@ class VideoSeries(models.Model):
         default=False, help_text='Voice and render without an editor, unless the AI review finds issues.')
     publish_facebook = models.BooleanField(default=False, help_text='Publish to the Facebook Page as a Reel.')
     publish_youtube = models.BooleanField(default=False, help_text='Publish to the YouTube channel as a Short.')
-    voice_id = models.CharField(max_length=64, blank=True, help_text='ElevenLabs voice ID.')
-    voice_model = models.CharField(max_length=64, default='eleven_v3',
+    voice_id = models.CharField(
+        max_length=255, blank=True,
+        help_text='ElevenLabs voice ID, or several separated by commas: each video gets one of them at random.')
+    voice_model = models.CharField(max_length=64, default='eleven_v4',
                                    help_text='ElevenLabs model. Bengali needs eleven_v3 or eleven_v4.')
     voice_speed = models.FloatField(default=1.0, validators=[MinValueValidator(0.7), MaxValueValidator(1.2)])
     music = models.FileField(upload_to='video/music/', blank=True)
