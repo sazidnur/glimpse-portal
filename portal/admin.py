@@ -996,14 +996,17 @@ class NewsVideoAdmin(ModelAdmin):
 
     @display(description='AI review')
     def display_issues(self, obj):
-        return f'{len(obj.issues)} issue(s)' if obj.issues else '—'
+        open_issues = sum(not issue.get('fixed') for issue in obj.issues)
+        return f'{open_issues} to check, {len(obj.issues) - open_issues} fixed' if obj.issues else '—'
 
     @display(description='AI review')
     def display_issues_detail(self, obj):
         if not obj.issues:
             return 'No issues found.' if obj.script else '—'
         return format_html('<ul class="list-disc pl-5">{}</ul>', format_html_join(
-            '', '<li>Scene {}: {}</li>', ((issue['scene'], issue['problem']) for issue in obj.issues)))
+            '', '<li>Scene {}: {} <em>({})</em></li>', ((issue['scene'], issue['problem'],
+                                                         'fixed' if issue.get('fixed') else 'needs you')
+                                                        for issue in obj.issues)))
 
     @display(description='Preview')
     def display_preview(self, obj):

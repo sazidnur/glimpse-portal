@@ -91,8 +91,9 @@ class DraftTests(MediaTestCase):
         NewsArticle.objects.create(news=self.fuel, text='পুরো খবর')
         PushNotification.objects.create(news=self.fuel, title='t', body='b', status=PushNotification.Status.SENT)
 
-    def draft(self, series, picks, issues=(), script_ids=None):
-        answers = [{'stories': picks}, script(*(script_ids or [picks[0]['news_id']])), {'issues': list(issues)}]
+    def draft(self, series, picks, issues=(), script_ids=None, edited=None):
+        written = script(*(script_ids or [picks[0]['news_id']]))
+        answers = [{'stories': picks}, written, {'issues': list(issues), 'script': edited or written}]
         video = NewsVideo.objects.create(series=series, publish_at=timezone.now() + timedelta(hours=1))
         with patch('portal.video.pipeline.run_realtime_translation',
                    side_effect=[(answer, 'id', {}) for answer in answers]) as ai:
@@ -117,20 +118,49 @@ class DraftTests(MediaTestCase):
 
     def test_used_stories_are_not_picked_again_by_the_same_series(self):
         series = create_series()
-        self.draft(series, [{'news_id': self.fuel.id, 'related_ids': []}])
+        first, _ = self.draft(series, [{'news_id': self.fuel.id, 'related_ids': []}])
         _, ai = self.draft(series, [{'news_id': self.exam.id, 'related_ids': []}])
         articles = {a['id']: a for a in ai.call_args_list[0].kwargs['user_payload']['articles']}
         self.assertFalse(articles[self.fuel.id]['pickable'])
         self.assertTrue(articles[self.exam.id]['pickable'])
 
-    def test_auto_approve_goes_straight_to_voice_unless_the_ai_editor_objects(self):
+        pipeline.cancel(first)
+        _, ai = self.draft(series, [{'news_id': self.fuel.id, 'related_ids': []}])
+        articles = {a['id']: a for a in ai.call_args_list[0].kwargs['user_payload']['articles']}
+        self.assertTrue(articles[self.fuel.id]['pickable'])
+
+    def test_the_script_sees_recent_openings_and_closings_so_it_varies_them(self):
+        series = create_series()
+        _, ai = self.draft(series, [{'news_id': self.fuel.id, 'related_ids': []}])
+        self.assertEqual(ai.call_args_list[1].kwargs['user_payload']['previous'], [])
+        _, ai = self.draft(series, [{'news_id': self.exam.id, 'related_ids': []}])
+        self.assertEqual(ai.call_args_list[1].kwargs['user_payload']['previous'],
+                         [{'opening': 'প্রথম দৃশ্য।', 'closing': 'দ্বিতীয় দৃশ্য।'}])
+
+    def test_auto_approve_goes_straight_to_voice_unless_the_ai_editor_left_a_problem(self):
         series = create_series(auto_approve=True)
-        video, _ = self.draft(series, [{'news_id': self.fuel.id, 'related_ids': []}])
+        video, _ = self.draft(series, [{'news_id': self.fuel.id, 'related_ids': []}],
+                              issues=[{'scene': 1, 'problem': 'Hard word', 'fixed': True}])
         self.assertEqual(video.status, Status.VOICING)
         video, _ = self.draft(series, [{'news_id': self.exam.id, 'related_ids': []}],
-                              issues=[{'scene': 1, 'problem': 'Number not in the sources'}])
+                              issues=[{'scene': 1, 'problem': 'Number not in the sources', 'fixed': False}])
         self.assertEqual(video.status, Status.REVIEW)
         self.assertEqual(video.issues[0]['scene'], 1)
+
+    def test_the_ai_editor_fixes_the_script_but_cannot_change_its_scenes(self):
+        series = create_series()
+        fixed = script(self.fuel.id)
+        fixed['scenes'][0]['narration'] = 'ঠিক করা দৃশ্য।'
+        video, _ = self.draft(series, [{'news_id': self.fuel.id, 'related_ids': []}], edited=fixed,
+                              issues=[{'scene': 1, 'problem': 'Hard word', 'fixed': True}])
+        self.assertEqual(video.script['scenes'][0]['narration'], 'ঠিক করা দৃশ্য।')
+
+        dropped = script(self.exam.id)
+        dropped['scenes'] = dropped['scenes'][:1]
+        video, _ = self.draft(series, [{'news_id': self.exam.id, 'related_ids': []}], edited=dropped,
+                              issues=[{'scene': 2, 'problem': 'Too long', 'fixed': True}])
+        self.assertEqual(len(video.script['scenes']), 2)
+        self.assertEqual(video.issues, [{'scene': 2, 'problem': 'Too long', 'fixed': False}])
 
     def test_skips_without_calling_the_ai_when_nothing_is_pickable(self):
         series = create_series(category=Categories.objects.create(name='ফ্যাক্ট চেক', enabled=False, separate_feed=True))
@@ -147,6 +177,7 @@ class DraftTests(MediaTestCase):
         articles = {a['id']: a for a in ai.call_args_list[0].kwargs['user_payload']['articles']}
         self.assertTrue(articles[claim.id]['pickable'])
         self.assertFalse(articles[self.exam.id]['pickable'])
+        self.assertIsNone(articles[self.exam.id]['summary'])
         self.assertEqual(video.status, Status.REVIEW)
 
     def test_a_failing_step_marks_the_video_failed_with_the_reason(self):
@@ -373,7 +404,7 @@ class VideoAdminTests(MediaTestCase):
         self.news = create_news('fuel')
         self.video = NewsVideo.objects.create(series=create_series(), publish_at=timezone.now(), status=Status.REVIEW,
                                               script=script(self.news.id),
-                                              issues=[{'scene': 2, 'problem': 'Unsupported number'}])
+                                              issues=[{'scene': 2, 'problem': 'Unsupported number', 'fixed': False}])
         self.video.news.set([self.news])
 
     def test_pages_show_the_series_setup_and_the_review(self):

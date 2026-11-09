@@ -74,6 +74,7 @@ def draft(video: NewsVideo) -> None:
         'series': series.name,
         'target_words': series.target_words,
         'stories': stories,
+        'previous': _previous_openings(video),
     }, _script_schema(used))
     script['scenes'] = [s for s in script['scenes'] if s['narration'].strip()]
     if not script['scenes']:
@@ -81,12 +82,17 @@ def draft(video: NewsVideo) -> None:
 
     issues = []
     if series.ai_review and series.review_prompt.strip():
-        issues = _ask(series.model, series.review_prompt, {'script': script, 'stories': stories}, REVIEW_SCHEMA)['issues']
+        edited = _ask(series.model, series.review_prompt, {'script': script, 'stories': stories}, _edit_schema(used))
+        issues = edited['issues']
+        if _same_shape(script, edited['script']):
+            script = edited['script']
+        else:
+            issues = [{**issue, 'fixed': False} for issue in issues]
 
     with transaction.atomic():
         video.news.set(used)
         _update(video, script=script, issues=issues, error='',
-                status=Status.VOICING if series.auto_approve and not issues else Status.REVIEW)
+                status=Status.VOICING if series.auto_approve and all(i['fixed'] for i in issues) else Status.REVIEW)
 
 
 def approve(video: NewsVideo, user) -> bool:
@@ -197,7 +203,7 @@ def _pool(series: VideoSeries) -> list[News]:
                 .order_by('-timestamp')[:MAX_CANDIDATES])
     ids = [news.id for news in pool]
     used = set(NewsVideo.news.through.objects.filter(newsvideo__series=series, news_id__in=ids)
-               .values_list('news_id', flat=True))
+               .exclude(newsvideo__status=Status.CANCELLED).values_list('news_id', flat=True))
     pushed = set(PushNotification.objects.filter(news_id__in=ids).exclude(status=PushNotification.Status.CANCELLED)
                  .values_list('news_id', flat=True))
     aliases = list(Sourcealias.objects.all())
@@ -218,7 +224,7 @@ def _pick(series: VideoSeries, pool: list[News]) -> list[list[int]]:
         'articles': [{
             'id': news.id,
             'title': news.title,
-            'summary': news.summary,
+            'summary': news.summary if news.pickable else None,  # the rest are only matched as coverage, by title
             'source': news.source_name,
             'category': news.categoryid.name if news.categoryid else None,
             'topic': news.topic.name if news.topic else None,
@@ -246,6 +252,13 @@ def _pick(series: VideoSeries, pool: list[News]) -> list[list[int]]:
             picks.append(ids)
             seen.update(ids)
     return picks[:series.story_count]
+
+
+def _previous_openings(video: NewsVideo, count: int = 7) -> list[dict]:
+    """The series' recent openings and closings, so the next script says them differently."""
+    recent = NewsVideo.objects.filter(series=video.series).exclude(pk=video.pk).exclude(script={}).order_by('-publish_at')
+    return [{'opening': v.script['scenes'][0]['narration'], 'closing': v.script['scenes'][-1]['narration']}
+            for v in recent[:count] if v.script.get('scenes')]
 
 
 def _story(news: News, articles: dict[int, str]) -> dict:
@@ -278,13 +291,24 @@ def _script_schema(news_ids: list[int]) -> dict:
     }
 
 
-REVIEW_SCHEMA = {
-    'type': 'object', 'additionalProperties': False, 'required': ['issues'],
-    'properties': {'issues': {'type': 'array', 'items': {
-        'type': 'object', 'additionalProperties': False, 'required': ['scene', 'problem'],
-        'properties': {'scene': {'type': 'integer'}, 'problem': {'type': 'string'}},
-    }}},
-}
+def _edit_schema(news_ids: list[int]) -> dict:
+    """The AI editor's answer: what it found, and the script with its fixes."""
+    return {
+        'type': 'object', 'additionalProperties': False, 'required': ['issues', 'script'],
+        'properties': {
+            'issues': {'type': 'array', 'items': {
+                'type': 'object', 'additionalProperties': False, 'required': ['scene', 'problem', 'fixed'],
+                'properties': {'scene': {'type': 'integer'}, 'problem': {'type': 'string'}, 'fixed': {'type': 'boolean'}},
+            }},
+            'script': _script_schema(news_ids),
+        },
+    }
+
+
+def _same_shape(script: dict, edited: dict) -> bool:
+    """The editor may reword scenes but not add, drop or reorder them, or change which stories they show."""
+    return [s['news_ids'] for s in script['scenes']] == [s['news_ids'] for s in edited['scenes']] and all(
+        s['narration'].strip() and s['caption'].strip() for s in edited['scenes'])
 
 
 def _ask(model: str, prompt: str, payload: dict, schema: dict) -> dict:
