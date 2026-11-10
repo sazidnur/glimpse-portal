@@ -66,7 +66,8 @@ async function render({id, composition: compositionId, props}) {
     const thumbnail = path.join(dir, 'thumbnail.jpg');
     let logged = 0;
     await renderMedia({
-      composition, serveUrl, codec: 'h264', outputLocation: video, inputProps: props, concurrency,
+      // Facebook and YouTube re-encode every upload; a high-bitrate source keeps text and photos sharp after that.
+      composition, serveUrl, codec: 'h264', videoBitrate: '12M', outputLocation: video, inputProps: props, concurrency,
       chromiumOptions: {enableMultiProcessOnLinux: true},
       onProgress: ({progress}) => {
         if (progress - logged >= 0.1) {
