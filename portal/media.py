@@ -39,6 +39,8 @@ def serve_media(request, path):
         response['Content-Range'] = f'bytes {start}-{end}/{size}'
         response['Content-Length'] = str(end - start + 1)
     response['Accept-Ranges'] = 'bytes'
+    # The renderer's browser reads the voice with fetch() to find its pauses; media is public anyway.
+    response['Access-Control-Allow-Origin'] = '*'
     # Generated files get unique names, so a cached copy never goes stale.
     response['Cache-Control'] = 'public, max-age=31536000, immutable'
     return response

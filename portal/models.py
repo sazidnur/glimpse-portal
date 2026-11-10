@@ -915,6 +915,9 @@ class SocialPost(models.Model):
 
     video = models.FileField(upload_to='social/', validators=[FileExtensionValidator(['mp4', 'mov'])])
     caption = models.TextField(help_text='The post text, hashtags included.')
+    thumbnail = models.FileField(
+        upload_to='social/', blank=True, validators=[FileExtensionValidator(['jpg', 'jpeg', 'png'])],
+        help_text='Optional cover image (JPG or PNG). Without one, Facebook picks a frame.')
     facebook_format = models.CharField(
         'Post as', max_length=8, choices=Format.choices, default=Format.REEL,
         help_text='Reel: vertical (9:16), 3 to 90 seconds. Video post: any shape or length.')

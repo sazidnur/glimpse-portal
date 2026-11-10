@@ -1,11 +1,15 @@
 """Uploads videos to the Facebook Page (as a Reel or a video post) and to YouTube as a Short. Each returns the platform's video ID."""
 from __future__ import annotations
 
+import logging
+
 import httpx
 from django.conf import settings
 from django.utils import timezone
 
 from ..models import NewsVideo, SocialPost
+
+logger = logging.getLogger(__name__)
 
 GRAPH_URL = 'https://graph.facebook.com/v27.0'
 GRAPH_VIDEO_URL = 'https://graph-video.facebook.com/v27.0'
@@ -15,7 +19,14 @@ YOUTUBE_NEWS_CATEGORY = '25'
 
 
 def publish_facebook(video: NewsVideo) -> str:
-    return facebook_reel(video.video, f"{video.script['title']}\n\n{video.script['description']}")
+    video_id = facebook_reel(video.video, f"{video.script['title']}\n\n{video.script['description']}")
+    if video.thumbnail:
+        try:
+            facebook_thumbnail(video_id, video.thumbnail)
+        except Exception:
+            # The Reel is up; a missing cover only means Facebook shows the opening frame, the same intro card.
+            logger.warning('Setting the thumbnail of Facebook video %s failed', video_id, exc_info=True)
+    return video_id
 
 
 def facebook_reel(file, caption: str) -> str:
@@ -43,6 +54,14 @@ def facebook_video(file, caption: str) -> str:
     return str(reply['id'])
 
 
+def facebook_thumbnail(video_id: str, file) -> None:
+    """Makes the image the video's preferred thumbnail."""
+    _, token = _settings('FACEBOOK_PAGE_ID', 'FACEBOOK_PAGE_TOKEN')
+    _json(httpx.post(f'{GRAPH_URL}/{video_id}/thumbnails', timeout=60,
+                     data={'access_token': token, 'is_preferred': 'true'},
+                     files={'source': (file.name.rsplit('/', 1)[-1], _read(file))}))
+
+
 def publish_posts_due(now=None) -> list[int]:
     due = SocialPost.objects.filter(status=SocialPost.Status.SCHEDULED, publish_at__lte=now or timezone.now())
     return [post.id for post in due if publish_post(post)]
@@ -59,6 +78,11 @@ def publish_post(post: SocialPost) -> bool:
         post.status, post.published_at, post.error = SocialPost.Status.PUBLISHED, timezone.now(), ''
     except Exception as exc:
         post.status, post.error = SocialPost.Status.FAILED, f'Facebook: {exc}'
+    if post.facebook_id and post.thumbnail:
+        try:
+            facebook_thumbnail(post.facebook_id, post.thumbnail)
+        except Exception as exc:
+            post.error = f'Posted, but the thumbnail was not set: {exc}'
     post.save(update_fields=['facebook_id', 'status', 'published_at', 'error'])
     return True
 

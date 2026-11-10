@@ -1094,7 +1094,7 @@ class SocialPostAdmin(ModelAdmin):
     list_filter_submit = True
     actions_detail = ['publish_now', 'retry']
     fieldsets = [
-        ('Post', {'fields': ('video', 'caption', 'facebook_format', 'publish_at')}),
+        ('Post', {'fields': ('video', 'thumbnail', 'caption', 'facebook_format', 'publish_at')}),
         ('Status', {'fields': ('display_preview', 'display_status', 'error', 'display_link', 'published_at',
                                'created_by')}),
     ]
@@ -1102,7 +1102,8 @@ class SocialPostAdmin(ModelAdmin):
 
     def get_readonly_fields(self, request, obj=None):
         locked = obj and obj.status != SocialPost.Status.SCHEDULED
-        return self.readonly_fields + (['video', 'caption', 'facebook_format', 'publish_at'] if locked else [])
+        return self.readonly_fields + (['video', 'thumbnail', 'caption', 'facebook_format', 'publish_at']
+                                       if locked else [])
 
     def save_model(self, request, obj, form, change):
         if not change:
@@ -1130,8 +1131,9 @@ class SocialPostAdmin(ModelAdmin):
     def display_preview(self, obj):
         if not obj.video:
             return '—'
-        return format_html('<video src="{}" controls preload="metadata" style="max-height:640px;border-radius:8px">'
-                           '</video>', obj.video.url)
+        return format_html('<video src="{}" poster="{}" controls preload="metadata" '
+                           'style="max-height:640px;border-radius:8px"></video>',
+                           obj.video.url, obj.thumbnail.url if obj.thumbnail else '')
 
     @display(description='On Facebook')
     def display_link(self, obj):

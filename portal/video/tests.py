@@ -367,6 +367,15 @@ class SocialTests(MediaTestCase):
         self.assertEqual((finish.kwargs['params']['upload_phase'], finish.kwargs['params']['video_state']),
                          ('finish', 'PUBLISHED'))
 
+    @override_settings(FACEBOOK_PAGE_ID='page', FACEBOOK_PAGE_TOKEN='token')
+    def test_the_rendered_thumbnail_becomes_the_reels_cover(self):
+        self.video.thumbnail.save('cover.jpg', ContentFile(b'jpg'))
+        with patch('portal.video.social.facebook_reel', return_value='v1'), \
+                patch('portal.video.social.httpx.post', return_value=self.reply({'success': True})) as post:
+            self.assertEqual(social.publish_facebook(self.video), 'v1')
+        self.assertEqual(post.call_args.args[0], 'https://graph.facebook.com/v27.0/v1/thumbnails')
+        self.assertEqual(post.call_args.kwargs['data'], {'access_token': 'token', 'is_preferred': 'true'})
+
     @override_settings(YOUTUBE_CLIENT_ID='id', YOUTUBE_CLIENT_SECRET='secret', YOUTUBE_REFRESH_TOKEN='refresh')
     def test_youtube_refreshes_the_token_and_uploads_the_short(self):
         posts = [self.reply({'access_token': 'access'}),
@@ -399,6 +408,17 @@ class SocialPostTests(MediaTestCase):
         self.assertEqual(upload.call_args.kwargs['files']['source'][1], b'mp4')
         post.refresh_from_db()
         self.assertEqual((post.status, post.facebook_id), (SocialPost.Status.PUBLISHED, 'fb9'))
+
+    def test_a_thumbnail_is_set_after_posting_and_its_failure_does_not_undo_the_post(self):
+        post = self.post()
+        post.thumbnail.save('cover.jpg', ContentFile(b'jpg'))
+        with patch('portal.video.social.facebook_reel', return_value='r1'), \
+                patch('portal.video.social.facebook_thumbnail', side_effect=RuntimeError('HTTP 400')) as thumb:
+            social.publish_posts_due()
+        self.assertEqual(thumb.call_args.args[0], 'r1')
+        post.refresh_from_db()
+        self.assertEqual((post.status, post.facebook_id), (SocialPost.Status.PUBLISHED, 'r1'))
+        self.assertEqual(post.error, 'Posted, but the thumbnail was not set: HTTP 400')
 
     def test_a_reel_goes_through_the_reel_upload_and_failures_are_kept(self):
         reel = self.post()
@@ -437,6 +457,7 @@ class MediaViewTests(MediaTestCase):
     def test_serves_whole_files_and_byte_ranges(self):
         whole = self.client.get('/portal/media/clip.mp4')
         self.assertEqual((whole.status_code, b''.join(whole.streaming_content)), (200, b'0123456789'))
+        self.assertEqual(whole['Access-Control-Allow-Origin'], '*')
         part = self.client.get('/portal/media/clip.mp4', HTTP_RANGE='bytes=2-4')
         self.assertEqual((part.status_code, part['Content-Range']), (206, 'bytes 2-4/10'))
         self.assertEqual(b''.join(part.streaming_content), b'234')
