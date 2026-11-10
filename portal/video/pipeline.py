@@ -202,7 +202,8 @@ def _pool(series: VideoSeries) -> list[News]:
     pool = list(feed.filter(timestamp__gte=since).select_related('categoryid', 'topic')
                 .order_by('-timestamp')[:MAX_CANDIDATES])
     ids = [news.id for news in pool]
-    used = set(NewsVideo.news.through.objects.filter(newsvideo__series=series, news_id__in=ids)
+    # A story used by any series is not used again by another, so the channel never repeats it.
+    used = set(NewsVideo.news.through.objects.filter(news_id__in=ids)
                .exclude(newsvideo__status=Status.CANCELLED).values_list('news_id', flat=True))
     pushed = set(PushNotification.objects.filter(news_id__in=ids).exclude(status=PushNotification.Status.CANCELLED)
                  .values_list('news_id', flat=True))

@@ -117,9 +117,9 @@ class DraftTests(MediaTestCase):
         self.assertEqual((story['source'], story['article']), ('প্রথম আলো', 'পুরো খবর'))
         self.assertEqual(story['related'][0]['id'], self.fuel_tbs.id)
 
-    def test_used_stories_are_not_picked_again_by_the_same_series(self):
+    def test_used_stories_are_not_picked_again_by_any_series(self):
         series = create_series()
-        first, _ = self.draft(series, [{'news_id': self.fuel.id, 'related_ids': []}])
+        first, _ = self.draft(create_series(name='Other series'), [{'news_id': self.fuel.id, 'related_ids': []}])
         _, ai = self.draft(series, [{'news_id': self.exam.id, 'related_ids': []}])
         articles = {a['id']: a for a in ai.call_args_list[0].kwargs['user_payload']['articles']}
         self.assertFalse(articles[self.fuel.id]['pickable'])
