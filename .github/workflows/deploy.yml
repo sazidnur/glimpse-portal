@@ -74,4 +74,10 @@ jobs:
             # Run migrations (only if needed)
             docker compose exec -T django python manage.py migrate --database=default --noinput || true
 
+            # News video renderer: runs once its token is set. Built last, so a failed build leaves the portal deployed.
+            if grep -q '^RENDERER_TOKEN=.' .env; then
+              docker compose -f docker-compose.yml --profile renderer up -d --build renderer \
+                || echo "⚠️ Renderer build failed: the portal is deployed, news videos wait in Queued"
+            fi
+
             echo "✅ Deployment complete"
