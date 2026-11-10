@@ -3,7 +3,7 @@ import {bundle} from '@remotion/bundler';
 import {renderMedia, renderStill, selectComposition} from '@remotion/renderer';
 import {execFile} from 'node:child_process';
 import {openAsBlob} from 'node:fs';
-import {mkdtemp, rm} from 'node:fs/promises';
+import {mkdtemp, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {setTimeout as sleep} from 'node:timers/promises';
@@ -52,8 +52,8 @@ async function render({id, composition: compositionId, props}) {
   try {
     console.log(`Video ${id}: rendering ${compositionId}`);
     if (props.audioUrl) {
-      const voice = (await loudness(props.audioUrl)).lufs;
-      const music = props.musicUrl ? (await loudness(props.musicUrl)).lufs : REFERENCE_LUFS;
+      const voice = (await loudness(await download(props.audioUrl, path.join(dir, 'voice')))).lufs;
+      const music = props.musicUrl ? (await loudness(await download(props.musicUrl, path.join(dir, 'music')))).lufs : REFERENCE_LUFS;
       const sfx = props.sfx ?? {};
       props = {
         ...props,
@@ -107,7 +107,15 @@ function ffmpeg(args) {
   return promisify(execFile)('npx', ['remotion', 'ffmpeg', ...args], {maxBuffer: 16 * 1024 * 1024});
 }
 
-// Integrated loudness (LUFS) and true peak (dBTP) of a local file or URL.
+// Remotion's ffmpeg is built without HTTPS, so remote media is measured from a local copy.
+async function download(url, file) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Download of ${url} failed: HTTP ${response.status}`);
+  await writeFile(file, Buffer.from(await response.arrayBuffer()));
+  return file;
+}
+
+// Integrated loudness (LUFS) and true peak (dBTP) of a local file.
 async function loudness(src) {
   const {stderr} = await ffmpeg(['-hide_banner', '-nostats', '-i', src, '-vn', '-af', 'loudnorm=print_format=json', '-f', 'null', '-']);
   const json = stderr.slice(stderr.lastIndexOf('{'), stderr.lastIndexOf('}') + 1);
