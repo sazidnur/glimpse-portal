@@ -481,9 +481,9 @@ def video_voice(video_id: int):
 
 @shared_task(name='portal.tasks.video_publish_due')
 def video_publish_due():
-    from .video import pipeline
+    from .video import pipeline, social
 
-    return pipeline.publish_due()
+    return pipeline.publish_due() + social.publish_posts_due()
 
 
 @shared_task(name='portal.tasks.video_delete_old_files')

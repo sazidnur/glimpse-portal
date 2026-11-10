@@ -16,9 +16,10 @@ from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
 from api.v1.serializers import NewsDetailSerializer
-from portal.models import Categories, News, NewsArticle, NewsVideo, PushNotification, Sourcealias, VideoSeries
+from portal.models import (Categories, News, NewsArticle, NewsVideo, PushNotification, SocialPost, Sourcealias,
+                           VideoSeries)
 from portal.push.digest import BANGLADESH
-from portal.tasks import video_draft
+from portal.tasks import video_draft, video_publish_due
 
 from . import pipeline, social, voice
 
@@ -380,6 +381,51 @@ class SocialTests(MediaTestCase):
     def test_missing_keys_are_reported(self):
         with self.assertRaisesMessage(RuntimeError, 'FACEBOOK_PAGE_ID, FACEBOOK_PAGE_TOKEN must be set.'):
             social.publish_facebook(self.video)
+
+
+class SocialPostTests(MediaTestCase):
+    def post(self, **fields):
+        post = SocialPost(caption='খবর #বাংলাদেশ', **fields)
+        post.video.save('clip.mp4', ContentFile(b'mp4'))
+        return post
+
+    @override_settings(FACEBOOK_PAGE_ID='page', FACEBOOK_PAGE_TOKEN='token')
+    def test_a_video_post_uploads_the_file_with_its_caption(self):
+        post = self.post(facebook_format=SocialPost.Format.VIDEO)
+        with patch('portal.video.social.httpx.post', return_value=httpx.Response(200, json={'id': 'fb9'})) as upload:
+            self.assertEqual(social.publish_posts_due(), [post.id])
+        self.assertEqual(upload.call_args.args[0], 'https://graph-video.facebook.com/v27.0/page/videos')
+        self.assertEqual(upload.call_args.kwargs['data'], {'access_token': 'token', 'description': 'খবর #বাংলাদেশ'})
+        self.assertEqual(upload.call_args.kwargs['files']['source'][1], b'mp4')
+        post.refresh_from_db()
+        self.assertEqual((post.status, post.facebook_id), (SocialPost.Status.PUBLISHED, 'fb9'))
+
+    def test_a_reel_goes_through_the_reel_upload_and_failures_are_kept(self):
+        reel = self.post()
+        later = self.post(publish_at=timezone.now() + timedelta(hours=1))
+        with patch('portal.video.social.facebook_reel', side_effect=RuntimeError('HTTP 400: too long')) as upload:
+            self.assertEqual(social.publish_posts_due(), [reel.id])
+        self.assertEqual(upload.call_args.args[1], 'খবর #বাংলাদেশ')
+        reel.refresh_from_db()
+        self.assertEqual((reel.status, reel.error), (SocialPost.Status.FAILED, 'Facebook: HTTP 400: too long'))
+        later.refresh_from_db()
+        self.assertEqual(later.status, SocialPost.Status.SCHEDULED)
+
+    @override_settings(STORAGES={'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+                                 'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'}})
+    def test_the_admin_creates_a_post_and_publish_now_hands_it_to_the_worker(self):
+        self.client.force_login(User.objects.create_superuser('admin', 'a@example.com', 'x'))
+        self.assertEqual(self.client.get(reverse('admin:data_socialpost_add')).status_code, 200)
+        response = self.client.post(reverse('admin:data_socialpost_add'), {
+            'video': SimpleUploadedFile('clip.mp4', b'mp4', content_type='video/mp4'), 'caption': 'খবর #বাংলাদেশ',
+            'facebook_format': 'reel', 'publish_at_0': '2030-01-01', 'publish_at_1': '10:00:00'})
+        self.assertEqual(response.status_code, 302)
+        post = SocialPost.objects.get()
+        with patch('portal.admin.video_publish_due.delay') as delay:
+            self.client.get(reverse('admin:data_socialpost_publish_now', args=[post.pk]))
+        delay.assert_called_once()
+        post.refresh_from_db()
+        self.assertLess(post.publish_at, timezone.now())
 
 
 class MediaViewTests(MediaTestCase):

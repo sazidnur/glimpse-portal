@@ -179,6 +179,11 @@ UNFOLD = {
                         "icon": "video_settings",
                         "link": reverse_lazy("admin:data_videoseries_changelist"),
                     },
+                    {
+                        "title": _("Posts"),
+                        "icon": "upload",
+                        "link": reverse_lazy("admin:data_socialpost_changelist"),
+                    },
                 ],
             },
             {

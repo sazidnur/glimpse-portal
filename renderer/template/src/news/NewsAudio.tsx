@@ -24,7 +24,18 @@ export const NewsAudio: React.FC<{ p: NewsShortProps; fps: number }> = ({ p, fps
   return (
     <>
       {/* voice */}
-      {p.voice ? (
+      {p.voice?.segments ? (
+        p.voice.segments.map((seg, i) => (
+          <Sequence key={i} from={voiceStart + Math.round(seg.at * fps)} name={`voice ${i + 1}`}>
+            <Audio
+              src={resolveSrc(p.voice!.src)}
+              volume={p.voice!.volume}
+              trimBefore={Math.round(seg.from * fps)}
+              trimAfter={Math.round(seg.to * fps)}
+            />
+          </Sequence>
+        ))
+      ) : p.voice ? (
         <Sequence from={voiceStart} name="voice">
           <Audio src={resolveSrc(p.voice.src)} volume={p.voice.volume} />
         </Sequence>

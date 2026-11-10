@@ -4,6 +4,11 @@ DESCRIPTION_RULE = (
     '- description: one or two sentences on what the video covers, then "পুরো খবর পড়ুন Glimpse অ্যাপে।", '
     'then three relevant Bengali hashtags.'
 )
+OLD_BRIDGES = 'and link stories with small spoken bridges ("এবার পড়াশোনার খবর।", "এদিকে…", "আর হ্যাঁ,").'
+BRIDGES = ('and, only when the video has several stories, link them with small spoken bridges ("এবার পড়াশোনার খবর।", '
+           '"এদিকে…", "আর হ্যাঁ,"). Within one story never announce a new topic.')
+OLD_EDITOR_BRIDGES = 'short spoken links between stories ("এবার …")'
+EDITOR_BRIDGES = 'short spoken links between different stories ("এবার …"; a topic announced inside a single story is filler)'
 VERDICT_RULE = (
     '- verdict: for a fact-check, its verdict: false (গুজব), misleading (বিভ্রান্তিকর) or true (সত্য). '
     'For any other video, none.'
@@ -28,6 +33,10 @@ def add_verdict(apps, schema_editor):
         else:
             series.script_prompt = f'{series.script_prompt.rstrip()}\n\n{VERDICT_RULE}'
         series.save(update_fields=['script_prompt'])
+    for series in VideoSeries.objects.all():
+        series.script_prompt = series.script_prompt.replace(OLD_BRIDGES, BRIDGES)
+        series.review_prompt = series.review_prompt.replace(OLD_EDITOR_BRIDGES, EDITOR_BRIDGES)
+        series.save(update_fields=['script_prompt', 'review_prompt'])
 
 
 class Migration(migrations.Migration):

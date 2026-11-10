@@ -32,6 +32,7 @@ from .models import (
     PushDigestSlot,
     PushNotification,
     SearchReindexJob,
+    SocialPost,
     Sourcealias,
     Timelines,
     Topics,
@@ -43,7 +44,7 @@ from .openai.jobs import cancel_openai_job
 from .push import service as push_service
 from .push.digest import BANGLADESH
 from .search import reindex
-from .tasks import video_continue
+from .tasks import video_continue, video_publish_due
 from .video import pipeline as video_pipeline, social as video_social
 from .video.pipeline import source_name as video_source_name
 from .youtube import validate_youtube_shorts_url
@@ -1060,10 +1061,11 @@ class NewsVideoAdmin(ModelAdmin):
         video = get_object_or_404(NewsVideo.objects.select_related('series'), pk=object_id)
         if not (video.series.publish_facebook or video.series.publish_youtube):
             self.message_user(request, 'Turn on Facebook or YouTube publishing on the series first.', level='warning')
-        elif video_pipeline.publish(video):
-            video.refresh_from_db()
-            level = 'error' if video.status == NewsVideo.Status.FAILED else 'success'
-            self.message_user(request, video.error or 'Published.', level=level)
+        elif NewsVideo.objects.filter(pk=video.pk, status=NewsVideo.Status.RENDERED).update(
+                publish_at=django_timezone.now()):
+            # The upload runs in the worker: in the web request it would hold the only web worker.
+            video_publish_due.delay()
+            self.message_user(request, 'Publishing now. Refresh in a minute to see the links.')
         else:
             self.message_user(request, 'Only ready videos can be published.', level='warning')
         return redirect(reverse('admin:data_newsvideo_change', args=[object_id]))
@@ -1075,6 +1077,89 @@ class NewsVideoAdmin(ModelAdmin):
         else:
             self.message_user(request, 'Published videos cannot be cancelled.', level='warning')
         return redirect(reverse('admin:data_newsvideo_change', args=[object_id]))
+
+
+POST_STATUS_COLORS = {
+    SocialPost.Status.SCHEDULED: 'info',
+    SocialPost.Status.PUBLISHING: 'info',
+    SocialPost.Status.PUBLISHED: 'success',
+    SocialPost.Status.FAILED: 'danger',
+}
+
+
+@admin.register(SocialPost)
+class SocialPostAdmin(ModelAdmin):
+    list_display = ['display_caption', 'facebook_format', 'display_publish_at', 'display_status']
+    list_filter = ['status', 'facebook_format']
+    list_filter_submit = True
+    actions_detail = ['publish_now', 'retry']
+    fieldsets = [
+        ('Post', {'fields': ('video', 'caption', 'facebook_format', 'publish_at')}),
+        ('Status', {'fields': ('display_preview', 'display_status', 'error', 'display_link', 'published_at',
+                               'created_by')}),
+    ]
+    readonly_fields = ['display_preview', 'display_status', 'error', 'display_link', 'published_at', 'created_by']
+
+    def get_readonly_fields(self, request, obj=None):
+        locked = obj and obj.status != SocialPost.Status.SCHEDULED
+        return self.readonly_fields + (['video', 'caption', 'facebook_format', 'publish_at'] if locked else [])
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+        missing = [name for name in ('FACEBOOK_PAGE_ID', 'FACEBOOK_PAGE_TOKEN')
+                   if not str(getattr(settings, name, '') or '').strip()]
+        if missing:
+            self.message_user(request, f'Missing: {", ".join(missing)}. The post fails until they are set.',
+                              level='warning')
+
+    @display(description='Caption')
+    def display_caption(self, obj):
+        return str(obj)
+
+    @display(description='Publish (Bangladesh)', ordering='publish_at')
+    def display_publish_at(self, obj):
+        return f'{obj.publish_at.astimezone(BANGLADESH):%Y-%m-%d %H:%M}'
+
+    @display(description='Status', label=POST_STATUS_COLORS)
+    def display_status(self, obj):
+        return obj.status, obj.get_status_display()
+
+    @display(description='Preview')
+    def display_preview(self, obj):
+        if not obj.video:
+            return '—'
+        return format_html('<video src="{}" controls preload="metadata" style="max-height:640px;border-radius:8px">'
+                           '</video>', obj.video.url)
+
+    @display(description='On Facebook')
+    def display_link(self, obj):
+        if not obj.facebook_id:
+            return '—'
+        url = (f'https://www.facebook.com/reel/{obj.facebook_id}' if obj.facebook_format == SocialPost.Format.REEL
+               else f'https://www.facebook.com/watch/?v={obj.facebook_id}')
+        return format_html('<a href="{}" target="_blank" class="underline">Open</a>', url)
+
+    @action(description='Publish now', icon='publish')
+    def publish_now(self, request, object_id):
+        if SocialPost.objects.filter(pk=object_id, status=SocialPost.Status.SCHEDULED).update(
+                publish_at=django_timezone.now()):
+            video_publish_due.delay()
+            self.message_user(request, 'Posting now. Refresh in a minute to see the link.')
+        else:
+            self.message_user(request, 'Only scheduled posts can be posted.', level='warning')
+        return redirect(reverse('admin:data_socialpost_change', args=[object_id]))
+
+    @action(description='Retry', icon='replay')
+    def retry(self, request, object_id):
+        if SocialPost.objects.filter(pk=object_id, status=SocialPost.Status.FAILED).update(
+                status=SocialPost.Status.SCHEDULED, publish_at=django_timezone.now(), error=''):
+            video_publish_due.delay()
+            self.message_user(request, 'Posting again. Refresh in a minute to see the link.')
+        else:
+            self.message_user(request, 'Only failed posts can be retried.', level='warning')
+        return redirect(reverse('admin:data_socialpost_change', args=[object_id]))
 
 
 @admin.register(SearchReindexJob)

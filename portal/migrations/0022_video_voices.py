@@ -3,14 +3,17 @@
 from django.db import migrations, models
 
 
-# Bangladeshi voices from the ElevenLabs library: Rakib (deep), Dr Mahmood (TV host), Safayet (formal), Hamim (calm).
-VOICES = 'VizHiwkPO7hXc967v4tE, 6fKdJFZHa5oCXNSVGieE, AyRPttdqoCVGu6Ae3lPx, zVPU9Rf8bHDcntLKA3LY'
+# Bengali voices from the ElevenLabs library: Rakib (deep), Dr Mahmood (TV host), Safayet (formal), Hamim (calm),
+# Arfa (female, gentle).
+VOICES = 'VizHiwkPO7hXc967v4tE, 6fKdJFZHa5oCXNSVGieE, AyRPttdqoCVGu6Ae3lPx, zVPU9Rf8bHDcntLKA3LY, 5WbDBNLwAg4h26Km0GgQ'
 
 
 def use_v4(apps, schema_editor):
     VideoSeries = apps.get_model('data', 'VideoSeries')
     VideoSeries.objects.filter(voice_model='eleven_v3').update(voice_model='eleven_v4')
     VideoSeries.objects.filter(voice_id='').update(voice_id=VOICES)
+    # A brisker news read (1.2 is ElevenLabs' maximum), which also keeps the five-story video inside Facebook's 90 seconds.
+    VideoSeries.objects.filter(voice_speed=1.0).update(voice_speed=1.2)
 
 
 class Migration(migrations.Migration):

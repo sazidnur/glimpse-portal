@@ -1,7 +1,7 @@
 from datetime import time
 
 from django.core.exceptions import ValidationError
-from django.core.validators import MaxValueValidator, MinValueValidator
+from django.core.validators import FileExtensionValidator, MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
 
@@ -898,6 +898,40 @@ class NewsVideo(models.Model):
 
     def __str__(self):
         return f'{self.series} {timezone.localtime(self.publish_at):%Y-%m-%d %H:%M}'
+
+
+class SocialPost(models.Model):
+    """A video uploaded in the admin and posted to the Facebook Page as it is, without the news video pipeline."""
+
+    class Format(models.TextChoices):
+        REEL = 'reel', 'Reel'
+        VIDEO = 'video', 'Video post'
+
+    class Status(models.TextChoices):
+        SCHEDULED = 'scheduled', 'Scheduled'
+        PUBLISHING = 'publishing', 'Publishing'
+        PUBLISHED = 'published', 'Published'
+        FAILED = 'failed', 'Failed'
+
+    video = models.FileField(upload_to='social/', validators=[FileExtensionValidator(['mp4', 'mov'])])
+    caption = models.TextField(help_text='The post text, hashtags included.')
+    facebook_format = models.CharField(
+        'Post as', max_length=8, choices=Format.choices, default=Format.REEL,
+        help_text='Reel: vertical (9:16), 3 to 90 seconds. Video post: any shape or length.')
+    publish_at = models.DateTimeField(default=timezone.now, help_text='Posted within a minute of this time.')
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.SCHEDULED, db_index=True)
+    facebook_id = models.CharField(max_length=64, blank=True, default='')
+    error = models.TextField(blank=True, default='')
+    created_by = models.ForeignKey('auth.User', models.SET_NULL, null=True, blank=True, related_name='+')
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'social_posts'
+        ordering = ['-publish_at']
+
+    def __str__(self):
+        return _truncate(self.caption, 60)
 
 
 def _truncate(text: str, limit: int) -> str:

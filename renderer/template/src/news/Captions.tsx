@@ -8,7 +8,7 @@ import type { NewsShortProps, Word } from "./schema";
 
 type Page = { startMs: number; endMs: number; words: Word[] };
 
-// Group words into pages: break on maxWords or on a pause > 650 ms.
+// Group words into pages: break on maxWords, at the end of a sentence, or on a pause > 650 ms.
 export const paginate = (words: Word[], maxWords: number): Page[] => {
   const pages: Page[] = [];
   let cur: Word[] = [];
@@ -18,7 +18,7 @@ export const paginate = (words: Word[], maxWords: number): Page[] => {
   };
   words.forEach((w, i) => {
     const prev = words[i - 1];
-    if (cur.length >= maxWords || (prev && w.startMs - prev.endMs > 650)) flush();
+    if (cur.length >= maxWords || (prev && (w.startMs - prev.endMs > 650 || /[।?!]$/.test(prev.text)))) flush();
     cur.push(w);
   });
   flush();

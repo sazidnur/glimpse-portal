@@ -66,6 +66,9 @@ export const newsShortSchema = z.object({
       volume: z.number().min(0).max(2).optional(),
       durationMs: z.number().positive().optional(), // lets scenes auto-size
       startAtSeconds: z.number().min(0).optional(), // default: after the intro
+      // Play the file in pieces: seconds `from`–`to` of the file at `at` seconds after the voice starts, which leaves
+      // pauses between stories. Word times are then in that same voice time.
+      segments: z.array(z.object({ from: z.number(), to: z.number(), at: z.number() })).optional(),
     })
     .nullable()
     .optional(),
@@ -116,7 +119,14 @@ export type NewsShortProps = {
     badges: { playStore?: string; appStore?: string };
   };
   scenes: Scene[];
-  voice: { src: string; words: Word[]; volume: number; durationMs?: number; startAtSeconds: number } | null;
+  voice: {
+    src: string;
+    words: Word[];
+    volume: number;
+    durationMs?: number;
+    startAtSeconds: number;
+    segments?: { from: number; to: number; at: number }[];
+  } | null;
   music: { src: string | null; volume: number; loop: boolean };
   sfx: { enabled: boolean; volume: number };
   captions: { enabled: boolean; position: "low" | "mid"; maxWordsPerPage: number };
@@ -193,6 +203,7 @@ export const normalize = (raw: NewsShortInput): NewsShortProps => {
           volume: input.voice.volume ?? 1,
           durationMs: input.voice.durationMs,
           startAtSeconds: input.voice.startAtSeconds ?? introSeconds,
+          segments: input.voice.segments,
         }
       : null,
     music: { src: input.music?.src ?? null, volume: input.music?.volume ?? 0.18, loop: input.music?.loop ?? true },
