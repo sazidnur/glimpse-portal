@@ -926,13 +926,16 @@ VIDEO_STATUS_COLORS = {
     NewsVideo.Status.FAILED: 'danger',
 }
 SCRIPT_EDITABLE = (NewsVideo.Status.REVIEW, NewsVideo.Status.FAILED, NewsVideo.Status.SKIPPED, NewsVideo.Status.CANCELLED)
+TIME_LOCKED = (NewsVideo.Status.PUBLISHING, NewsVideo.Status.PUBLISHED)
 
 
 class NewsVideoForm(forms.ModelForm):
     class Meta:
         model = NewsVideo
-        fields = ['script']
+        fields = ['publish_at', 'script']
         widgets = {'script': PrettyJSONWidget(attrs={'rows': 24})}
+        labels = {'publish_at': 'Publish (Bangladesh)'}
+        help_texts = {'publish_at': 'A time already passed publishes the ready video within a minute.'}
 
     def clean_script(self):
         script = self.cleaned_data['script']
@@ -959,15 +962,25 @@ class NewsVideoAdmin(ModelAdmin):
     ordering = ['-publish_at']
     actions_detail = ['approve', 'retry', 'publish_now', 'cancel']
     fieldsets = [
-        ('Video', {'fields': ('display_preview', 'series', 'display_publish_at', 'display_status', 'error')}),
+        ('Video', {'fields': ('display_preview', 'series', 'publish_at', 'display_status', 'error')}),
         ('Script', {'fields': ('display_issues_detail', 'script', 'display_stories')}),
         ('Published', {'fields': ('display_links', 'published_at', 'approved_by')}),
     ]
 
     def get_readonly_fields(self, request, obj=None):
-        fields = ['display_preview', 'series', 'display_publish_at', 'display_status', 'error',
+        fields = ['display_preview', 'series', 'display_status', 'error',
                   'display_issues_detail', 'display_stories', 'display_links', 'published_at', 'approved_by']
-        return fields if obj and obj.status in SCRIPT_EDITABLE else fields + ['script']
+        if not (obj and obj.status in SCRIPT_EDITABLE):
+            fields.append('script')
+        if not obj or obj.status in TIME_LOCKED:
+            fields.append('publish_at')
+        return fields
+
+    def changeform_view(self, *args, **kwargs):
+        # Editors read and enter times in Bangladesh time; rendered here, as the override ends with this call.
+        with django_timezone.override(BANGLADESH):
+            response = super().changeform_view(*args, **kwargs)
+            return response.render() if hasattr(response, 'render') else response
 
     def has_add_permission(self, request):
         return False
@@ -1061,13 +1074,16 @@ class NewsVideoAdmin(ModelAdmin):
         video = get_object_or_404(NewsVideo.objects.select_related('series'), pk=object_id)
         if not (video.series.publish_facebook or video.series.publish_youtube):
             self.message_user(request, 'Turn on Facebook or YouTube publishing on the series first.', level='warning')
-        elif NewsVideo.objects.filter(pk=video.pk, status=NewsVideo.Status.RENDERED).update(
-                publish_at=django_timezone.now()):
+        # A failed video with a render failed to publish: publishing again only retries the platforms it missed.
+        elif NewsVideo.objects.filter(pk=video.pk, status__in=(NewsVideo.Status.RENDERED, NewsVideo.Status.FAILED)
+                                      ).exclude(video='').update(status=NewsVideo.Status.RENDERED, error='',
+                                                                 publish_at=django_timezone.now()):
             # The upload runs in the worker: in the web request it would hold the only web worker.
             video_publish_due.delay()
             self.message_user(request, 'Publishing now. Refresh in a minute to see the links.')
         else:
-            self.message_user(request, 'Only ready videos can be published.', level='warning')
+            self.message_user(request, 'Only ready videos, or ones that failed to publish, can be published.',
+                              level='warning')
         return redirect(reverse('admin:data_newsvideo_change', args=[object_id]))
 
     @action(description='Cancel', icon='cancel', permissions=['video'])

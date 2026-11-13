@@ -832,7 +832,8 @@ class VideoSeries(models.Model):
         help_text='ElevenLabs voice ID, or several separated by commas: each video gets one of them at random.')
     voice_model = models.CharField(max_length=64, default='eleven_v4',
                                    help_text='ElevenLabs model. Bengali needs eleven_v3 or eleven_v4.')
-    voice_speed = models.FloatField(default=1.0, validators=[MinValueValidator(0.7), MaxValueValidator(1.2)])
+    voice_speed = models.FloatField(default=1.4, validators=[MinValueValidator(0.5), MaxValueValidator(2)],
+                                    help_text='0.5 to 2. 1 is the voice\'s normal pace.')
     music = models.FileField(upload_to='video/music/', blank=True)
     music_volume = models.FloatField(default=0.15, validators=[MinValueValidator(0), MaxValueValidator(1)])
     logo = models.FileField(upload_to='video/logo/', blank=True)
@@ -873,6 +874,8 @@ class NewsVideo(models.Model):
         CANCELLED = 'cancelled', 'Cancelled'
 
     series = models.ForeignKey(VideoSeries, models.PROTECT, related_name='videos')
+    # The series time this video was made for. publish_at starts there but editors may move it.
+    slot = models.DateTimeField(editable=False)
     publish_at = models.DateTimeField()
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFTING, db_index=True)
     news = models.ManyToManyField(News, blank=True, related_name='videos')
@@ -894,10 +897,15 @@ class NewsVideo(models.Model):
     class Meta:
         db_table = 'news_videos'
         ordering = ['-publish_at']
-        constraints = [models.UniqueConstraint(fields=['series', 'publish_at'], name='news_video_slot_unique')]
+        constraints = [models.UniqueConstraint(fields=['series', 'slot'], name='news_video_slot_unique')]
 
     def __str__(self):
         return f'{self.series} {timezone.localtime(self.publish_at):%Y-%m-%d %H:%M}'
+
+    def save(self, *args, **kwargs):
+        if self.slot is None:
+            self.slot = self.publish_at
+        super().save(*args, **kwargs)
 
 
 class SocialPost(models.Model):

@@ -48,7 +48,7 @@ def schedule(now: datetime | None = None) -> list[NewsVideo]:
     created = []
     for series in VideoSeries.objects.filter(enabled=True):
         for publish_at in due_publish_times(series, now):
-            video, new = NewsVideo.objects.get_or_create(series=series, publish_at=publish_at)
+            video, new = NewsVideo.objects.get_or_create(series=series, slot=publish_at, defaults={'publish_at': publish_at})
             if new:
                 created.append(video)
     return created

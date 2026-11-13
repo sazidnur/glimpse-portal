@@ -1,7 +1,9 @@
 import base64
 import shutil
+import subprocess
 import tempfile
 from datetime import datetime, timedelta
+from unittest import skipUnless
 from unittest.mock import patch
 
 import httpx
@@ -69,6 +71,9 @@ class ScheduleTests(MediaTestCase):
         self.assertEqual(video.publish_at, self.at(20, 0))
         self.assertEqual(pipeline.schedule(self.at(18, 5)), [])
         self.assertEqual(video.series, series)
+
+        NewsVideo.objects.filter(pk=video.pk).update(publish_at=self.at(21, 0))
+        self.assertEqual(pipeline.schedule(self.at(18, 10)), [], 'a moved video still fills its slot')
 
     def test_only_on_the_chosen_weekdays(self):
         create_series(weekdays=[1])  # 2026-11-10 is a Tuesday
@@ -217,19 +222,33 @@ class VoiceTests(MediaTestCase):
         reply = {'audio_base64': base64.b64encode(b'mp3').decode(), 'alignment': {
             'characters': list(spoken), 'character_start_times_seconds': [0.1] * len(spoken),
             'character_end_times_seconds': [2.0] * len(spoken)}}
-        with patch('portal.video.voice.httpx.post') as post:
+        with patch('portal.video.voice.httpx.post') as post, \
+                patch('portal.video.voice.stretch', return_value=b'fast mp3') as stretch:
             post.return_value.status_code = 200
             post.return_value.json.return_value = reply
             voice.record(video)
         self.assertEqual(post.call_args.kwargs['json']['text'], spoken)
+        # The default 1.4: ElevenLabs goes up to 1.2, ffmpeg speeds that up the rest of the way.
+        self.assertEqual(post.call_args.kwargs['json']['voice_settings'], {'speed': 1.2})
+        self.assertAlmostEqual(stretch.call_args.args[1], 1.4 / 1.2)
         self.assertEqual(post.call_args.kwargs['json']['language_code'], 'bn')
         used = post.call_args.args[0].split('/')[-2]
         self.assertIn(used, ('voice-a', 'voice-b'))
         self.assertEqual(post.call_args.kwargs['headers'], {'xi-api-key': 'key'})
         video.refresh_from_db()
         self.assertEqual(video.status, Status.QUEUED)
-        self.assertEqual(video.audio.read(), b'mp3')
+        self.assertEqual(video.audio.read(), b'fast mp3')
         self.assertEqual(video.timings['voice'], used)
+        self.assertEqual(video.timings['duration'], round(2.0 * 1.2 / 1.4, 3))
+
+    @skipUnless(shutil.which('ffmpeg'), 'needs ffmpeg')
+    def test_stretch_speeds_up_the_audio(self):
+        made = subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'sine=duration=2', '-f', 'mp3', 'pipe:1'],
+                              capture_output=True, check=True).stdout
+        fast = voice.stretch(made, 2)
+        samples = subprocess.run(['ffmpeg', '-v', 'error', '-i', 'pipe:0', '-ac', '1', '-ar', '8000', '-f', 'u8', 'pipe:1'],
+                                 input=fast, capture_output=True, check=True).stdout
+        self.assertAlmostEqual(len(samples) / 8000, 1.0, delta=0.1)
 
     @override_settings(ELEVENLABS_API_KEY='')
     def test_says_what_is_missing_without_a_key(self):
@@ -495,6 +514,30 @@ class VideoAdminTests(MediaTestCase):
         page = self.client.get(reverse('admin:data_newsvideo_change', args=[self.video.pk]))
         self.assertContains(page, 'Scene 2: Unsupported number')
         self.assertContains(page, 'fuel title')
+
+    def test_the_publish_time_is_edited_in_bangladesh_time_until_published(self):
+        url = reverse('admin:data_newsvideo_change', args=[self.video.pk])
+        NewsVideo.objects.filter(pk=self.video.pk).update(status=Status.RENDERED)
+        self.client.post(url, {'publish_at_0': '2030-01-01', 'publish_at_1': '20:00:00'})
+        self.video.refresh_from_db()
+        self.assertEqual(self.video.publish_at, datetime(2030, 1, 1, 20, 0, tzinfo=BANGLADESH))
+
+        NewsVideo.objects.filter(pk=self.video.pk).update(status=Status.PUBLISHED)
+        self.client.post(url, {'publish_at_0': '2031-01-01', 'publish_at_1': '20:00:00'})
+        self.video.refresh_from_db()
+        self.assertEqual(self.video.publish_at.year, 2030)
+
+    def test_a_video_that_failed_to_publish_can_be_published_again(self):
+        self.video.series.publish_facebook = True
+        self.video.series.save()
+        NewsVideo.objects.filter(pk=self.video.pk).update(status=Status.FAILED, error='Facebook: HTTP 403',
+                                                          video='video/render/out.mp4')
+        with patch('portal.admin.video_publish_due.delay') as publish_task:
+            self.client.get(reverse('admin:data_newsvideo_publish_now', args=[self.video.pk]))
+        publish_task.assert_called_once()
+        self.video.refresh_from_db()
+        self.assertEqual((self.video.status, self.video.error), (Status.RENDERED, ''))
+        self.assertLessEqual(self.video.publish_at, timezone.now())
 
     def test_approving_records_the_voice_next(self):
         with patch('portal.tasks.video_voice.delay') as voice_task, self.captureOnCommitCallbacks(execute=True):

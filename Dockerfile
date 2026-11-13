@@ -8,6 +8,7 @@ ENV TZ=Europe/Helsinki
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
+    ffmpeg \
     libpq-dev \
     gcc \
     tzdata \
