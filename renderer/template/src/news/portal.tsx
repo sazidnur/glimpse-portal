@@ -145,7 +145,8 @@ export const toNewsShort = (series: PortalSeries, input: PortalProps): NewsShort
     series: {
       id: series,
       name: p.series,
-      intro: p.title || undefined,
+      // The daily five's title is its top story, so its intro card leaves it out to keep the stories unspoiled.
+      intro: series === "top5" ? undefined : p.title || undefined,
       date: banglaDate(p.publishAt),
       introSeconds: INTRO_SECONDS,
     },
@@ -217,9 +218,15 @@ export const portalComposition = (series: PortalSeries) => {
     const sharp = await pickSharpest(props);
     const voiceCuts = sharp.audioUrl ? await findCuts(sharp.audioUrl, plan(sharp).starts) : undefined;
     const picked = { ...sharp, voiceCuts };
+    const news = normalize(toNewsShort(series, picked));
+    const layout = layoutFrames(news, NEWS_FPS);
+    // The worker grabs the thumbnail here: the first ranked story with its photo, 1.5 s in once its caption is up,
+    // instead of the text-only intro card.
+    const first = layout.scenes[news.scenes.findIndex((s) => s.kind === "list")];
+    const thumbnailFrame = first ? first.start + Math.min(45, first.duration - 1) : undefined;
     return {
-      props: picked,
-      durationInFrames: layoutFrames(normalize(toNewsShort(series, picked)), NEWS_FPS).total,
+      props: { ...picked, thumbnailFrame },
+      durationInFrames: layout.total,
       fps: NEWS_FPS,
       width: NEWS_WIDTH,
       height: NEWS_HEIGHT,

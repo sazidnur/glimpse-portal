@@ -829,7 +829,8 @@ class VideoSeries(models.Model):
     publish_youtube = models.BooleanField(default=False, help_text='Publish to the YouTube channel as a Short.')
     voice_id = models.CharField(
         max_length=255, blank=True,
-        help_text='ElevenLabs voice ID, or several separated by commas: each video gets one of them at random.')
+        help_text='ElevenLabs voice ID, or several separated by commas: each video gets one of them at random. '
+                  'Repeat an ID to pick it more often.')
     voice_model = models.CharField(max_length=64, default='eleven_v4',
                                    help_text='ElevenLabs model. Bengali needs eleven_v3 or eleven_v4.')
     voice_speed = models.FloatField(default=1.4, validators=[MinValueValidator(0.5), MaxValueValidator(2)],

@@ -84,7 +84,7 @@ async function render({id, composition: compositionId, props}) {
       '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', levelled]);
     await renderStill({
       composition, serveUrl, output: thumbnail, inputProps: props, imageFormat: 'jpeg',
-      frame: Math.min(composition.fps * 2, composition.durationInFrames - 1),
+      frame: composition.props.thumbnailFrame ?? Math.min(composition.fps * 2, composition.durationInFrames - 1),
     });
     result.append('video', await openAsBlob(levelled), 'video.mp4');
     result.append('thumbnail', await openAsBlob(thumbnail), 'thumbnail.jpg');
