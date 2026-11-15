@@ -180,6 +180,11 @@ UNFOLD = {
                         "link": reverse_lazy("admin:data_videoseries_changelist"),
                     },
                     {
+                        "title": _("Templates"),
+                        "icon": "auto_awesome",
+                        "link": reverse_lazy("admin:data_socialrender_changelist"),
+                    },
+                    {
                         "title": _("Posts"),
                         "icon": "upload",
                         "link": reverse_lazy("admin:data_socialpost_changelist"),

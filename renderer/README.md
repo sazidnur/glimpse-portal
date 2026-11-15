@@ -59,7 +59,8 @@ curl -H "Authorization: Token $RENDERER_TOKEN" https://glimpseapp.net/portal/api
 
 ## Social posts
 
-The renderer also makes the admin's **Social posts** that use a template (`/api/social-renders/`). Templates are
+The renderer also makes the reels and cards from the admin's **Templates** page (`/api/social-renders/`); a
+ready one is posted from there through **Social posts**. Templates are
 in `template/src/social/`: the reels `ReelPaper`, `ReelNight`, `ReelOrange` (a 16:9 clip in a card) and
 `ReelVertical` (a 9:16 clip, full screen), and the 1080x1080 cards `CardPhoto`, `CardPaper` and `CardQuote`,
 rendered as one JPG. Props:

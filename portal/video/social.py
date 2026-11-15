@@ -1,6 +1,6 @@
 """Uploads videos to the Facebook Page (as a Reel or a video post) and to YouTube as a Short. Each returns the platform's video ID.
 
-Also makes social posts from a template: transcribes the clip for subtitles if asked, then queues the render."""
+Also makes reels and cards from a template: transcribes the clip for subtitles if asked, then queues the render."""
 from __future__ import annotations
 
 import logging
@@ -10,14 +10,12 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from ..models import NewsVideo, SocialPost
+from ..models import NewsVideo, SocialPost, SocialRender
 
 logger = logging.getLogger(__name__)
 
 GRAPH_URL = 'https://graph.facebook.com/v27.0'
 GRAPH_VIDEO_URL = 'https://graph-video.facebook.com/v27.0'
-# Covers the renderer makes are saved under this prefix, so a re-render replaces them but never an uploaded cover.
-RENDERED_THUMBNAIL = 'render-'
 ELEVENLABS_STT_URL = 'https://api.elevenlabs.io/v1/speech-to-text'
 GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 YOUTUBE_UPLOAD_URL = 'https://www.googleapis.com/upload/youtube/v3/videos'
@@ -90,58 +88,55 @@ def publish_post(post: SocialPost) -> bool:
     upload = {SocialPost.Format.REEL: facebook_reel, SocialPost.Format.PHOTO: facebook_photo}.get(
         post.facebook_format, facebook_video)
     try:
-        post.facebook_id = upload(post.video, post.caption)
+        post.facebook_id = upload(post.media, post.caption)
         post.status, post.published_at, post.error = SocialPost.Status.PUBLISHED, timezone.now(), ''
     except Exception as exc:
         post.status, post.error = SocialPost.Status.FAILED, f'Facebook: {exc}'
-    if post.facebook_id and post.thumbnail and post.facebook_format != SocialPost.Format.PHOTO:
+    cover = post.thumbnail or (post.render.thumbnail if post.render else None)
+    if post.facebook_id and cover and post.facebook_format != SocialPost.Format.PHOTO:
         try:
-            facebook_thumbnail(post.facebook_id, post.thumbnail)
+            facebook_thumbnail(post.facebook_id, cover)
         except Exception as exc:
             post.error = f'Posted, but the thumbnail was not set: {exc}'
     post.save(update_fields=['facebook_id', 'status', 'published_at', 'error'])
     return True
 
 
-def make(post: SocialPost) -> None:
-    """(Re)starts a template post: drops the last render, then transcribes the clip if asked, or else queues the render."""
-    for field in (post.video, post.thumbnail if is_rendered_thumbnail(post) else None):
+def make(render: SocialRender) -> None:
+    """(Re)starts a template render: drops the last result, then transcribes the clip if asked, or else queues it."""
+    for field in (render.file, render.thumbnail):
         if field:
             field.delete(save=False)
-    transcribe_first = post.subtitles and not post.is_card and not post.words
-    post.status = SocialPost.Status.TRANSCRIBING if transcribe_first else SocialPost.Status.QUEUED
-    post.error, post.facebook_id = '', ''
-    post.save()
+    transcribe_first = render.subtitles and not render.is_card and not render.words
+    render.status = SocialRender.Status.TRANSCRIBING if transcribe_first else SocialRender.Status.QUEUED
+    render.error = ''
+    render.save()
     if transcribe_first:
         from ..tasks import social_transcribe
 
-        transaction.on_commit(lambda: social_transcribe.delay(post.id))
+        transaction.on_commit(lambda: social_transcribe.delay(render.id))
 
 
-def is_rendered_thumbnail(post: SocialPost) -> bool:
-    return bool(post.thumbnail) and post.thumbnail.name.rsplit('/', 1)[-1].startswith(RENDERED_THUMBNAIL)
-
-
-def transcribe(post: SocialPost) -> None:
+def transcribe(render: SocialRender) -> None:
     """Word times of the clip's speech from ElevenLabs Scribe, then queues the render."""
     (api_key,) = _settings('ELEVENLABS_API_KEY')
     reply = _json(httpx.post(ELEVENLABS_STT_URL, timeout=600, headers={'xi-api-key': api_key},
                              data={'model_id': 'scribe_v1', 'language_code': 'ben', 'tag_audio_events': 'false',
                                    'timestamps_granularity': 'word'},
-                             files={'file': (post.source.name.rsplit('/', 1)[-1], _read(post.source))}))
-    post.words = [{'text': w['text'], 'startMs': round(w['start'] * 1000), 'endMs': round(w['end'] * 1000)}
-                  for w in reply.get('words', []) if w.get('type', 'word') == 'word' and w['text'].strip()]
-    post.status = SocialPost.Status.QUEUED
-    post.save(update_fields=['words', 'status'])
+                             files={'file': (render.source.name.rsplit('/', 1)[-1], _read(render.source))}))
+    render.words = [{'text': w['text'], 'startMs': round(w['start'] * 1000), 'endMs': round(w['end'] * 1000)}
+                    for w in reply.get('words', []) if w.get('type', 'word') == 'word' and w['text'].strip()]
+    render.status = SocialRender.Status.QUEUED
+    render.save(update_fields=['words', 'status'])
 
 
-def render_props(post: SocialPost) -> dict:
+def render_props(render: SocialRender) -> dict:
     """The template's inputs; reels leave `seconds` out, so the renderer measures the clip."""
-    source = f"{settings.SITE_URL.rstrip('/')}{post.source.url}"
-    props = {'chip': post.chip, 'headline': post.headline, 'credit': post.credit}
-    if post.is_card:
+    source = f"{settings.SITE_URL.rstrip('/')}{render.source.url}"
+    props = {'chip': render.chip, 'headline': render.headline, 'credit': render.credit}
+    if render.is_card:
         return {**props, 'image': source}
-    return {**props, 'clip': source, 'words': post.words if post.subtitles else []}
+    return {**props, 'clip': source, 'words': render.words if render.subtitles else []}
 
 
 def publish_youtube(video: NewsVideo) -> str:
