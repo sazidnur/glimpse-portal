@@ -1,4 +1,5 @@
-// Claims queued news videos from the portal, renders them with the Remotion template, and uploads the MP4 and thumbnail.
+// Claims queued news videos and social posts from the portal, renders them with the Remotion template, and uploads
+// the MP4 and thumbnail (or, for a square news card, the JPG).
 import {bundle} from '@remotion/bundler';
 import {renderMedia, renderStill, selectComposition} from '@remotion/renderer';
 import {execFile} from 'node:child_process';
@@ -35,22 +36,32 @@ for (;;) {
 }
 
 async function claim() {
-  try {
-    const response = await fetch(`${portal}/api/video-renders/claim/`, {method: 'POST', headers});
-    if (response.status === 204) return null;
-    if (!response.ok) throw new Error(`HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
-    return await response.json();
-  } catch (error) {
-    console.error('Claim failed:', error.message);
-    return null;
+  for (const queue of ['video-renders', 'social-renders']) {
+    try {
+      const response = await fetch(`${portal}/api/${queue}/claim/`, {method: 'POST', headers});
+      if (response.status === 204) continue;
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
+      return {...await response.json(), queue};
+    } catch (error) {
+      console.error(`Claim from ${queue} failed:`, error.message);
+    }
   }
+  return null;
 }
 
-async function render({id, composition: compositionId, props}) {
+async function render({id, queue, composition: compositionId, still, props}) {
   const dir = await mkdtemp(path.join(tmpdir(), `video-${id}-`));
   const result = new FormData();
   try {
-    console.log(`Video ${id}: rendering ${compositionId}`);
+    console.log(`${queue} ${id}: rendering ${compositionId}`);
+    if (still) {
+      const composition = await selectComposition({serveUrl, id: compositionId, inputProps: props});
+      const image = path.join(dir, 'card.jpg');
+      await renderStill({composition, serveUrl, output: image, inputProps: props, imageFormat: 'jpeg', jpegQuality: 95});
+      result.append('image', await openAsBlob(image), 'card.jpg');
+      return await report(queue, id, result, dir);
+    }
+    if (props.clip && !props.seconds) props = {...props, seconds: await duration(await download(props.clip, path.join(dir, 'clip')))};
     if (props.audioUrl) {
       const voice = (await loudness(await download(props.audioUrl, path.join(dir, 'voice')))).lufs;
       const music = props.musicUrl ? (await loudness(await download(props.musicUrl, path.join(dir, 'music')))).lufs : REFERENCE_LUFS;
@@ -92,12 +103,16 @@ async function render({id, composition: compositionId, props}) {
     console.error(`Video ${id} failed:`, error);
     result.append('error', String(error?.message ?? error).slice(0, 1000));
   }
+  await report(queue, id, result, dir);
+}
+
+async function report(queue, id, result, dir) {
   try {
-    const response = await fetch(`${portal}/api/video-renders/${id}/`, {method: 'POST', headers, body: result});
-    console.log(`Video ${id}: reported, HTTP ${response.status}`);
+    const response = await fetch(`${portal}/api/${queue}/${id}/`, {method: 'POST', headers, body: result});
+    console.log(`${queue} ${id}: reported, HTTP ${response.status}`);
   } catch (error) {
-    // The portal hands the video out again once the render counts as lost.
-    console.error(`Video ${id}: report failed:`, error.message);
+    // The portal hands the job out again once the render counts as lost.
+    console.error(`${queue} ${id}: report failed:`, error.message);
   } finally {
     await rm(dir, {recursive: true, force: true});
   }
@@ -113,6 +128,14 @@ async function download(url, file) {
   if (!response.ok) throw new Error(`Download of ${url} failed: HTTP ${response.status}`);
   await writeFile(file, Buffer.from(await response.arrayBuffer()));
   return file;
+}
+
+// Length in seconds of a local media file.
+async function duration(file) {
+  const {stdout} = await promisify(execFile)('npx', ['remotion', 'ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]);
+  const seconds = Number(stdout.trim());
+  if (!(seconds > 0)) throw new Error('Could not measure the length of the clip');
+  return seconds;
 }
 
 // Integrated loudness (LUFS) and true peak (dBTP) of a local file.

@@ -57,6 +57,21 @@ To test the template with a real video's props in Remotion Studio, fetch them wi
 curl -H "Authorization: Token $RENDERER_TOKEN" https://glimpseapp.net/portal/api/video-renders/<video id>/
 ```
 
+## Social posts
+
+The renderer also makes the admin's **Social posts** that use a template (`/api/social-renders/`). Templates are
+in `template/src/social/`: the reels `ReelPaper`, `ReelNight`, `ReelOrange` (a 16:9 clip in a card) and
+`ReelVertical` (a 9:16 clip, full screen), and the 1080x1080 cards `CardPhoto`, `CardPaper` and `CardQuote`,
+rendered as one JPG. Props:
+
+```json
+{"clip": "https://…/clip.mp4", "chip": "জাতীয় সংসদ থেকে", "headline": "…", "credit": "সূত্র: সংসদ টিভি",
+ "words": [{"text": "আমরা", "startMs": 500, "endMs": 900}]}
+```
+
+A card takes `image` instead of `clip` and no `words`. The renderer measures the clip's length itself. `words` are
+the subtitles: empty unless the post asked for them, when the portal transcribes the clip with ElevenLabs first.
+
 ## Running it
 
 1. In the admin, create a user `renderer` with the permission "Can change news video", and a token for it (Auth Token).

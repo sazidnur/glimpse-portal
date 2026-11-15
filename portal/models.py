@@ -909,29 +909,65 @@ class NewsVideo(models.Model):
         super().save(*args, **kwargs)
 
 
+VIDEO_FILES = ['mp4', 'mov']
+IMAGE_FILES = ['jpg', 'jpeg', 'png', 'webp']
+
+
 class SocialPost(models.Model):
-    """A video uploaded in the admin and posted to the Facebook Page as it is, without the news video pipeline."""
+    """A video or photo posted to the Facebook Page. It is uploaded as it is, or first made with a template."""
 
     class Format(models.TextChoices):
         REEL = 'reel', 'Reel'
         VIDEO = 'video', 'Video post'
+        PHOTO = 'photo', 'Photo post'
+
+    class Template(models.TextChoices):
+        # Remotion composition ids in renderer/template/src/Root.tsx.
+        NONE = '', 'None: post my file as it is'
+        REEL_PAPER = 'ReelPaper', 'Reel: landscape clip, light'
+        REEL_NIGHT = 'ReelNight', 'Reel: landscape clip, dark'
+        REEL_ORANGE = 'ReelOrange', 'Reel: landscape clip, orange'
+        REEL_VERTICAL = 'ReelVertical', 'Reel: vertical clip, full screen'
+        CARD_PHOTO = 'CardPhoto', 'Square card: full photo'
+        CARD_PAPER = 'CardPaper', 'Square card: light'
+        CARD_QUOTE = 'CardQuote', 'Square card: quote'
 
     class Status(models.TextChoices):
+        TRANSCRIBING = 'transcribing', 'Adding subtitles'
+        QUEUED = 'queued', 'Waiting to render'
+        RENDERING = 'rendering', 'Rendering'
+        READY = 'ready', 'Ready to post'
         SCHEDULED = 'scheduled', 'Scheduled'
         PUBLISHING = 'publishing', 'Publishing'
         PUBLISHED = 'published', 'Published'
         FAILED = 'failed', 'Failed'
 
-    video = models.FileField(upload_to='social/', validators=[FileExtensionValidator(['mp4', 'mov'])])
-    caption = models.TextField(help_text='The post text, hashtags included.')
+    template = models.CharField(max_length=32, choices=Template.choices, blank=True, default='')
+    source = models.FileField(
+        'Clip or photo', upload_to='social/source/', blank=True,
+        validators=[FileExtensionValidator(VIDEO_FILES + IMAGE_FILES)],
+        help_text='What goes into the template: a video clip for a reel, a photo for a card.')
+    chip = models.CharField('Label', max_length=100, blank=True, help_text='Short tag at the top, e.g. জাতীয় সংসদ থেকে. '
+                            'On the quote card, the speaker.')
+    headline = models.CharField(max_length=200, blank=True)
+    credit = models.CharField('Source line', max_length=100, blank=True, help_text='e.g. সূত্র: সংসদ টিভি')
+    subtitles = models.BooleanField(
+        'Add subtitles', default=False,
+        help_text='Reels only. Transcribes the clip\'s speech with ElevenLabs (paid per minute) and shows it word by word.')
+    words = models.JSONField(default=list, blank=True, editable=False)
+    video = models.FileField(
+        'File', upload_to='social/', blank=True, validators=[FileExtensionValidator(VIDEO_FILES + IMAGE_FILES)],
+        help_text='The video or photo that is posted. With a template, it is made for you.')
+    caption = models.TextField(blank=True, help_text='The post text, hashtags included.')
     thumbnail = models.FileField(
         upload_to='social/', blank=True, validators=[FileExtensionValidator(['jpg', 'jpeg', 'png'])],
         help_text='Optional cover image (JPG or PNG). Without one, Facebook picks a frame.')
     facebook_format = models.CharField(
         'Post as', max_length=8, choices=Format.choices, default=Format.REEL,
-        help_text='Reel: vertical (9:16), 3 to 90 seconds. Video post: any shape or length.')
+        help_text='Reel: vertical (9:16), 3 to 90 seconds. Video post: any shape or length. Photo post: an image.')
     publish_at = models.DateTimeField(default=timezone.now, help_text='Posted within a minute of this time.')
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.SCHEDULED, db_index=True)
+    render_started_at = models.DateTimeField(null=True, blank=True, editable=False)
     facebook_id = models.CharField(max_length=64, blank=True, default='')
     error = models.TextField(blank=True, default='')
     created_by = models.ForeignKey('auth.User', models.SET_NULL, null=True, blank=True, related_name='+')
@@ -943,7 +979,37 @@ class SocialPost(models.Model):
         ordering = ['-publish_at']
 
     def __str__(self):
-        return _truncate(self.caption, 60)
+        return _truncate(self.caption or self.headline, 60)
+
+    @property
+    def is_card(self) -> bool:
+        return self.template.startswith('Card')
+
+    def clean(self):
+        errors = {}
+        if self.template:
+            kind = IMAGE_FILES if self.is_card else VIDEO_FILES
+            if not self.source:
+                errors['source'] = 'Upload the clip or photo for the template.'
+            elif _extension(self.source.name) not in kind:
+                errors['source'] = f'This template takes a {"photo" if self.is_card else "video clip"}.'
+            if not self.headline.strip():
+                errors['headline'] = 'The template shows a headline.'
+            if self.is_card != (self.facebook_format == self.Format.PHOTO):
+                errors['facebook_format'] = 'Post a card as a photo post, and a reel as a Reel or video post.'
+        else:
+            if not self.video:
+                errors['video'] = 'Upload the video or photo to post, or pick a template.'
+            elif (_extension(self.video.name) in IMAGE_FILES) != (self.facebook_format == self.Format.PHOTO):
+                errors['facebook_format'] = 'Post an image as a photo post, and a video as a Reel or video post.'
+            if not self.caption.strip():
+                errors['caption'] = 'Write the post text.'
+        if errors:
+            raise ValidationError(errors)
+
+
+def _extension(name: str) -> str:
+    return name.rsplit('.', 1)[-1].lower()
 
 
 def _truncate(text: str, limit: int) -> str:

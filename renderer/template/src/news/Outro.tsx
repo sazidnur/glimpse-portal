@@ -61,18 +61,20 @@ export const Outro: React.FC<{ p: NewsShortProps }> = ({ p }) => {
               }}
             >
               {p.brand.badges.playStore ? (
-                <Img src={resolveSrc(p.brand.badges.playStore)} style={{ height: 96, display: "block" }} />
+                <Img src={resolveSrc(p.brand.badges.playStore)} style={{ height: p.outro.badgeHeight ?? 96, display: "block" }} />
               ) : null}
               {p.brand.badges.appStore ? (
-                <Img src={resolveSrc(p.brand.badges.appStore)} style={{ height: 96, display: "block" }} />
+                <Img src={resolveSrc(p.brand.badges.appStore)} style={{ height: p.outro.badgeHeight ?? 96, display: "block" }} />
               ) : null}
             </div>
           ) : null}
-          <RiseIn delay={20}>
-            <HeroText size={40} weight={600} latin align="center" color={theme.colors.inkSoft}>
-              {p.brand.website}
-            </HeroText>
-          </RiseIn>
+          {p.brand.website ? (
+            <RiseIn delay={20}>
+              <HeroText size={40} weight={600} latin align="center" color={theme.colors.inkSoft}>
+                {p.brand.website}
+              </HeroText>
+            </RiseIn>
+          ) : null}
         </div>
       </AbsoluteFill>
       {p.outro.source ? (

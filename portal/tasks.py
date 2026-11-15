@@ -10,7 +10,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from .models import NewsVideo, OpenAIJob, OpenAIJobLog
+from .models import NewsVideo, OpenAIJob, OpenAIJobLog, SocialPost
 from .openai.client import (
     create_batch,
     extract_structured_output_from_batch_row,
@@ -491,6 +491,20 @@ def video_delete_old_files():
     from .video import pipeline
 
     return pipeline.delete_old_files()
+
+
+@shared_task(name='portal.tasks.social_transcribe')
+def social_transcribe(post_id: int):
+    from .video import social
+
+    post = SocialPost.objects.filter(pk=post_id, status=SocialPost.Status.TRANSCRIBING).first()
+    if not post:
+        return
+    try:
+        social.transcribe(post)
+    except Exception as exc:
+        logger.exception('Subtitles for social post %s failed', post_id)
+        SocialPost.objects.filter(pk=post_id).update(status=SocialPost.Status.FAILED, error=f'Subtitles: {exc}')
 
 
 def video_continue(video: NewsVideo) -> None:

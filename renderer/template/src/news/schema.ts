@@ -130,7 +130,7 @@ export type NewsShortProps = {
   music: { src: string | null; volume: number; loop: boolean };
   sfx: { enabled: boolean; volume: number };
   captions: { enabled: boolean; position: "low" | "mid"; maxWordsPerPage: number };
-  outro: { enabled: boolean; cta: string; source?: string; seconds: number; showBadges: boolean };
+  outro: { enabled: boolean; cta: string; source?: string; seconds: number; showBadges: boolean; badgeHeight?: number };
 };
 
 export const DEFAULTS = {

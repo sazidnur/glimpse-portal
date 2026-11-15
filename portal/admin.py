@@ -20,6 +20,7 @@ from rest_framework.authtoken.models import TokenProxy
 
 from api.v1.resources import news_cache, video_cache, metadata_cache, rebuild_metadata_cache
 from .models import (
+    IMAGE_FILES,
     Categories,
     Divisions,
     Extradetails,
@@ -1096,37 +1097,53 @@ class NewsVideoAdmin(ModelAdmin):
 
 
 POST_STATUS_COLORS = {
+    SocialPost.Status.TRANSCRIBING: 'info',
+    SocialPost.Status.QUEUED: 'info',
+    SocialPost.Status.RENDERING: 'info',
+    SocialPost.Status.READY: 'warning',
     SocialPost.Status.SCHEDULED: 'info',
     SocialPost.Status.PUBLISHING: 'info',
     SocialPost.Status.PUBLISHED: 'success',
     SocialPost.Status.FAILED: 'danger',
 }
+POST_TEMPLATE_FIELDS = ('template', 'source', 'chip', 'headline', 'credit', 'subtitles')
+POST_FIELDS = ('video', 'thumbnail', 'caption', 'facebook_format', 'publish_at')
+POST_EDITABLE = (SocialPost.Status.READY, SocialPost.Status.SCHEDULED, SocialPost.Status.FAILED)
 
 
 @admin.register(SocialPost)
 class SocialPostAdmin(ModelAdmin):
-    list_display = ['display_caption', 'facebook_format', 'display_publish_at', 'display_status']
-    list_filter = ['status', 'facebook_format']
+    list_display = ['display_caption', 'template', 'facebook_format', 'display_publish_at', 'display_status']
+    list_filter = ['status', 'facebook_format', 'template']
     list_filter_submit = True
-    actions_detail = ['publish_now', 'retry']
+    actions_detail = ['publish_now', 'schedule', 'retry']
     fieldsets = [
-        ('Post', {'fields': ('video', 'thumbnail', 'caption', 'facebook_format', 'publish_at')}),
+        ('Template', {'fields': POST_TEMPLATE_FIELDS, 'description':
+            'Pick a template to have the post made for you: upload the clip or photo and write the headline. '
+            'You can download the result here, then add the caption and post it.'}),
+        ('Post', {'fields': POST_FIELDS}),
         ('Status', {'fields': ('display_preview', 'display_status', 'error', 'display_link', 'published_at',
                                'created_by')}),
     ]
     readonly_fields = ['display_preview', 'display_status', 'error', 'display_link', 'published_at', 'created_by']
 
     def get_readonly_fields(self, request, obj=None):
-        locked = obj and obj.status != SocialPost.Status.SCHEDULED
-        return self.readonly_fields + (['video', 'thumbnail', 'caption', 'facebook_format', 'publish_at']
-                                       if locked else [])
+        if obj and obj.status not in POST_EDITABLE:
+            return self.readonly_fields + list(POST_TEMPLATE_FIELDS + POST_FIELDS)
+        # A template makes the file; editing the template fields makes it again.
+        return self.readonly_fields + (['video'] if obj and obj.template else [])
 
     def save_model(self, request, obj, form, change):
         if not change:
             obj.created_by = request.user
+        if 'source' in form.changed_data:
+            obj.words = []
         super().save_model(request, obj, form, change)
-        missing = [name for name in ('FACEBOOK_PAGE_ID', 'FACEBOOK_PAGE_TOKEN')
-                   if not str(getattr(settings, name, '') or '').strip()]
+        if obj.template and (not change or set(POST_TEMPLATE_FIELDS) & set(form.changed_data)):
+            video_social.make(obj)
+            self.message_user(request, 'Making the post. Refresh in a few minutes to preview and download it.')
+        needed = ['FACEBOOK_PAGE_ID', 'FACEBOOK_PAGE_TOKEN'] + (['ELEVENLABS_API_KEY'] if obj.subtitles else [])
+        missing = [name for name in needed if not str(getattr(settings, name, '') or '').strip()]
         if missing:
             self.message_user(request, f'Missing: {", ".join(missing)}. The post fails until they are set.',
                               level='warning')
@@ -1147,36 +1164,63 @@ class SocialPostAdmin(ModelAdmin):
     def display_preview(self, obj):
         if not obj.video:
             return '—'
-        return format_html('<video src="{}" poster="{}" controls preload="metadata" '
-                           'style="max-height:640px;border-radius:8px"></video>',
-                           obj.video.url, obj.thumbnail.url if obj.thumbnail else '')
+        if obj.video.name.rsplit('.', 1)[-1].lower() in IMAGE_FILES:
+            media = format_html('<img src="{}" style="max-height:540px;border-radius:8px">', obj.video.url)
+        else:
+            media = format_html('<video src="{}" poster="{}" controls preload="metadata" '
+                                'style="max-height:640px;border-radius:8px"></video>',
+                                obj.video.url, obj.thumbnail.url if obj.thumbnail else '')
+        return format_html('{}<a href="{}" download class="underline block mt-2">Download</a>', media, obj.video.url)
 
     @display(description='On Facebook')
     def display_link(self, obj):
         if not obj.facebook_id:
             return '—'
-        url = (f'https://www.facebook.com/reel/{obj.facebook_id}' if obj.facebook_format == SocialPost.Format.REEL
-               else f'https://www.facebook.com/watch/?v={obj.facebook_id}')
+        url = {SocialPost.Format.REEL: f'https://www.facebook.com/reel/{obj.facebook_id}',
+               SocialPost.Format.PHOTO: f'https://www.facebook.com/photo/?fbid={obj.facebook_id}'}.get(
+            obj.facebook_format, f'https://www.facebook.com/watch/?v={obj.facebook_id}')
         return format_html('<a href="{}" target="_blank" class="underline">Open</a>', url)
 
     @action(description='Publish now', icon='publish')
     def publish_now(self, request, object_id):
-        if SocialPost.objects.filter(pk=object_id, status=SocialPost.Status.SCHEDULED).update(
-                publish_at=django_timezone.now()):
-            video_publish_due.delay()
-            self.message_user(request, 'Posting now. Refresh in a minute to see the link.')
+        return self._schedule(request, object_id, now=True)
+
+    @action(description='Schedule', icon='schedule')
+    def schedule(self, request, object_id):
+        return self._schedule(request, object_id, now=False)
+
+    def _schedule(self, request, object_id, now):
+        post = SocialPost.objects.get(pk=object_id)
+        if post.status not in (SocialPost.Status.READY, SocialPost.Status.SCHEDULED):
+            self.message_user(request, 'Only a ready or scheduled post can be posted.', level='warning')
+        elif not post.caption.strip():
+            self.message_user(request, 'Write the caption first, and save.', level='warning')
         else:
-            self.message_user(request, 'Only scheduled posts can be posted.', level='warning')
+            post.status = SocialPost.Status.SCHEDULED
+            if now:
+                post.publish_at = django_timezone.now()
+            post.save(update_fields=['status', 'publish_at'])
+            if now:
+                video_publish_due.delay()
+                self.message_user(request, 'Posting now. Refresh in a minute to see the link.')
+            else:
+                self.message_user(request, f'Posts at {post.publish_at.astimezone(BANGLADESH):%Y-%m-%d %H:%M} '
+                                           '(Bangladesh).')
         return redirect(reverse('admin:data_socialpost_change', args=[object_id]))
 
     @action(description='Retry', icon='replay')
     def retry(self, request, object_id):
-        if SocialPost.objects.filter(pk=object_id, status=SocialPost.Status.FAILED).update(
-                status=SocialPost.Status.SCHEDULED, publish_at=django_timezone.now(), error=''):
+        post = SocialPost.objects.filter(pk=object_id, status=SocialPost.Status.FAILED).first()
+        if not post:
+            self.message_user(request, 'Only failed posts can be retried.', level='warning')
+        elif post.template and not post.video:
+            video_social.make(post)
+            self.message_user(request, 'Making the post again. Refresh in a few minutes.')
+        else:
+            post.status, post.publish_at, post.error = SocialPost.Status.SCHEDULED, django_timezone.now(), ''
+            post.save(update_fields=['status', 'publish_at', 'error'])
             video_publish_due.delay()
             self.message_user(request, 'Posting again. Refresh in a minute to see the link.')
-        else:
-            self.message_user(request, 'Only failed posts can be retried.', level='warning')
         return redirect(reverse('admin:data_socialpost_change', args=[object_id]))
 
 

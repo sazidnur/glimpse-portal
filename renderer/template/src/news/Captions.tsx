@@ -18,7 +18,7 @@ export const paginate = (words: Word[], maxWords: number): Page[] => {
   };
   words.forEach((w, i) => {
     const prev = words[i - 1];
-    if (cur.length >= maxWords || (prev && (w.startMs - prev.endMs > 650 || /[।?!]$/.test(prev.text)))) flush();
+    if (cur.length >= maxWords || (prev && ((prev as Word & { last?: boolean }).last || w.startMs - prev.endMs > 650 || /[।?!]$/.test(prev.text)))) flush();
     cur.push(w);
   });
   flush();

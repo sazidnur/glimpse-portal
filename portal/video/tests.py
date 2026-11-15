@@ -9,6 +9,7 @@ from unittest.mock import patch
 import httpx
 
 from django.contrib.auth.models import Permission, User
+from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
@@ -21,7 +22,7 @@ from api.v1.serializers import NewsDetailSerializer
 from portal.models import (Categories, News, NewsArticle, NewsVideo, PushNotification, SocialPost, Sourcealias,
                            VideoSeries)
 from portal.push.digest import BANGLADESH
-from portal.tasks import video_draft, video_publish_due
+from portal.tasks import social_transcribe, video_draft, video_publish_due
 
 from . import pipeline, social, voice
 
@@ -465,6 +466,157 @@ class SocialPostTests(MediaTestCase):
         delay.assert_called_once()
         post.refresh_from_db()
         self.assertLess(post.publish_at, timezone.now())
+
+
+class SocialTemplateTests(MediaTestCase):
+    def setUp(self):
+        super().setUp()
+        user = User.objects.create_user('renderer')
+        user.user_permissions.add(Permission.objects.get(codename='change_newsvideo'))
+        self.api = APIClient()
+        self.api.credentials(HTTP_AUTHORIZATION=f'Token {Token.objects.create(user=user).key}')
+
+    def post(self, template='ReelPaper', source='clip.mp4', **fields):
+        defaults = dict(headline='শিরোনাম', chip='সংসদ', credit='সূত্র: সংসদ টিভি',
+                        facebook_format='photo' if template.startswith('Card') else 'reel')
+        post = SocialPost(template=template, **{**defaults, **fields})
+        post.source.save(source, ContentFile(b'src'))
+        return post
+
+    def claim(self):
+        return self.api.post(reverse('api_social_render_claim'))
+
+    def result(self, post, **files):
+        return self.api.post(reverse('api_social_render_result', args=[post.pk]), files)
+
+    def test_a_reel_without_subtitles_is_queued_without_calling_elevenlabs(self):
+        post = self.post()
+        with patch('portal.video.social.httpx.post') as http, patch('portal.tasks.social_transcribe.delay') as task, \
+                self.captureOnCommitCallbacks(execute=True):
+            social.make(post)
+        http.assert_not_called()
+        task.assert_not_called()
+        job = self.claim().json()
+        self.assertEqual((job['composition'], job['still']), ('ReelPaper', False))
+        self.assertTrue(job['props']['clip'].startswith('https://glimpseapp.net/portal/media/social/source/'))
+        self.assertEqual((job['props']['headline'], job['props']['words']), ('শিরোনাম', []))
+        self.assertNotIn('seconds', job['props'])
+        self.assertEqual(self.claim().status_code, 204)
+
+    @override_settings(ELEVENLABS_API_KEY='key')
+    def test_subtitles_are_transcribed_with_elevenlabs_before_the_render(self):
+        post = self.post(subtitles=True)
+        with patch('portal.tasks.social_transcribe.delay') as task, self.captureOnCommitCallbacks(execute=True):
+            social.make(post)
+        task.assert_called_once_with(post.id)
+        self.assertEqual(post.status, SocialPost.Status.TRANSCRIBING)
+        self.assertEqual(self.claim().status_code, 204)
+        words = [{'text': 'আমরা', 'start': 0.5, 'end': 0.9, 'type': 'word'},
+                 {'text': ' ', 'start': 0.9, 'end': 1.0, 'type': 'spacing'},
+                 {'text': '(হাসি)', 'start': 1.0, 'end': 1.4, 'type': 'audio_event'}]
+        with patch('portal.video.social.httpx.post', return_value=httpx.Response(200, json={'words': words})) as http:
+            social_transcribe(post.id)
+        self.assertEqual(http.call_args.args[0], 'https://api.elevenlabs.io/v1/speech-to-text')
+        self.assertEqual(http.call_args.kwargs['headers'], {'xi-api-key': 'key'})
+        self.assertEqual(http.call_args.kwargs['files']['file'][1], b'src')
+        self.assertEqual(self.claim().json()['props']['words'], [{'text': 'আমরা', 'startMs': 500, 'endMs': 900}])
+
+    @override_settings(ELEVENLABS_API_KEY='key')
+    def test_a_failed_transcription_fails_the_post(self):
+        post = self.post(subtitles=True)
+        social.make(post)
+        with patch('portal.video.social.httpx.post', return_value=httpx.Response(401, json={'detail': 'no'})):
+            social_transcribe(post.id)
+        post.refresh_from_db()
+        self.assertEqual(post.status, SocialPost.Status.FAILED)
+        self.assertTrue(post.error.startswith('Subtitles: HTTP 401'))
+
+    def test_a_card_renders_as_a_still_and_waits_to_be_posted(self):
+        post = self.post('CardQuote', 'photo.jpg')
+        social.make(post)
+        job = self.claim().json()
+        self.assertEqual((job['composition'], job['still']), ('CardQuote', True))
+        self.assertTrue(job['props']['image'].endswith('.jpg'))
+        self.assertEqual(self.result(post, image=SimpleUploadedFile('card.jpg', b'jpg')).status_code, 200)
+        post.refresh_from_db()
+        self.assertEqual(post.status, SocialPost.Status.READY)
+        self.assertTrue(post.video.name.endswith('.jpg'))
+        self.assertEqual(post.video.read(), b'jpg')
+
+    def test_making_again_replaces_the_render_and_its_cover_but_not_an_uploaded_cover(self):
+        post = self.post()
+        social.make(post)
+        self.claim()
+        self.result(post, video=SimpleUploadedFile('v.mp4', b'mp4'), thumbnail=SimpleUploadedFile('t.jpg', b'jpg'))
+        post.refresh_from_db()
+        self.assertTrue(social.is_rendered_thumbnail(post))
+        social.make(post)
+        self.assertEqual((bool(post.video), bool(post.thumbnail), post.status), (False, False, SocialPost.Status.QUEUED))
+
+        post.thumbnail.save('mine.jpg', ContentFile(b'mine'))
+        self.claim()
+        self.result(post, video=SimpleUploadedFile('v.mp4', b'mp4'), thumbnail=SimpleUploadedFile('t.jpg', b'jpg'))
+        post.refresh_from_db()
+        self.assertEqual(post.thumbnail.read(), b'mine')
+
+    def test_a_render_error_fails_the_post_and_retry_makes_it_again(self):
+        post = self.post()
+        social.make(post)
+        self.claim()
+        self.result(post, error='Chrome crashed')
+        post.refresh_from_db()
+        self.assertEqual((post.status, post.error), (SocialPost.Status.FAILED, 'Render failed: Chrome crashed'))
+        self.client.force_login(User.objects.create_superuser('admin', 'a@example.com', 'x'))
+        self.client.get(reverse('admin:data_socialpost_retry', args=[post.pk]))
+        post.refresh_from_db()
+        self.assertEqual((post.status, post.error), (SocialPost.Status.QUEUED, ''))
+
+    def test_the_file_must_suit_the_template_and_the_format(self):
+        cases = [
+            (self.post('CardPhoto', 'clip.mp4'), 'source'),
+            (self.post(headline=''), 'headline'),
+            (self.post(facebook_format='photo'), 'facebook_format'),
+        ]
+        plain = SocialPost(caption='খবর', facebook_format='reel')
+        plain.video.save('card.jpg', ContentFile(b'jpg'))
+        cases.append((plain, 'facebook_format'))
+        for post, field in cases:
+            with self.assertRaises(ValidationError) as caught:
+                post.clean()
+            self.assertIn(field, caught.exception.message_dict)
+        self.post().clean()  # no caption yet is fine: it is written after the render
+
+    @override_settings(FACEBOOK_PAGE_ID='page', FACEBOOK_PAGE_TOKEN='token')
+    def test_a_photo_post_goes_to_the_pages_photos(self):
+        post = SocialPost(caption='খবর', facebook_format=SocialPost.Format.PHOTO)
+        post.video.save('card.jpg', ContentFile(b'jpg'))
+        with patch('portal.video.social.httpx.post', return_value=httpx.Response(200, json={'id': 'p1'})) as upload:
+            self.assertEqual(social.publish_posts_due(), [post.id])
+        self.assertEqual(upload.call_args.args[0], 'https://graph.facebook.com/v27.0/page/photos')
+        self.assertEqual(upload.call_args.kwargs['data']['message'], 'খবর')
+        post.refresh_from_db()
+        self.assertEqual((post.status, post.facebook_id), (SocialPost.Status.PUBLISHED, 'p1'))
+
+    @override_settings(STORAGES={'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+                                 'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'}})
+    def test_the_admin_makes_a_post_from_a_template_and_posts_it_once_captioned(self):
+        self.client.force_login(User.objects.create_superuser('admin', 'a@example.com', 'x'))
+        response = self.client.post(reverse('admin:data_socialpost_add'), {
+            'template': 'ReelVertical', 'source': SimpleUploadedFile('clip.mp4', b'mp4', content_type='video/mp4'),
+            'headline': 'শিরোনাম', 'facebook_format': 'reel', 'publish_at_0': '2030-01-01', 'publish_at_1': '10:00:00'})
+        self.assertEqual(response.status_code, 302)
+        post = SocialPost.objects.get()
+        self.assertEqual(post.status, SocialPost.Status.QUEUED)
+        SocialPost.objects.filter(pk=post.pk).update(status=SocialPost.Status.READY)
+        with patch('portal.admin.video_publish_due.delay') as delay:
+            self.client.get(reverse('admin:data_socialpost_publish_now', args=[post.pk]))
+            delay.assert_not_called()  # no caption yet
+            SocialPost.objects.filter(pk=post.pk).update(caption='খবর #বাংলাদেশ')
+            self.client.get(reverse('admin:data_socialpost_publish_now', args=[post.pk]))
+        delay.assert_called_once()
+        post.refresh_from_db()
+        self.assertEqual(post.status, SocialPost.Status.SCHEDULED)
+        self.assertEqual(self.client.get(reverse('admin:data_socialpost_change', args=[post.pk])).status_code, 200)
 
 
 class MediaViewTests(MediaTestCase):

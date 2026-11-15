@@ -16,7 +16,8 @@ from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ..models import NewsVideo, Sourcealias
+from ..models import NewsVideo, SocialPost, Sourcealias
+from . import social
 from .pipeline import fail, source_name
 
 Status = NewsVideo.Status
@@ -73,6 +74,50 @@ class RenderResultView(APIView):
         video.error = ''
         video.save(update_fields=['video', 'thumbnail', 'status', 'error', 'updated_at'])
         return Response({'status': video.status})
+
+
+class SocialRenderClaimView(APIView):
+    """Hands out the next social post that waits for its template render."""
+    permission_classes = [IsAuthenticated, CanRenderVideos]
+
+    def post(self, request):
+        Post = SocialPost.Status
+        with transaction.atomic():
+            post = (SocialPost.objects.select_for_update(skip_locked=True)
+                    .filter(Q(status=Post.QUEUED)
+                            | Q(status=Post.RENDERING, render_started_at__lt=timezone.now() - STALE_RENDER))
+                    .order_by('created_at').first())
+            if not post:
+                return Response(status=204)
+            post.status, post.render_started_at = Post.RENDERING, timezone.now()
+            post.save(update_fields=['status', 'render_started_at'])
+        return Response({'id': post.id, 'composition': post.template, 'still': post.is_card,
+                         'props': social.render_props(post)})
+
+
+class SocialRenderResultView(APIView):
+    permission_classes = [IsAuthenticated, CanRenderVideos]
+
+    def post(self, request, pk):
+        post = get_object_or_404(SocialPost, pk=pk, status=SocialPost.Status.RENDERING)
+        error = str(request.data.get('error') or '').strip()
+        file = request.FILES.get('image' if post.is_card else 'video')
+        if not error and not file:
+            return Response({'error': 'Send the render as "video" (or "image" for a card), or an "error".'}, status=400)
+        if error:
+            post.status, post.error = SocialPost.Status.FAILED, f'Render failed: {error}'
+            post.save(update_fields=['status', 'error'])
+            return Response({'status': post.status})
+        name = uuid.uuid4().hex
+        post.video.save(f'{name}.{"jpg" if post.is_card else "mp4"}', file, save=False)
+        thumbnail = request.FILES.get('thumbnail')
+        if thumbnail and (not post.thumbnail or social.is_rendered_thumbnail(post)):
+            if post.thumbnail:
+                post.thumbnail.delete(save=False)
+            post.thumbnail.save(f'{social.RENDERED_THUMBNAIL}{name}.jpg', thumbnail, save=False)
+        post.status, post.error = SocialPost.Status.READY, ''
+        post.save(update_fields=['video', 'thumbnail', 'status', 'error'])
+        return Response({'status': post.status})
 
 
 def render_props(video: NewsVideo) -> dict:
