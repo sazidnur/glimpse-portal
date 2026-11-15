@@ -57,7 +57,8 @@ async function render({id, queue, composition: compositionId, still, props}) {
     if (still) {
       const composition = await selectComposition({serveUrl, id: compositionId, inputProps: props});
       const image = path.join(dir, 'card.jpg');
-      await renderStill({composition, serveUrl, output: image, inputProps: props, imageFormat: 'jpeg', jpegQuality: 95});
+      // Twice the size: Facebook shows photos up to 2048 px wide, so text stays sharp after its own compression.
+      await renderStill({composition, serveUrl, output: image, inputProps: props, imageFormat: 'jpeg', jpegQuality: 95, scale: 2});
       result.append('image', await openAsBlob(image), 'card.jpg');
       return await report(queue, id, result, dir);
     }
@@ -78,7 +79,9 @@ async function render({id, queue, composition: compositionId, still, props}) {
     let logged = 0;
     await renderMedia({
       // Facebook and YouTube re-encode every upload; a high-bitrate source keeps text and photos sharp after that.
-      composition, serveUrl, codec: 'h264', videoBitrate: '6M', outputLocation: video, inputProps: props, concurrency,
+      composition, serveUrl, codec: 'h264', outputLocation: video, inputProps: props, concurrency,
+      // A template reel is real footage, often fast sport: more bits and sharper frames than the text-and-photo series.
+      ...(queue === 'social-renders' ? {videoBitrate: '10M', jpegQuality: 95} : {videoBitrate: '6M'}),
       chromiumOptions: {enableMultiProcessOnLinux: true},
       onProgress: ({progress}) => {
         if (progress - logged >= 0.1) {
