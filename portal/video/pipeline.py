@@ -24,7 +24,7 @@ Status = NewsVideo.Status
 MAX_CANDIDATES = 300
 ARTICLE_CHARS = 6000
 STUCK_AFTER = timedelta(minutes=30)
-KEEP_FILES = timedelta(days=30)
+KEEP_FILES = timedelta(days=14)
 
 
 def due_publish_times(series: VideoSeries, now: datetime) -> list[datetime]:
@@ -102,6 +102,16 @@ def approve(video: NewsVideo, user) -> bool:
     return True
 
 
+def render_again(video: NewsVideo) -> bool:
+    """Sends a ready or published video to the renderer again, e.g. after its old render was deleted.
+
+    It needs only the script and the voice it already has. A published video is not posted again."""
+    if not video.audio:
+        return False
+    return bool(NewsVideo.objects.filter(pk=video.pk, status__in=(Status.RENDERED, Status.PUBLISHED)).update(
+        status=Status.QUEUED, error='', updated_at=timezone.now()))
+
+
 def retry(video: NewsVideo) -> bool:
     """Continues a failed, skipped or cancelled video from the furthest step it reached."""
     if video.status not in (Status.FAILED, Status.SKIPPED, Status.CANCELLED):
@@ -169,15 +179,16 @@ def stuck(now: datetime | None = None) -> list[NewsVideo]:
 
 
 def delete_old_files(now: datetime | None = None) -> int:
-    """Frees disk: keeps each video's record and script, drops its audio and renders after KEEP_FILES."""
+    """Frees disk: drops each video's render after KEEP_FILES. The record, script and voice stay, so Render again
+    can make it again without recording a new voice."""
     old = NewsVideo.objects.filter(publish_at__lt=(now or timezone.now()) - KEEP_FILES).exclude(
-        audio='', video='', thumbnail='')
+        video='', thumbnail='')
     count = 0
     for video in old:
-        for field in (video.audio, video.video, video.thumbnail):
+        for field in (video.video, video.thumbnail):
             if field:
                 field.delete(save=False)
-        video.save(update_fields=['audio', 'video', 'thumbnail', 'updated_at'])
+        video.save(update_fields=['video', 'thumbnail', 'updated_at'])
         count += 1
     return count
 

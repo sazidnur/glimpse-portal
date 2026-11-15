@@ -488,9 +488,9 @@ def video_publish_due():
 
 @shared_task(name='portal.tasks.video_delete_old_files')
 def video_delete_old_files():
-    from .video import pipeline
+    from .video import pipeline, social
 
-    return pipeline.delete_old_files()
+    return pipeline.delete_old_files() + social.delete_old_files()
 
 
 @shared_task(name='portal.tasks.social_transcribe')

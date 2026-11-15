@@ -70,7 +70,8 @@ class RenderResultView(APIView):
                 field.delete(save=False)
             if upload:
                 field.save(f'{name}.{extension}', upload, save=False)
-        video.status = Status.RENDERED
+        # A published video rendered again stays published; it is not posted a second time.
+        video.status = Status.PUBLISHED if video.published_at else Status.RENDERED
         video.error = ''
         video.save(update_fields=['video', 'thumbnail', 'status', 'error', 'updated_at'])
         return Response({'status': video.status})

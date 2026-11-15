@@ -102,6 +102,28 @@ def publish_post(post: SocialPost) -> bool:
     return True
 
 
+def delete_old_files(now=None) -> int:
+    """Frees disk like the news videos do: after KEEP_FILES, drops renders and posted uploads but keeps each record.
+
+    A template keeps its clip or photo, so Render again can make it again. Nothing still waiting loses its file: a
+    scheduled or publishing post, a render such a post will use, or a render that is not done yet."""
+    from .pipeline import KEEP_FILES
+
+    cutoff = (now or timezone.now()) - KEEP_FILES
+    waiting = [SocialPost.Status.SCHEDULED, SocialPost.Status.PUBLISHING]
+    renders = (SocialRender.objects
+               .filter(created_at__lt=cutoff, status__in=[SocialRender.Status.READY, SocialRender.Status.FAILED])
+               .exclude(posts__status__in=waiting).exclude(file='', thumbnail=''))
+    posts = SocialPost.objects.filter(publish_at__lt=cutoff).exclude(status__in=waiting).exclude(video='', thumbnail='')
+    old = [(render, ('file', 'thumbnail')) for render in renders] + [(post, ('video', 'thumbnail')) for post in posts]
+    for record, names in old:
+        for name in names:
+            if getattr(record, name):
+                getattr(record, name).delete(save=False)
+        record.save(update_fields=list(names))
+    return len(old)
+
+
 def make(render: SocialRender) -> None:
     """(Re)starts a template render: drops the last result, then transcribes the clip if asked, or else queues it."""
     for field in (render.file, render.thumbnail):

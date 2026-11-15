@@ -313,6 +313,26 @@ class RendererApiTests(MediaTestCase):
         self.video.refresh_from_db()
         self.assertEqual((self.video.status, self.video.error), (Status.FAILED, 'Render failed: Chrome crashed'))
 
+    def test_a_published_video_rendered_again_stays_published_and_is_not_posted_again(self):
+        published_at = timezone.now() - timedelta(days=20)
+        NewsVideo.objects.filter(pk=self.video.pk).update(status=Status.PUBLISHED, published_at=published_at,
+                                                          facebook_id='fb1')
+        self.video.refresh_from_db()
+        self.assertTrue(pipeline.render_again(self.video))
+        self.assertEqual(self.claim().status_code, 200)
+        self.api.post(reverse('api_video_render_result', args=[self.video.pk]),
+                      {'video': SimpleUploadedFile('out.mp4', b'mp4', content_type='video/mp4')})
+        self.video.refresh_from_db()
+        self.assertEqual((self.video.status, self.video.published_at, self.video.video.read()),
+                         (Status.PUBLISHED, published_at, b'mp4'))
+        self.assertEqual(pipeline.publish_due(), [])
+
+    def test_only_a_video_with_its_voice_can_be_rendered_again(self):
+        NewsVideo.objects.filter(pk=self.video.pk).update(status=Status.RENDERED)
+        self.video.refresh_from_db()
+        self.video.audio.delete()
+        self.assertFalse(pipeline.render_again(self.video))
+
     def test_needs_the_video_permission(self):
         api = APIClient()
         api.credentials(HTTP_AUTHORIZATION=f'Token {Token.objects.create(user=User.objects.create_user("x")).key}')
@@ -356,13 +376,16 @@ class PublishTests(MediaTestCase):
         self.rendered()
         self.assertEqual(pipeline.publish_due(), [])
 
-    def test_old_files_are_deleted_but_the_record_stays(self):
+    def test_old_renders_are_deleted_but_the_record_and_voice_stay(self):
         video = self.rendered()
-        NewsVideo.objects.filter(pk=video.pk).update(publish_at=timezone.now() - timedelta(days=31))
+        video.audio.save('voice.mp3', ContentFile(b'mp3'))
+        NewsVideo.objects.filter(pk=video.pk).update(publish_at=timezone.now() - timedelta(days=13))
+        self.assertEqual(pipeline.delete_old_files(), 0)
+        NewsVideo.objects.filter(pk=video.pk).update(publish_at=timezone.now() - timedelta(days=15))
         self.assertEqual(pipeline.delete_old_files(), 1)
         video.refresh_from_db()
         self.assertFalse(video.video)
-        self.assertEqual(video.script['title'], 'শিরোনাম')
+        self.assertEqual((video.script['title'], video.audio.read()), ('শিরোনাম', b'mp3'))
 
 
 class SocialTests(MediaTestCase):
@@ -552,7 +575,7 @@ class SocialTemplateTests(MediaTestCase):
         self.assertEqual((bool(render.file), bool(render.thumbnail), render.status),
                          (False, False, SocialRender.Status.QUEUED))
 
-    def test_a_render_error_fails_it_and_retry_renders_again(self):
+    def test_a_render_error_fails_it_and_render_again_makes_it_again(self):
         render = self.render()
         social.make(render)
         self.claim()
@@ -560,7 +583,7 @@ class SocialTemplateTests(MediaTestCase):
         render.refresh_from_db()
         self.assertEqual((render.status, render.error), (SocialRender.Status.FAILED, 'Render failed: Chrome crashed'))
         self.client.force_login(User.objects.create_superuser('admin', 'a@example.com', 'x'))
-        self.client.get(reverse('admin:data_socialrender_retry', args=[render.pk]))
+        self.client.get(reverse('admin:data_socialrender_render_again', args=[render.pk]))
         render.refresh_from_db()
         self.assertEqual((render.status, render.error), (SocialRender.Status.QUEUED, ''))
 
@@ -602,6 +625,28 @@ class SocialTemplateTests(MediaTestCase):
         self.assertEqual(thumb.call_args.args[1].read(), b'cover')
         post.refresh_from_db()
         self.assertEqual(post.status, SocialPost.Status.PUBLISHED)
+
+    def test_files_older_than_two_weeks_are_deleted_but_records_stay_unless_still_waiting(self):
+        def ready(**fields):
+            render = self.render(status=SocialRender.Status.READY, **fields)
+            render.file.save('r.mp4', ContentFile(b'reel'))
+            return render
+        old, scheduled_for, busy = ready(), ready(), self.render()
+        posted = SocialPost(caption='খবর', status=SocialPost.Status.PUBLISHED)
+        posted.video.save('v.mp4', ContentFile(b'mp4'))
+        due = SocialPost(caption='খবর', publish_at=timezone.now() - timedelta(days=20))
+        due.video.save('d.mp4', ContentFile(b'mp4'))
+        SocialPost.objects.create(caption='খবর', render=scheduled_for, publish_at=timezone.now() + timedelta(days=1))
+        weeks_ago = timezone.now() - timedelta(days=15)
+        SocialRender.objects.update(created_at=weeks_ago)
+        SocialPost.objects.filter(pk=posted.pk).update(publish_at=weeks_ago)
+
+        self.assertEqual(social.delete_old_files(), 2)
+        for record in (old, scheduled_for, busy, posted, due):
+            record.refresh_from_db()
+        self.assertEqual((old.source.read(), bool(old.file), old.headline), (b'src', False, 'শিরোনাম'))
+        self.assertEqual((bool(posted.video), posted.caption), (False, 'খবর'))
+        self.assertTrue(scheduled_for.file and busy.source and due.video)
 
     @override_settings(STORAGES={'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
                                  'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'}})

@@ -964,7 +964,7 @@ class NewsVideoAdmin(ModelAdmin):
     list_filter = ['status', 'series']
     list_filter_submit = True
     ordering = ['-publish_at']
-    actions_detail = ['approve', 'retry', 'publish_now', 'cancel']
+    actions_detail = ['approve', 'retry', 'render_again', 'publish_now', 'cancel']
     fieldsets = [
         ('Video', {'fields': ('display_preview', 'series', 'publish_at', 'display_status', 'error')}),
         ('Script', {'fields': ('display_issues_detail', 'script', 'display_stories')}),
@@ -1073,6 +1073,15 @@ class NewsVideoAdmin(ModelAdmin):
             self.message_user(request, 'Only failed, skipped or cancelled videos can be retried.', level='warning')
         return redirect(reverse('admin:data_newsvideo_change', args=[object_id]))
 
+    @action(description='Render again', icon='movie', permissions=['video'])
+    def render_again(self, request, object_id):
+        if video_pipeline.render_again(get_object_or_404(NewsVideo, pk=object_id)):
+            self.message_user(request, 'Rendering again with the same script and voice. It is not posted again.')
+        else:
+            self.message_user(request, 'Only ready or published videos that still have their voice can be rendered '
+                                       'again.', level='warning')
+        return redirect(reverse('admin:data_newsvideo_change', args=[object_id]))
+
     @action(description='Publish now', icon='publish', permissions=['video'])
     def publish_now(self, request, object_id):
         video = get_object_or_404(NewsVideo.objects.select_related('series'), pk=object_id)
@@ -1125,11 +1134,12 @@ class SocialRenderAdmin(ModelAdmin):
     list_display = ['display_headline', 'template', 'display_status', 'created_at']
     list_filter = ['status', 'template']
     list_filter_submit = True
-    actions_detail = ['make_post', 'retry']
+    actions_detail = ['make_post', 'render_again']
     fieldsets = [
         (None, {'fields': ('template', 'display_sample') + RENDER_FIELDS[1:], 'description':
             'Make a reel or a square news card from a template. Saving renders it; nothing is posted. When it is ready, '
-            'preview or download it here, or click Post to post it.'}),
+            'preview or download it here, or click Post to post it. The result is deleted after 14 days; Render again '
+            'makes it again.'}),
         ('Result', {'fields': ('display_preview', 'display_status', 'error', 'created_by')}),
     ]
     readonly_fields = ['display_sample', 'display_preview', 'display_status', 'error', 'created_by']
@@ -1183,14 +1193,16 @@ class SocialRenderAdmin(ModelAdmin):
                    'facebook_format': SocialPost.Format.PHOTO if render.is_card else SocialPost.Format.REEL}
         return redirect(f"{reverse('admin:data_socialpost_add')}?{urlencode(prefill)}")
 
-    @action(description='Retry', icon='replay')
-    def retry(self, request, object_id):
-        render = SocialRender.objects.filter(pk=object_id, status=SocialRender.Status.FAILED).first()
+    @action(description='Render again', icon='replay')
+    def render_again(self, request, object_id):
+        # Also remakes one whose result was deleted after 14 days: the clip or photo and the subtitles are kept.
+        render = SocialRender.objects.filter(
+            pk=object_id, status__in=(SocialRender.Status.READY, SocialRender.Status.FAILED)).first()
         if render:
             video_social.make(render)
             self.message_user(request, 'Rendering again. Refresh in a few minutes.')
         else:
-            self.message_user(request, 'Only a failed one can be retried.', level='warning')
+            self.message_user(request, 'It is still being made.', level='warning')
         return redirect(reverse('admin:data_socialrender_change', args=[object_id]))
 
 
