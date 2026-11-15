@@ -11,6 +11,7 @@ from django.utils.html import format_html, format_html_join
 from django.template.response import TemplateResponse
 from django.conf import settings
 from django.db.models import Q
+from django.templatetags.static import static
 from unfold.admin import ModelAdmin
 from unfold.decorators import action, display
 from unfold.widgets import UnfoldAdminCheckboxSelectMultipleWidget, UnfoldAdminTextareaWidget
@@ -1126,12 +1127,12 @@ class SocialRenderAdmin(ModelAdmin):
     list_filter_submit = True
     actions_detail = ['make_post', 'retry']
     fieldsets = [
-        (None, {'fields': RENDER_FIELDS, 'description':
+        (None, {'fields': ('template', 'display_sample') + RENDER_FIELDS[1:], 'description':
             'Make a reel or a square news card from a template. Saving renders it; nothing is posted. When it is ready, '
             'preview or download it here, or click Post to post it.'}),
         ('Result', {'fields': ('display_preview', 'display_status', 'error', 'created_by')}),
     ]
-    readonly_fields = ['display_preview', 'display_status', 'error', 'created_by']
+    readonly_fields = ['display_sample', 'display_preview', 'display_status', 'error', 'created_by']
 
     def get_readonly_fields(self, request, obj=None):
         busy = obj and obj.status not in (SocialRender.Status.READY, SocialRender.Status.FAILED)
@@ -1160,6 +1161,17 @@ class SocialRenderAdmin(ModelAdmin):
     @display(description='Preview')
     def display_preview(self, obj):
         return _media_preview(obj.file, obj.thumbnail)
+
+    @display(description='Looks like')
+    def display_sample(self, obj):
+        # A sample of each template, made with stand-in media; it follows the template picked above.
+        base = static('portal/social-templates/')
+        return format_html(
+            '<img id="template-sample" src="{}{}.jpg" alt="Sample of the chosen template" '
+            'style="max-height:360px;border-radius:8px">'
+            '<script>document.getElementById("id_template")?.addEventListener("change", (e) => '
+            'document.getElementById("template-sample").src = "{}" + e.target.value + ".jpg")</script>',
+            base, obj.template if obj else SocialRender.Template.REEL_PAPER, base)
 
     @action(description='Post', icon='send')
     def make_post(self, request, object_id):

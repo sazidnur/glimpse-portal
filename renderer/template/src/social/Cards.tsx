@@ -24,7 +24,8 @@ const C = DEFAULTS.brand.colors;
 // Longer headlines get a smaller size so every card keeps the same footprint.
 const fit = (text: string, big: number) => (text.length > 110 ? big * 0.72 : text.length > 70 ? big * 0.85 : big);
 
-const Chip: React.FC<{ text: string; bg?: string; fg?: string }> = ({ text, bg = C.hero, fg = C.white }) => (
+// The label is optional: no text, no pill.
+const Chip: React.FC<{ text: string; bg?: string; fg?: string }> = ({ text, bg = C.hero, fg = C.white }) => !text.trim() ? null : (
   <div style={{ display: "inline-block", fontFamily: theme.fonts.display, fontWeight: 700, fontSize: 30, lineHeight: 1, color: fg, background: bg, borderRadius: 999, padding: "13px 24px 17px" }}>
     {text}
   </div>
@@ -110,9 +111,11 @@ const QuoteCard: React.FC<CardProps> = (c) => (
         <Img src={resolveSrc(c.image)} style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover", display: "block" }} />
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        <HeroText size={40} weight={700} color={C.white} lineHeight={1.25}>
-          {c.chip}
-        </HeroText>
+        {c.chip.trim() ? (
+          <HeroText size={40} weight={700} color={C.white} lineHeight={1.25}>
+            {c.chip}
+          </HeroText>
+        ) : null}
         <Credit text={c.credit} color="rgba(255,255,255,0.6)" />
       </div>
     </div>

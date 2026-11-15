@@ -136,9 +136,12 @@ const TopBar: React.FC<{ chip: string; look: Look }> = ({ chip, look }) => {
   const p = spring({ frame, fps, config: theme.spring.smooth });
   return (
     <div style={{ position: "absolute", top: 250, left: 60, right: 60, display: "flex", alignItems: "center", justifyContent: "space-between", opacity: p, transform: `translateY(${interpolate(p, [0, 1], [-20, 0])}px)` }}>
-      <div style={{ fontFamily: theme.fonts.display, fontWeight: 700, fontSize: 34, lineHeight: 1, color: l.chipFg, background: l.chipBg, borderRadius: 999, padding: "16px 28px 20px", maxWidth: 820, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {chip}
-      </div>
+      {/* The label is optional; the empty div keeps the logo on the right. */}
+      {chip.trim() ? (
+        <div style={{ fontFamily: theme.fonts.display, fontWeight: 700, fontSize: 34, lineHeight: 1, color: l.chipFg, background: l.chipBg, borderRadius: 999, padding: "16px 28px 20px", maxWidth: 820, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {chip}
+        </div>
+      ) : <div />}
       <LogoTile size={72} />
     </div>
   );

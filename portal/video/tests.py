@@ -607,7 +607,8 @@ class SocialTemplateTests(MediaTestCase):
                                  'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'}})
     def test_the_admin_renders_without_posting_then_post_opens_a_prefilled_post(self):
         self.client.force_login(User.objects.create_superuser('admin', 'a@example.com', 'x'))
-        self.assertEqual(self.client.get(reverse('admin:data_socialrender_add')).status_code, 200)
+        page = self.client.get(reverse('admin:data_socialrender_add')).content.decode()
+        self.assertIn('/social-templates/ReelPaper.jpg', page)  # a sample of the default template
         response = self.client.post(reverse('admin:data_socialrender_add'), {
             'template': 'CardPaper', 'source': SimpleUploadedFile('photo.jpg', b'jpg', content_type='image/jpeg'),
             'headline': 'শিরোনাম'})
