@@ -44,6 +44,7 @@ from .models import (
     Videos,
 )
 from .openai.jobs import cancel_openai_job
+from . import posthog
 from .push import service as push_service
 from .push.digest import BANGLADESH
 from .search import reindex
@@ -1513,6 +1514,37 @@ def cf_analytics_data_json(request):
     })
 
 
+# --- App Analytics (PostHog) ---
+
+
+def app_analytics_view(request):
+    context = {
+        **admin.site.each_context(request),
+        "title": "App Analytics",
+        "has_credentials": posthog.configured(),
+    }
+    return TemplateResponse(request, "admin/app_analytics.html", context)
+
+
+def app_analytics_data_json(request):
+    if not posthog.configured():
+        return JsonResponse({"error": "POSTHOG_PERSONAL_API_KEY and POSTHOG_PROJECT_ID not configured."}, status=503)
+    range_key = request.GET.get("range", "24h")
+    platform = request.GET.get("platform", "all")
+    if range_key not in posthog.RANGES or platform not in posthog.PLATFORMS:
+        return JsonResponse({"error": "Unknown range or platform."}, status=400)
+    try:
+        data = posthog.build(range_key, request.GET.get("hide_test") != "0", platform)
+    except posthog.PostHogError as e:
+        return JsonResponse({"error": str(e)}, status=502)
+    titles = dict(News.objects.filter(
+        id__in=[a["id"] for a in data["articles"] if a["id"].isdigit()]
+    ).values_list("id", "title"))
+    for a in data["articles"]:
+        a["title"] = titles.get(int(a["id"])) if a["id"].isdigit() else None
+    return JsonResponse(data)
+
+
 def _patched_get_urls(self):
     custom = [
         path('cache-dashboard/', self.admin_view(cache_dashboard_view), name='cache_dashboard'),
@@ -1525,6 +1557,8 @@ def _patched_get_urls(self):
         path('dashboard/content-stats/', self.admin_view(content_stats_json), name='dashboard_content_stats'),
         path('cf-analytics/', self.admin_view(cf_analytics_view), name='cf_analytics'),
         path('cf-analytics/data/', self.admin_view(cf_analytics_data_json), name='cf_analytics_data'),
+        path('app-analytics/', self.admin_view(app_analytics_view), name='app_analytics'),
+        path('app-analytics/data/', self.admin_view(app_analytics_data_json), name='app_analytics_data'),
     ]
     return custom + _original_get_urls(self)
 

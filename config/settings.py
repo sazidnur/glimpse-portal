@@ -99,6 +99,11 @@ UNFOLD = {
                         "link": reverse_lazy("admin:cf_analytics"),
                     },
                     {
+                        "title": _("App Analytics"),
+                        "icon": "monitoring",
+                        "link": reverse_lazy("admin:app_analytics"),
+                    },
+                    {
                         "title": _("Live Feed"),
                         "icon": "stream",
                         "link": reverse_lazy("live_feed:dashboard"),
@@ -475,6 +480,12 @@ YOUTUBE_API_KEY = config('YOUTUBE_API_KEY', default='')
 # Create one at: https://dash.cloudflare.com/profile/api-tokens
 CF_ACCOUNT_ID = config('CF_ACCOUNT_ID', default='')
 CF_ANALYTICS_TOKEN = config('CF_ANALYTICS_TOKEN', default='')
+
+# PostHog (for admin App Analytics). The personal API key needs only the "Query: Read" scope.
+# Queried server-side, so tracker blocking in the viewer's browser or DNS doesn't matter.
+POSTHOG_PERSONAL_API_KEY = config('POSTHOG_PERSONAL_API_KEY', default='')
+POSTHOG_PROJECT_ID = config('POSTHOG_PROJECT_ID', default='')
+POSTHOG_HOST = config('POSTHOG_HOST', default='https://eu.posthog.com')
 
 # Debug toolbar settings
 INTERNAL_IPS = ['127.0.0.1']

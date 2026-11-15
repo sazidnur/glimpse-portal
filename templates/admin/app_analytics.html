@@ -1,0 +1,357 @@
+{% extends 'admin/base.html' %}
+{% load i18n unfold %}
+
+{% block breadcrumbs %}{% endblock %}
+
+{% block title %}{% trans 'App Analytics' %} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block branding %}
+    {% include "unfold/helpers/site_branding.html" %}
+{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/jsvectormap.min.css">
+<style>
+    .seg-btn { padding: .375rem .75rem; font-size: .875rem; font-weight: 500; border-radius: .375rem; }
+    .jvm-tooltip { font-size: 12px; padding: 4px 8px; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% include "unfold/helpers/messages.html" %}
+
+{% with card="bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800" head="px-5 py-4 border-b border-base-200 dark:border-base-800 font-semibold text-font-important-light dark:text-font-important-dark" label="text-xs text-font-subtle-light dark:text-font-subtle-dark uppercase tracking-wide" big="mt-2 text-3xl font-bold text-font-important-light dark:text-font-important-dark" sub="mt-1 text-xs text-font-subtle-light dark:text-font-subtle-dark" %}
+<div class="flex flex-col gap-6 mb-8">
+    <!-- Header & filters -->
+    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div>
+            <h1 class="font-semibold text-2xl text-font-important-light dark:text-font-important-dark">App Analytics</h1>
+            <p class="mt-1 text-sm text-font-subtle-light dark:text-font-subtle-dark">Users, locations and engagement from PostHog, queried by the portal server</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-3">
+            <div class="flex flex-wrap gap-1" data-group="range">
+                <button type="button" class="seg-btn" data-value="live">Live</button>
+                <button type="button" class="seg-btn" data-value="24h">24h</button>
+                <button type="button" class="seg-btn" data-value="7d">7d</button>
+                <button type="button" class="seg-btn" data-value="30d">30d</button>
+                <button type="button" class="seg-btn" data-value="90d">90d</button>
+            </div>
+            <div class="flex gap-1" data-group="platform">
+                <button type="button" class="seg-btn" data-value="all">All</button>
+                <button type="button" class="seg-btn" data-value="ios">iOS</button>
+                <button type="button" class="seg-btn" data-value="android">Android</button>
+            </div>
+            <label class="flex items-center gap-2 text-sm text-font-default-light dark:text-font-default-dark cursor-pointer" title="Hides events flagged is_test_device by the app (TestFlight, App Review, Play pre-launch, debug builds) and emulators / Apple internal devices">
+                <input type="checkbox" id="hide-test" checked class="rounded">
+                Hide test &amp; bot devices
+            </label>
+        </div>
+    </div>
+
+    {% if not has_credentials %}
+    <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 dark:bg-amber-900/20 dark:border-amber-800">
+        <h2 class="font-semibold text-amber-800 dark:text-amber-200">Credentials Not Configured</h2>
+        <p class="mt-2 text-sm text-amber-700 dark:text-amber-300">Add to <code>.env</code>: <code>POSTHOG_PERSONAL_API_KEY</code> (scope Query: Read), <code>POSTHOG_PROJECT_ID</code>, and optionally <code>POSTHOG_HOST</code> (default https://eu.posthog.com).</p>
+    </div>
+    {% endif %}
+
+    <!-- Stat tiles -->
+    <div class="grid gap-4" style="grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));">
+        <div class="{{ card }} p-5"><p class="{{ label }}">Online now</p><p id="s-online" class="{{ big }}">-</p><p class="{{ sub }}">active in the last 5 min</p></div>
+        <div class="{{ card }} p-5"><p class="{{ label }}">Active users</p><p id="s-users" class="{{ big }}">-</p><p id="s-users-sub" class="{{ sub }}">in this range</p></div>
+        <div class="{{ card }} p-5"><p class="{{ label }}">New installs</p><p id="s-new" class="{{ big }}">-</p><p class="{{ sub }}">first launches in this range</p></div>
+        <div class="{{ card }} p-5"><p class="{{ label }}">Time per user / day</p><p id="s-time" class="{{ big }}">-</p><p id="s-session" class="{{ sub }}">-</p></div>
+        <div class="{{ card }} p-5"><p class="{{ label }}">Stickiness</p><p id="s-sticky" class="{{ big }}">-</p><p id="s-sticky-sub" class="{{ sub }}">daily ÷ monthly users, 30 days</p></div>
+    </div>
+
+    <!-- Users over time -->
+    <div class="{{ card }}">
+        <div class="{{ head }} flex items-center justify-between"><span>Users over time</span><span id="chart-unit" class="text-xs font-normal text-font-subtle-light dark:text-font-subtle-dark"></span></div>
+        <div class="p-5"><div class="h-72"><canvas id="users-chart" aria-label="Active users and new installs over time" role="img"></canvas></div></div>
+    </div>
+
+    <!-- Map + location list -->
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <div class="xl:col-span-2 {{ card }}">
+            <div class="{{ head }} flex items-center justify-between"><span>Where users are</span><span id="map-note" class="text-xs font-normal text-font-subtle-light dark:text-font-subtle-dark"></span></div>
+            <div class="p-3"><div id="world-map" style="height: 420px;"></div></div>
+        </div>
+        <div class="{{ card }} flex flex-col">
+            <div class="{{ head }} flex items-center justify-between">
+                <span>Locations</span>
+                <div class="flex gap-1" data-group="loc">
+                    <button type="button" class="seg-btn" data-value="countries">Countries</button>
+                    <button type="button" class="seg-btn" data-value="cities">Cities</button>
+                </div>
+            </div>
+            <div class="overflow-y-auto" style="max-height: 444px;">
+                <table class="w-full text-sm"><tbody id="loc-table"></tbody></table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Retention -->
+    <div class="{{ card }}">
+        <div class="{{ head }} flex items-center justify-between"><span>Retention</span><span id="ret-note" class="text-xs font-normal text-font-subtle-light dark:text-font-subtle-dark"></span></div>
+        <div class="grid grid-cols-3 gap-4 p-5">
+            <div><p class="{{ label }}">Day 1</p><p id="r-d1" class="{{ big }}">-</p><p class="{{ sub }}">came back the next day</p></div>
+            <div><p class="{{ label }}">Day 7</p><p id="r-d7" class="{{ big }}">-</p><p class="{{ sub }}">came back a week later</p></div>
+            <div><p class="{{ label }}">Day 30</p><p id="r-d30" class="{{ big }}">-</p><p class="{{ sub }}">came back a month later</p></div>
+        </div>
+    </div>
+
+    <!-- Saves, shares & video -->
+    <div class="{{ card }}">
+        <div class="{{ head }} flex items-center justify-between"><span>Saves, shares &amp; video</span><span id="eng-note" class="text-xs font-normal text-font-subtle-light dark:text-font-subtle-dark"></span></div>
+        <div class="grid gap-4 p-5" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));">
+            <div><p class="{{ label }}">Saves</p><p id="e-saves" class="{{ big }}">-</p><p id="e-saves-sub" class="{{ sub }}">-</p></div>
+            <div><p class="{{ label }}">Shares</p><p id="e-shares" class="{{ big }}">-</p><p id="e-shares-sub" class="{{ sub }}">-</p></div>
+            <div><p class="{{ label }}">Avg watch time</p><p id="e-watch" class="{{ big }}">-</p><p id="e-watch-sub" class="{{ sub }}">-</p></div>
+            <div><p class="{{ label }}">Avg % watched</p><p id="e-pct" class="{{ big }}">-</p><p class="{{ sub }}">of each video</p></div>
+            <div><p class="{{ label }}">Watched to the end</p><p id="e-done" class="{{ big }}">-</p><p class="{{ sub }}">videos watched 90%+</p></div>
+        </div>
+    </div>
+
+    <!-- Breakdown tables -->
+    <p id="stats-note" class="text-xs text-font-subtle-light dark:text-font-subtle-dark"></p>
+    <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6" id="tables"></div>
+
+    <div id="status" class="text-sm text-font-subtle-light dark:text-font-subtle-dark"></div>
+</div>
+{% endwith %}
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/jsvectormap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.6.0/dist/maps/world.js"></script>
+<script>
+(function () {
+    const DATA_URL = "{% url 'admin:app_analytics_data' %}";
+    const NEWS_URL = "{% url 'admin:data_news_change' 0 %}";
+    const HAS_CREDS = {{ has_credentials|yesno:"true,false" }};
+    const state = { range: '24h', platform: 'all', loc: 'countries' };
+    const ON = 'seg-btn bg-primary-600 text-white';
+    const OFF = 'seg-btn bg-white border border-base-200 text-font-default-light hover:bg-base-50 dark:bg-base-800 dark:border-base-700 dark:text-font-default-dark dark:hover:bg-base-700';
+    const TD = 'px-5 py-2.5 text-font-default-light dark:text-font-default-dark';
+    const ROW = 'border-b border-base-100 dark:border-base-800';
+    let chart = null, map = null, data = null, timer = null, openCountry = null, seq = 0;
+
+    const dark = () => document.documentElement.classList.contains('dark');
+    const colors = () => dark()
+        ? { users: '#3987e5', new: '#d95926', empty: '#374151', scale: ['#9ec5f4', '#1c5cab'], marker: '#d95926' }
+        : { users: '#2a78d6', new: '#eb6834', empty: '#e5e7eb', scale: ['#cde2fb', '#184f95'], marker: '#eb6834' };
+    // Names come from app events, which anyone holding the public project key can send.
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const num = n => n == null ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : n.toLocaleString();
+    const pct = n => n == null ? '—' : n + '%';
+    const dur = s => s == null ? '—' : s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : Math.floor(s / 3600) + 'h ' + Math.floor(s % 3600 / 60) + 'm';
+    const label = (t, unit) => unit === 'day'
+        ? new Date(t + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+        : new Date(t).toLocaleString(undefined, unit === 'hour' ? { weekday: 'short', hour: '2-digit', minute: '2-digit' } : { hour: '2-digit', minute: '2-digit' });
+
+    function paintGroups() {
+        document.querySelectorAll('[data-group]').forEach(g => g.querySelectorAll('.seg-btn').forEach(b => {
+            b.className = b.dataset.value === state[g.dataset.group] ? ON : OFF;
+        }));
+    }
+
+    function renderChart(d) {
+        const c = colors();
+        const dense = d.series.length > 40;
+        if (chart) chart.destroy();
+        chart = new Chart(document.getElementById('users-chart'), {
+            type: 'line',
+            data: {
+                labels: d.series.map(p => label(p.t, d.unit)),
+                datasets: [
+                    { label: 'Active users', data: d.series.map(p => p.users), borderColor: c.users, backgroundColor: c.users + '1a', fill: true, tension: 0.3, borderWidth: 2, pointRadius: dense ? 0 : 3, pointHoverRadius: 5 },
+                    { label: 'New installs', data: d.series.map(p => p.new), borderColor: c.new, backgroundColor: c.new, tension: 0.3, borderWidth: 2, pointRadius: dense ? 0 : 3, pointHoverRadius: 5 },
+                ],
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { position: 'top', align: 'end', labels: { boxWidth: 10, usePointStyle: true, pointStyle: 'circle' } } },
+                scales: {
+                    x: { grid: { display: false }, ticks: { maxTicksLimit: 8, maxRotation: 0 } },
+                    y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: dark() ? '#1f2937' : '#f3f4f6' } },
+                },
+            },
+        });
+        const units = { minute: 'per minute, last hour', hour: 'per hour, last 24 hours', day: 'per day' };
+        document.getElementById('chart-unit').textContent = units[d.unit];
+    }
+
+    function renderMap(loc) {
+        const c = colors();
+        const values = {};
+        loc.countries.forEach(x => { if (x.code) values[x.code] = x.users; });
+        const byCode = Object.fromEntries(loc.countries.map(x => [x.code, x]));
+        const cities = loc.cities.filter(x => x.lat != null && x.lng != null).slice(0, 200);
+        if (map) map.destroy();
+        document.getElementById('world-map').innerHTML = '';
+        map = new jsVectorMap({
+            selector: '#world-map',
+            map: 'world',
+            zoomButtons: true,
+            regionStyle: { initial: { fill: c.empty, stroke: dark() ? '#111827' : '#ffffff', strokeWidth: 0.4 }, hover: { fillOpacity: 0.8 } },
+            visualizeData: Object.keys(values).length ? { scale: c.scale, values } : undefined,
+            markers: cities.map(x => ({ name: x.name, coords: [x.lat, x.lng] })),
+            markerStyle: { initial: { r: 4, fill: c.marker, stroke: dark() ? '#111827' : '#ffffff', strokeWidth: 1.5, fillOpacity: 0.9 } },
+            onRegionTooltipShow(e, tip, code) {
+                const x = byCode[code];
+                tip.text(`${tip.text()}: ${x ? x.users : 0} users`);
+            },
+            onMarkerTooltipShow(e, tip, i) {
+                const x = cities[i];
+                tip.text(`${x.name}, ${x.country}: ${x.users} users`);
+            },
+        });
+    }
+
+    function bar(v, max, color) {
+        return `<div class="flex items-center gap-2"><div class="h-1.5 rounded-full" style="width:${max ? Math.max(4, v / max * 64) : 0}px;background:${color}"></div><span>${num(v)}</span></div>`;
+    }
+
+    function renderLocations() {
+        const tbody = document.getElementById('loc-table');
+        const loc = data.locations;
+        const c = colors();
+        if (!loc.countries.length) { tbody.innerHTML = `<tr class="${ROW}"><td class="${TD} text-center py-8">No users in this range</td></tr>`; return; }
+        if (state.loc === 'cities') {
+            const max = loc.cities[0]?.users || 0;
+            tbody.innerHTML = loc.cities.map(x => `<tr class="${ROW}"><td class="${TD}">${esc(x.name)}<span class="ml-1 text-xs text-font-subtle-light dark:text-font-subtle-dark">${esc(x.country)}</span></td><td class="${TD}">${bar(x.users, max, c.users)}</td></tr>`).join('')
+                || `<tr class="${ROW}"><td class="${TD} text-center py-8">No city data</td></tr>`;
+            return;
+        }
+        const total = loc.countries.reduce((a, x) => a + x.users, 0);
+        const max = loc.countries[0].users;
+        tbody.innerHTML = loc.countries.map(x => {
+            const open = openCountry === x.code;
+            const row = `<tr class="${ROW} cursor-pointer hover:bg-base-50 dark:hover:bg-base-800" data-code="${esc(x.code)}"><td class="${TD}"><span class="inline-block w-3 text-xs">${open ? '▾' : '▸'}</span> ${esc(x.name)}</td><td class="${TD}">${bar(x.users, max, c.users)}</td><td class="${TD} text-right text-xs">${Math.round(x.users / total * 100)}%</td></tr>`;
+            const sub = open ? x.cities.map(ct => `<tr class="${ROW} bg-base-50 dark:bg-base-800"><td class="${TD} pl-12 text-xs">${esc(ct.name)}</td><td class="${TD} text-xs">${num(ct.users)}</td><td></td></tr>`).join('') : '';
+            return row + sub;
+        }).join('');
+    }
+
+    // cols: extra right-aligned columns as [header, row => html].
+    function table(title, rows, opts = {}) {
+        const c = colors();
+        const cols = opts.cols || [];
+        const max = rows.length ? Math.max(...rows.map(r => r.users)) : 0;
+        const body = rows.length
+            ? rows.map(r => `<tr class="${ROW}"><td class="${TD} truncate" title="${esc(r.name)}">${r.html ?? esc(r.name)}</td><td class="${TD} whitespace-nowrap">${bar(r.users, max, c.users)}</td>${cols.map(([, f]) => `<td class="${TD} text-right whitespace-nowrap">${f(r)}</td>`).join('')}</tr>`).join('')
+            : `<tr class="${ROW}"><td class="${TD} text-center py-6" colspan="${2 + cols.length}">No data</td></tr>`;
+        return `<div class="${opts.wide ? 'lg:col-span-2 ' : ''}bg-white border border-base-200 rounded-lg dark:bg-base-900 dark:border-base-800">
+            <div class="px-5 py-4 border-b border-base-200 dark:border-base-800 font-semibold text-font-important-light dark:text-font-important-dark">${title}</div>
+            <div class="overflow-x-auto"><table class="w-full text-sm table-fixed"><thead><tr class="text-left text-xs uppercase tracking-wider text-font-subtle-light dark:text-font-subtle-dark bg-base-50 dark:bg-base-800">
+                <th class="px-5 py-2 font-medium" style="min-width: 140px">${opts.col || 'Name'}</th><th class="px-5 py-2 font-medium w-32">Users</th>${cols.map(([h]) => `<th class="px-5 py-2 font-medium text-right w-24">${h}</th>`).join('')}
+            </tr></thead><tbody>${body}</tbody></table></div></div>`;
+    }
+
+    function renderTables(d) {
+        const f = d.features;
+        const opens = [['Opens', r => num(r.count)]];
+        const articles = d.articles.map(a => ({
+            ...a,
+            name: a.title || `#${a.id}`,
+            html: /^\d+$/.test(a.id) ? `<a class="text-primary-600 dark:text-primary-400 underline" href="${NEWS_URL.replace('/0/', '/' + a.id + '/')}">${esc(a.title || '#' + a.id)}</a>` : esc(a.id),
+        }));
+        document.getElementById('tables').innerHTML = [
+            table('Time per screen', d.screens, { col: 'Screen', wide: true, cols: [
+                ['Visits', r => num(r.count)], ['Total', r => dur(r.total_secs)],
+                ['Per user', r => dur(r.secs_per_user)], ['Typical visit', r => dur(r.median_secs)],
+            ] }),
+            table('Top categories', f.category || [], { col: 'Category', cols: opens }),
+            table('Top articles', articles, { col: 'Article', wide: true, cols: [
+                ['Opens', r => num(r.count)], ['Saves', r => num(r.saves)], ['Shares', r => num(r.shares)],
+            ] }),
+            table('Top news sources', f.source || [], { col: 'Site', cols: opens }),
+            table('Articles opened from', f.origin || [], { col: 'Where', cols: opens }),
+            table('Platforms', f.os || [], { col: 'OS' }),
+            table('iOS app versions', f['app_version:iOS'] || [], { col: 'Version' }),
+            table('Android app versions', f['app_version:Android'] || [], { col: 'Version' }),
+            table('iOS versions', f['os_version:iOS'] || [], { col: 'iOS' }),
+            table('Android versions', f['os_version:Android'] || [], { col: 'Android' }),
+        ].join('');
+    }
+
+    function render(d) {
+        data = d;
+        const t = d.totals;
+        document.getElementById('s-online').textContent = num(t.online);
+        document.getElementById('s-users').textContent = num(t.users);
+        document.getElementById('s-users-sub').textContent = d.range === 'live' ? 'in the last hour' : 'in this range';
+        document.getElementById('s-new').textContent = num(t.new);
+        document.getElementById('s-time').textContent = dur(t.avg_secs_per_user_day);
+        document.getElementById('s-session').textContent = `avg session ${dur(t.avg_session_secs)}`;
+        document.getElementById('s-sticky').textContent = pct(t.stickiness);
+        document.getElementById('s-sticky-sub').textContent = `${t.dau} daily ÷ ${num(t.mau)} monthly users, 30 days`;
+        document.getElementById('r-d1').textContent = pct(d.retention.d1);
+        document.getElementById('r-d7').textContent = pct(d.retention.d7);
+        document.getElementById('r-d30').textContent = pct(d.retention.d30);
+        document.getElementById('ret-note').textContent = `${d.retention.cohort} installs from the last 90 days`;
+        document.getElementById('map-note').textContent = d.range === 'live' ? 'last 5 minutes' : 'latest location of each user in this range';
+        document.getElementById('stats-note').textContent = d.range === 'live' ? 'Time per user and the tables below cover the last 24 hours.' : '';
+        const e = d.engagement;
+        document.getElementById('e-saves').textContent = num(e.saves);
+        document.getElementById('e-saves-sub').textContent = e.saves ? `${e.save_rate}% of opens · ${e.savers} users` : 'no events yet';
+        document.getElementById('e-shares').textContent = num(e.shares);
+        document.getElementById('e-shares-sub').textContent = e.shares ? `${e.share_rate}% of opens · ${e.sharers} users` : 'no events yet';
+        document.getElementById('e-watch').textContent = dur(e.avg_watch_secs);
+        document.getElementById('e-watch-sub').textContent = e.videos ? `${num(e.videos)} videos · ${e.viewers} users` : 'no events yet';
+        document.getElementById('e-pct').textContent = pct(e.avg_watch_pct);
+        document.getElementById('e-done').textContent = pct(e.completion_rate);
+        document.getElementById('eng-note').textContent = e.saves || e.shares || e.videos ? '' : 'needs app events: article saved, article shared, video watched';
+        renderChart(d);
+        renderMap(d.locations);
+        renderLocations();
+        renderTables(d);
+    }
+
+    function setStatus(msg, err) {
+        const el = document.getElementById('status');
+        el.textContent = msg;
+        el.classList.toggle('text-red-600', !!err);
+    }
+
+    async function load() {
+        clearTimeout(timer);
+        const mine = ++seq;  // a slower, older response must not overwrite a newer one
+        setStatus('Loading…');
+        const q = new URLSearchParams({ range: state.range, platform: state.platform, hide_test: document.getElementById('hide-test').checked ? '1' : '0' });
+        try {
+            const res = await fetch(`${DATA_URL}?${q}`);
+            const d = await res.json();
+            if (mine !== seq) return;
+            if (d.error) setStatus(d.error, true);
+            else { render(d); setStatus(`Last updated ${new Date().toLocaleTimeString()}${state.range === 'live' ? ' · refreshes every 30 s' : ''}`); }
+        } catch (e) {
+            if (mine !== seq) return;
+            setStatus('Failed to load: ' + e.message, true);
+        }
+        if (state.range === 'live') timer = setTimeout(load, 30000);
+    }
+
+    document.querySelectorAll('[data-group]').forEach(g => g.addEventListener('click', e => {
+        const b = e.target.closest('.seg-btn');
+        if (!b) return;
+        state[g.dataset.group] = b.dataset.value;
+        paintGroups();
+        if (g.dataset.group === 'loc') { if (data) renderLocations(); } else load();
+    }));
+    document.getElementById('loc-table').addEventListener('click', e => {
+        const row = e.target.closest('tr[data-code]');
+        if (!row) return;
+        openCountry = openCountry === row.dataset.code ? null : row.dataset.code;
+        renderLocations();
+    });
+    document.getElementById('hide-test').addEventListener('change', load);
+    // Repaint charts and map when the admin theme switches.
+    new MutationObserver(() => { if (data) render(data); }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+    paintGroups();
+    if (HAS_CREDS) load(); else setStatus('Configure PostHog credentials to view analytics');
+})();
+</script>
+{% endblock %}
